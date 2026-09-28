@@ -31,18 +31,38 @@ def trend_color(change):
     return UP if change > 0 else DOWN
 
 
+SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
+
+
 def price_candidates(price, currency):
-    """Formatted price strings, most precise first."""
+    """Formatted price strings in order of preference.
+
+    Under $1 we always keep 4 significant digits ($0.2412, $0.003410). Very
+    small prices use the subscript-zero style exchanges use, so PEPE at
+    0.00001123 becomes $0.0₄1123 (four zeros after the point, then 1123).
+    """
     sign = CURRENCY_SIGNS.get(currency, "")
+    if round(price, 2) >= 1000:
+        return [f"{sign}{price:,.0f}"]
     if price >= 1:
         return [f"{sign}{price:,.2f}", f"{sign}{price:,.0f}"]
     if price <= 0:
         return [f"{sign}0.00"]
-    decimals = max(2, -math.floor(math.log10(price)) + 3)
-    out = [f"{sign}{price:.{decimals}f}"]
-    if decimals > 4:
-        out.append(f"{sign}{price:.{decimals - 1}f}")
-    return out
+
+    def fmt(sig):
+        decimals = max(2, -math.floor(math.log10(price)) - 1 + sig)
+        frac = f"{price:.{decimals}f}".split(".")[1]
+        zeros = len(frac) - len(frac.lstrip("0"))
+        digits = frac.lstrip("0")[:sig]
+        full = f"{sign}0.{frac}"
+        short = f"{sign}0.0{str(zeros).translate(SUBSCRIPT)}{digits}" if zeros >= 4 else None
+        return full, short
+
+    full4, short4 = fmt(4)
+    full3, short3 = fmt(3)
+    if short4:
+        return [short4, full4, short3]
+    return [full4, full3]
 
 
 def change_text(change):
@@ -72,8 +92,9 @@ class Renderer:
 
     # --- pieces -----------------------------------------------------------
     def _fit_text(self, candidates, fonts, max_width):
-        for font in fonts:
-            for text in candidates:
+        """First candidate (most precise) that fits in any font, biggest font first."""
+        for text in candidates:
+            for font in fonts:
                 if font.width(text) <= max_width:
                     return font, text
         return fonts[-1], candidates[-1]
@@ -170,12 +191,14 @@ class Renderer:
         # "7D" tag in the bottom-right corner marks the chart's time span.
         # Fit the price in the space left of it; only if that's impossible
         # does the price get the full width and the tag is skipped.
+        # Readable price beats the tag: keep the tag only if the price still
+        # fits in a normal-size font next to it.
         tag_w = f["4x6"].width("7D")
-        fonts = [f["7x13"], f["6x12"], f["5x8"]]
-        font, text = self._fit_text(prices, fonts, self.w - tag_w - 4)
-        show_tag = font.width(text) <= self.w - tag_w - 4
+        room = self.w - tag_w - 4
+        font, text = self._fit_text(prices, [f["7x13"], f["6x12"]], room)
+        show_tag = font.width(text) <= room and text == prices[0]
         if not show_tag:
-            font, text = self._fit_text(prices, fonts, self.w - 1)
+            font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w - 1)
         self._outlined(img, font, 1, self.h - 2, text, PRICE)
         if show_tag:
             self._outlined(img, f["4x6"], self.w - tag_w - 1, self.h - 1, "7D", (170, 170, 170))
