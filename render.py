@@ -120,7 +120,8 @@ class Renderer:
                 img.paste(icon, (0, 0))
             tx = self.icon_size + 2
             end1 = f["7x13"].draw(img, tx, 10, asset["symbol"], SYMBOL)
-            end2 = f["5x8"].draw(img, tx, 16, ctext, trend_color(change))
+            # symbol uses rows 1-9, change rows 12-18, price rows 21-30: 2px gaps
+            end2 = f["5x8"].draw(img, tx, 18, ctext, trend_color(change))
             sx = max(end1, end2) + 2
             self._sparkline(img, asset.get("sparkline", []), (sx, 1, self.w - 1, 14))
             font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w)
