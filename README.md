@@ -44,7 +44,7 @@ The CoinMarketCap option was removed; CoinGecko covers everything with one API c
 
    ```bash
    sudo apt-get install -y git
-   git clone https://github.com/<your-account>/crypto-ticker.git
+   git clone https://github.com/DNA2RNA1/crypto-ticker.git
    cd crypto-ticker
    ./install.sh
    nano settings.env        # pick your coins
