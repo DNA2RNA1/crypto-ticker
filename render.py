@@ -306,32 +306,66 @@ class Renderer:
         img.paste(grad, (0, 0), m)
         return end
 
-    def clock(self, now):
+    @staticmethod
+    def moon_age(now):
+        """Days since new moon (0-29.5), from a known new moon and the synodic month."""
+        from datetime import datetime, timezone
+        ref = datetime(2000, 1, 6, 18, 14, tzinfo=timezone.utc)
+        ts = now if now.tzinfo else now.astimezone()
+        return ((ts - ref).total_seconds() / 86400) % 29.530588853
+
+    def _moon(self, img, cx, cy, r, now):
+        """Moon phase disk: lit part pale yellow, dark part faint (Northern Hemisphere view)."""
+        import math
+        p = self.moon_age(now) / 29.530588853  # 0 new, 0.5 full
+        k = math.cos(2 * math.pi * p)
+        px = img.load()
+        for y in range(-r, r + 1):
+            for x in range(-r, r + 1):
+                if x * x + y * y > r * r + r * 0.6:
+                    continue
+                ny, nx = y / r, x / r
+                w = math.sqrt(max(0.0, 1 - ny * ny))
+                lit = nx > k * w if p < 0.5 else nx < -k * w
+                px[cx + x, cy + y] = (245, 225, 150) if lit else (35, 35, 48)
+
+    def clock(self, now, weather=None, unit="F"):
+        """Big white time with live seconds and moon phase; colorful info row:
+        temperature (green), day and date (orange), humidity (blue)."""
         img = self._base()
         f = self.fonts
-        top, bottom = self._theme(now.hour)
         hour = now.hour % 12 or 12
         t = f"{hour}:{now.minute:02d}"
-        ampm = "AM" if now.hour < 12 else "PM"
         big = f["9x18B"]
-        tw = big.width(t) + 2 + f["5x8"].width(ampm)
-        x = (64 - tw) // 2
-        end = self._gradient_text(img, big, x, 17, t, top, bottom)
-        f["5x8"].draw(img, end + 2, 9, ampm, bottom)
-        # date: weekday in the theme color, month/day in white
-        wd, md = now.strftime("%a").upper(), now.strftime("%b %-d").upper()
-        dw = f["5x8"].width(wd) + 5 + f["5x8"].width(md)
-        dx = (64 - dw) // 2
-        dx = f["5x8"].draw(img, dx, 27, wd, top)
-        f["5x8"].draw(img, dx + 5, 27, md, (200, 200, 200))
-        # day-progress bar along the bottom, colored by time of day
+        tw = big.width(t)
+        tx = max(0, (45 - tw) // 2)
+        big.draw(img, tx, 16, t, PRICE)
+        # right column: moon, AM/PM, seconds
+        self._moon(img, 57, 5, 4, now)
+        f["4x6"].draw(img, 46, 16, "AM" if now.hour < 12 else "PM", (170, 170, 170))
+        f["5x8"].draw(img, 54, 16, f"{now.second:02d}", (60, 200, 255))
+        # info row: temperature (green) | day & date (orange) | humidity (blue)
+        font = f["5x8"]
+        temp = f"{round(weather['temp'])}°" if weather else None
+        hum = f"{weather['humidity']}%" if weather else None
+        side = (font.width(temp) + font.width(hum) + 4) if weather else 0
+        wd = now.strftime("%a").upper()
+        for date in (f"{wd} {now.month}/{now.day}", f"{wd} {now.day}",
+                     f"{now.month}/{now.day}", f"{now.day}"):
+            if font.width(date) + side <= 64:
+                break
+        if weather:
+            font.draw(img, 0, 30, temp, (60, 220, 90))
+            font.draw(img, 64 - font.width(hum), 30, hum, (60, 150, 255))
+            left = font.width(temp) + 2
+            right = 64 - font.width(hum) - 2
+            font.draw(img, left + (right - left - font.width(date)) // 2, 30, date, (255, 140, 0))
+        else:
+            font.draw(img, (64 - font.width(date)) // 2, 30, date, (255, 140, 0))
+        # thin divider between time and info row
         px = img.load()
-        minutes = now.hour * 60 + now.minute
-        for xx in range(64):
-            hr = xx / 64 * 24
-            c = self._theme(int(hr))[0]
-            lit = xx <= minutes / 1440 * 63
-            px[xx, 31] = c if lit else tuple(v // 6 for v in c)
+        for xx in range(2, 62):
+            px[xx, 21] = (40, 40, 40)
         return self._place(img)
 
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),

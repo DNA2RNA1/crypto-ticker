@@ -18,7 +18,7 @@ from PIL import Image
 
 from zoneinfo import ZoneInfo
 
-from feeds import FearGreed, Indices, parse_indices
+from feeds import FearGreed, Indices, Weather, parse_indices
 from session import session_change
 from icons import IconStore
 from prices import CoinGecko, PriceError
@@ -75,6 +75,9 @@ class Config:
     indices_source: str = "coingecko"
     indices: str = ""
     timezone: str = ""
+    weather_lat: float = 26.3017   # Edinburg, TX
+    weather_lon: float = -98.1633
+    temp_unit: str = "F"
     brightness: int = 70
     dim_hours: str = ""
     dim_brightness: int = 15
@@ -110,6 +113,9 @@ class Config:
         c.indices_source = env("INDICES_SOURCE", c.indices_source).lower()
         c.indices = env("INDICES", "")
         c.timezone = env("TIMEZONE", "")
+        c.weather_lat = env("WEATHER_LAT", c.weather_lat, float)
+        c.weather_lon = env("WEATHER_LON", c.weather_lon, float)
+        c.temp_unit = "C" if env("TEMP_UNIT", "F").upper().startswith("C") else "F"
         c.brightness = env("BRIGHTNESS", c.brightness, int)
         c.dim_hours = env("DIM_HOURS", "")
         c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int)
@@ -166,6 +172,8 @@ class Ticker:
         self.assets = []
         self.index_rows = []
         self.fear_greed = FearGreed()
+        self.weather = Weather(cfg.weather_lat, cfg.weather_lon,
+                               "celsius" if cfg.temp_unit == "C" else "fahrenheit")
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
         self.tz = get_tz(cfg.timezone)
@@ -242,6 +250,10 @@ class Ticker:
             self.next_fetch = 0  # fetch the new list right away
         self.usage.budget = new.monthly_budget
         self.tz = get_tz(new.timezone)
+        if (new.weather_lat, new.weather_lon, new.temp_unit) != \
+                (old.weather_lat, old.weather_lon, old.temp_unit):
+            self.weather = Weather(new.weather_lat, new.weather_lon,
+                                   "celsius" if new.temp_unit == "C" else "fahrenheit")
         if new.indices != old.indices:
             self.yahoo = Indices(parse_indices(new.indices))
         self.cfg = new
@@ -304,8 +316,12 @@ class Ticker:
         out = []
         sleep = self.cfg.sleep
         for name in self.cfg.screens:
-            if name == "clock":
-                out.append(lambda: (self.renderer.clock(self.now()), sleep))
+            if name == "clock":  # redrawn every second so the seconds tick
+                wx = self.weather.update()
+                for i in range(max(1, int(round(sleep)))):
+                    out.append(lambda first=(i == 0), wx=wx:
+                               (self.renderer.clock(self.now(), wx, self.cfg.temp_unit),
+                                1.0 - (time.time() % 1) if not first else 1.0, first))
             elif name == "feargreed":
                 fg = self.fear_greed.update()
                 if fg:

@@ -48,6 +48,25 @@ class Feed:
         raise NotImplementedError
 
 
+class Weather(Feed):
+    """Outdoor temperature and humidity from Open-Meteo (free, no key, non-commercial)."""
+    URL = "https://api.open-meteo.com/v1/forecast"
+    refresh_every = 900
+
+    def __init__(self, lat, lon, unit="fahrenheit"):
+        super().__init__()
+        self.lat, self.lon, self.unit = lat, lon, unit
+
+    def fetch(self):
+        r = self.session.get(self.URL, params={
+            "latitude": self.lat, "longitude": self.lon,
+            "current": "temperature_2m,relative_humidity_2m",
+            "temperature_unit": self.unit}, timeout=15)
+        r.raise_for_status()
+        cur = r.json()["current"]
+        return {"temp": float(cur["temperature_2m"]), "humidity": int(round(cur["relative_humidity_2m"]))}
+
+
 class FearGreed(Feed):
     """Crypto Fear & Greed index from alternative.me (free, no key, updates daily)."""
     URL = "https://api.alternative.me/fng/"
