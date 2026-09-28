@@ -78,6 +78,7 @@ class Config:
     weather_lat: float = 26.3017   # Edinburg, TX
     weather_lon: float = -98.1633
     temp_unit: str = "F"
+    weather_place: str = "Edinburg, Texas, US"
     brightness: int = 70
     dim_hours: str = ""
     dim_brightness: int = 15
@@ -116,6 +117,7 @@ class Config:
         c.weather_lat = env("WEATHER_LAT", c.weather_lat, float)
         c.weather_lon = env("WEATHER_LON", c.weather_lon, float)
         c.temp_unit = "C" if env("TEMP_UNIT", "F").upper().startswith("C") else "F"
+        c.weather_place = env("WEATHER_PLACE", c.weather_place)
         c.brightness = env("BRIGHTNESS", c.brightness, int)
         c.dim_hours = env("DIM_HOURS", "")
         c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int)
@@ -318,7 +320,8 @@ class Ticker:
         for name in self.cfg.screens:
             if name == "clock":
                 wx = self.weather.update()
-                out.append(lambda wx=wx: (self.renderer.clock(self.now(), wx, self.cfg.temp_unit), sleep))
+                out.append(lambda wx=wx: (self.renderer.clock(
+                    self.now(), wx, self.cfg.temp_unit, self.cfg.weather_place), sleep))
             elif name == "feargreed":
                 fg = self.fear_greed.update()
                 if fg:

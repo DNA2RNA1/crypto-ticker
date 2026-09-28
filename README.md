@@ -73,7 +73,8 @@ The ticker runs a small settings page on your home Wi-Fi:
 
 From there you can search for and add coins (it shows each coin's rank and icon, so you pick
 the real one and not a copycat), remove and reorder them, switch the layout, and set
-brightness, time per coin, and night dimming. Changes show on the panel within a few seconds.
+brightness, time per coin, night dimming, which screens to show, and your weather
+location (just type a ZIP code or city). Changes show on the panel within a few seconds.
 
 Five wrong PINs lock the page for 5 minutes. It's only reachable on your home network.
 To change the PIN, edit `WEB_PIN` in `settings.env` and restart the ticker.

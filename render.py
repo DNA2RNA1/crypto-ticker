@@ -391,7 +391,7 @@ class Renderer:
             elif kind == "storm":
                 d.line([(x + 6, y + 5), (x + 4, y + 7), (x + 7, y + 7), (x + 5, y + 8)], fill=(255, 220, 0))
 
-    def clock(self, now, weather=None, unit="F"):
+    def clock(self, now, weather=None, unit="F", place=""):
         """Big white time; weather icon and AM/PM top-right;
         bottom row: temperature (green) and day/date (orange)."""
         img = self._base()
@@ -401,6 +401,15 @@ class Renderer:
         big = f["9x18B"]
         tw = big.width(t)
         big.draw(img, max(0, (45 - tw) // 2), 16, t, PRICE)
+        # city name, small, under the time
+        city = (place or "").split(",")[0].strip().upper()
+        if city:
+            cf = f["4x6"] if f["4x6"].width(city) <= 45 else None
+            if cf is None:
+                while city and f["4x6"].width(city) > 45:
+                    city = city[:-1]
+                cf = f["4x6"]
+            cf.draw(img, max(0, (45 - cf.width(city)) // 2), 22, city, (130, 130, 140))
         # right column: weather icon, AM/PM under it
         if weather:
             self.weather_icon(img, 51, 0, weather, now)
@@ -420,9 +429,6 @@ class Renderer:
             font.draw(img, 64 - font.width(date), 30, date, (255, 140, 0))
         else:
             font.draw(img, (64 - font.width(date)) // 2, 30, date, (255, 140, 0))
-        px = img.load()
-        for xx in range(2, 62):
-            px[xx, 21] = (40, 40, 40)
         return self._place(img)
 
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),

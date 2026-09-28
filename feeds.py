@@ -127,3 +127,20 @@ def parse_indices(spec):
         if sym:
             items.append((sym.upper(), (label or sym.lstrip("^"))[:4].upper()))
     return items or DEFAULT_INDICES
+
+
+def geocode(query, session=None):
+    """Places matching a ZIP code or city name (Open-Meteo geocoding, free, no key)."""
+    query = query.strip()
+    params = {"name": query, "count": 5, "language": "en", "format": "json"}
+    if query.isdigit() and len(query) == 5:  # US ZIP code
+        params["countryCode"] = "US"
+    s = session or requests.Session()
+    r = s.get("https://geocoding-api.open-meteo.com/v1/search", params=params, timeout=15)
+    r.raise_for_status()
+    out = []
+    for p in r.json().get("results", []) or []:
+        label = ", ".join(x for x in (p.get("name"), p.get("admin1"), p.get("country_code")) if x)
+        out.append({"label": label, "lat": round(float(p["latitude"]), 4),
+                    "lon": round(float(p["longitude"]), 4), "timezone": p.get("timezone", "")})
+    return out

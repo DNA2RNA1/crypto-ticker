@@ -40,6 +40,11 @@ EDITABLE = {  # key -> validator returning the string to store
     "REFRESH_RATE": lambda v: "auto" if str(v).lower() in ("auto", "0", "") else _int(v, 60, 3600),
     "FEATURED": lambda v: _featured(v),
     "SCREENS": lambda v: _screens(v),
+    "WEATHER_LAT": lambda v: _float(v, -90, 90),
+    "WEATHER_LON": lambda v: _float(v, -180, 180),
+    "WEATHER_PLACE": lambda v: _text(v, 60),
+    "TEMP_UNIT": lambda v: _choice(v.upper(), ("F", "C")),
+    "TIMEZONE": lambda v: _tz(v),
     "INDICES_SOURCE": lambda v: _choice(v, ("coingecko", "yahoo")),
 }
 
@@ -67,6 +72,26 @@ def _dim(v):
     m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", v)
     if not m or int(m[1]) > 23 or int(m[2]) > 23:
         raise ValueError("use start-end hours, e.g. 22-7")
+    return v
+
+
+def _float(v, lo, hi):
+    n = float(v)
+    if not lo <= n <= hi:
+        raise ValueError(f"must be {lo} to {hi}")
+    return f"{n:.4f}"
+
+
+def _text(v, maxlen):
+    v = re.sub(r"[^\w ,.'()-]", "", str(v), flags=re.UNICODE).strip()
+    return v[:maxlen]
+
+
+def _tz(v):
+    if v in ("", None):
+        return ""
+    from zoneinfo import ZoneInfo
+    ZoneInfo(v)  # raises if unknown
     return v
 
 
@@ -234,6 +259,11 @@ class WebApp:
             "featured": [x for x in (s.get("FEATURED") or "").split(",") if x],
             "screens": (s.get("SCREENS") or "clock,feargreed,indices,coins").split(","),
             "indices_source": s.get("INDICES_SOURCE") or "coingecko",
+            "weather_place": s.get("WEATHER_PLACE") or ("Edinburg, Texas, US" if not s.get("WEATHER_LAT") else ""),
+            "weather_lat": s.get("WEATHER_LAT") or "26.3017",
+            "weather_lon": s.get("WEATHER_LON") or "-98.1633",
+            "temp_unit": (s.get("TEMP_UNIT") or "F").upper(),
+            "timezone": s.get("TIMEZONE") or "",
         }
 
     def save_icon(self, symbol, data):
@@ -336,6 +366,16 @@ def make_handler(app):
                 return self._send(401, {"error": "login required"})
             if url.path == "/api/settings":
                 return self._send(200, app.settings())
+            if url.path == "/api/geocode":
+                q = parse_qs(url.query).get("q", [""])[0].strip()
+                if len(q) < 3:
+                    return self._send(200, {"places": []})
+                try:
+                    from feeds import geocode
+                    return self._send(200, {"places": geocode(q)})
+                except Exception as exc:
+                    log.warning("geocode failed: %s", exc)
+                    return self._send(502, {"error": "Location lookup failed. Check the Pi's internet."})
             if url.path == "/api/search":
                 q = parse_qs(url.query).get("q", [""])[0].strip()
                 if len(q) < 2:
@@ -485,6 +525,14 @@ function render(){
      <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>`:''}
   </div>
   <p class="hint">Shown in this order at the start of each cycle, then your coins.</p>
+  <h2>Weather on the clock</h2><div class="card">
+   <div class="row"><div class="grow">Location<div class="name" id="wplace">${esc(S.weather_place||(S.weather_lat+', '+S.weather_lon))}</div></div></div>
+   <div class="row" style="border-top:0;padding-top:0;gap:8px">
+     <input id="zip" type="search" inputmode="text" placeholder="ZIP code or city" autocomplete="postal-code" style="flex:1">
+     <button class="btn" id="zipgo" style="width:auto;padding:0 14px">Find</button></div>
+   <div id="places"></div>
+   <div class="row"><div class="grow">Temperature</div><div style="width:120px">${seg('temp_unit',[['F','°F'],['C','°C']])}</div></div>
+  </div>
   <h2>Display</h2><div class="card">
    <div class="row"><div class="grow">Layout</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('layout',[['classic','Icons'],['chart','Chart'],['mix','Mix']])}</div>
@@ -512,7 +560,8 @@ function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
-      screens:S.screens.join(','),indices_source:S.indices_source,transition:S.transition,brightness:S.brightness,
+      screens:S.screens.join(','),indices_source:S.indices_source,temp_unit:S.temp_unit,
+      weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}catch(e){if(e.message!='login')toast(e.message,true)}
   },extra===0?0:450);
@@ -542,6 +591,19 @@ function bind(){
     const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);on.add('coins');
     S.screens=order.filter(k=>on.has(k));save();render()});
   if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
+  const findPlace=async()=>{
+    const q=$('#zip').value.trim();if(q.length<3)return toast('Enter a ZIP code or city',true);
+    const box=$('#places');box.innerHTML='<div class="row"><div class="grow name">Looking up…</div></div>';
+    try{
+      const {places}=await api('/api/geocode?q='+encodeURIComponent(q));
+      if(!places.length){box.innerHTML='<div class="row"><div class="grow name">No match. Try a city name.</div></div>';return}
+      box.innerHTML=places.map((p,i)=>`<div class="row" data-p="${i}"><div class="grow">${esc(p.label)}<div class="name">${p.timezone?esc(p.timezone):''}</div></div><div class="add">＋</div></div>`).join('');
+      box.onclick=e=>{const r=e.target.closest('[data-p]');if(!r)return;const p=places[+r.dataset.p];
+        S.weather_lat=p.lat;S.weather_lon=p.lon;S.weather_place=p.label;if(p.timezone)S.timezone=p.timezone;
+        $('#wplace').textContent=p.label;box.innerHTML='';$('#zip').value='';toast('Weather: '+p.label);save(0)};
+    }catch(e){if(e.message!='login')box.innerHTML=`<div class="row"><div class="grow err">${esc(e.message)}</div></div>`}
+  };
+  $('#zipgo').onclick=findPlace;$('#zip').onkeydown=e=>{if(e.key=='Enter')findPlace()};
   $('#bright').oninput=e=>{S.brightness=+e.target.value;$('#bv').textContent=S.brightness+'%';save()};
   $('#sleep').oninput=e=>{S.sleep=+e.target.value;$('#sv').textContent=S.sleep+'s';save()};
   $('#slide').onchange=e=>{S.transition=e.target.checked?'slide':'none';save()};
