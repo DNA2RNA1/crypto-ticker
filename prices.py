@@ -97,6 +97,7 @@ class CoinGecko:
                 "change_24h": row.get("price_change_percentage_24h"),
                 "sparkline": [float(p) for p in spark if p is not None],
                 "image": row.get("image"),
+                "updated": row.get("last_updated"),
             })
         if not assets:
             raise PriceError("no usable price data returned")

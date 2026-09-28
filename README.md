@@ -15,7 +15,8 @@ Each coin screen shows:
 - a 7-day sparkline (green if up over the week, red if down)
 - the price, auto-sized to fit (`$109,235`, `$4,012.37`, `$0.0000123`)
 
-Screens slide between coins. There's a loading screen, a `NO DATA` screen when
+Each cycle starts with a **clock**, the crypto **Fear & Greed index**, and a **market indices**
+page (S&P 500 and Nasdaq), then your coins. Screens slide between each other. There's a loading screen, a `NO DATA` screen when
 prices can't be fetched, and a small red dot in the corner if the prices shown
 are stale. Optional night dimming.
 
@@ -91,6 +92,9 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 | SLEEP | 5 | Seconds each coin is shown |
 | TRANSITION | slide | `slide` or `none` |
 | FEATURED | snek | Coins that get a big-picture screen first |
+| SCREENS | clock,feargreed,indices,coins | Screens at the start of each cycle (coins always last) |
+| INDICES_SOURCE | coingecko | `coingecko` (tokenized S&P 500 / Nasdaq-100 funds, no extra calls) or `yahoo` (real index values incl. Dow; unofficial) |
+| TIMEZONE | America/Chicago | Clock and night-dimming time zone |
 | LAYOUT | classic | `classic` (icon + mini chart), `chart` (full-screen 7-day chart behind the text), or `mix` (alternate) |
 | BRIGHTNESS | 70 | 1–100 |
 | DIM_HOURS / DIM_BRIGHTNESS | off / 15 | e.g. `22-7` dims from 10pm to 7am |

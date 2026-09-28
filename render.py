@@ -16,13 +16,14 @@ FLAT = (150, 150, 150)
 SYMBOL = (255, 200, 0)
 PRICE = (255, 255, 255)
 DIM = (90, 90, 90)
+DIM_TEXT = (150, 150, 150)
 
 CURRENCY_SIGNS = {"usd": "$", "eur": "€", "gbp": "£", "jpy": "¥", "cad": "$", "aud": "$"}
 
 
 def load_fonts():
     return {name: BDFFont(os.path.join(FONT_DIR, f"{name}.bdf"))
-            for name in ("4x6", "5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B")}
+            for name in ("4x6", "5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B", "9x18B")}
 
 
 def trend_color(change):
@@ -262,6 +263,93 @@ class Renderer:
         f["5x8"].draw(img, x, 20, change_text(change), trend_color(change))
         pfont.draw(img, (self.w - pfont.width(ptext)) // 2, self.h - 1, ptext, PRICE)
         return img
+
+    # --- extra screens (drawn on a 64x32 base, centered on bigger panels) ----
+    def _base(self):
+        return Image.new("RGB", (64, 32), (0, 0, 0))
+
+    def _place(self, base):
+        if base.size == (self.w, self.h):
+            return base
+        img = self.blank()
+        img.paste(base, ((self.w - 64) // 2, (self.h - 32) // 2))
+        return img
+
+    def clock(self, now):
+        img = self._base()
+        f = self.fonts
+        hour = now.hour % 12 or 12
+        t = f"{hour}:{now.minute:02d}"
+        ampm = "AM" if now.hour < 12 else "PM"
+        big = f["9x18B"]
+        tw = big.width(t) + 2 + f["5x8"].width(ampm)
+        x = (64 - tw) // 2
+        end = big.draw(img, x, 17, t, PRICE)
+        f["5x8"].draw(img, end + 2, 9, ampm, SYMBOL)
+        date = now.strftime("%a %b %-d").upper()
+        f["5x8"].draw(img, (64 - f["5x8"].width(date)) // 2, 29, date, DIM_TEXT)
+        return self._place(img)
+
+    FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),
+                (74, (120, 210, 60)), (100, (0, 210, 90))]
+
+    def _fg_color(self, v):
+        for top, color in self.FG_ZONES:
+            if v <= top:
+                return color
+        return self.FG_ZONES[-1][1]
+
+    def fear_greed(self, fg):
+        img = self._base()
+        f = self.fonts
+        v = fg["value"]
+        color = self._fg_color(v)
+        title = "FEAR & GREED"
+        f["5x8"].draw(img, (64 - f["5x8"].width(title)) // 2, 7, title, DIM_TEXT)
+        num = str(v)
+        end = f["9x18B"].draw(img, 1, 23, num, color)
+        words = fg["label"].upper().split()
+        x = end + 3
+        if len(words) == 1:
+            f["5x8"].draw(img, x, 19, words[0], color)
+        else:
+            f["5x8"].draw(img, x, 15, words[0], color)
+            f["5x8"].draw(img, x, 23, " ".join(words[1:]), color)
+        # gauge: red -> green bar with a white marker at today's value
+        px = img.load()
+        for xx in range(2, 62):
+            c = self._fg_color(round((xx - 2) / 59 * 100))
+            for yy in (28, 29):
+                px[xx, yy] = tuple(int(ch * 0.45) for ch in c)
+        mx = 2 + round(v / 100 * 59)
+        for yy in range(26, 31):
+            px[max(2, min(61, mx)), yy] = (255, 255, 255)
+        return self._place(img)
+
+    def indices(self, rows, tag="7D"):
+        """Market page: one band per index with label, 24h change and a chart."""
+        img = self._base()
+        f = self.fonts
+        n = max(1, min(3, len(rows)))
+        band = 32 // n
+        for i, r in enumerate(rows[:n]):
+            top = i * band
+            color = trend_color(r["change"])
+            ctext = change_text(r["change"])
+            if n <= 2:  # label + change on one line, chart underneath
+                f["5x8"].draw(img, 1, top + 7, r["label"], PRICE)
+                f["5x8"].draw(img, 63 - f["5x8"].width(ctext), top + 7, ctext, color)
+                self._sparkline(img, r["spark"], (1, top + 9, 62, top + band - 2))
+            else:  # label, small chart, change on one line
+                lw = f["5x8"].width(r["label"])
+                cw = f["5x8"].width(ctext)
+                f["5x8"].draw(img, 1, top + 8, r["label"], PRICE)
+                f["5x8"].draw(img, 63 - cw, top + 8, ctext, color)
+                self._sparkline(img, r["spark"], (lw + 3, top + 1, 62 - cw - 2, top + band - 2))
+        if tag and n <= 2:
+            tw = f["4x6"].width(tag)
+            f["4x6"].draw(img, 63 - tw, 31, tag, (110, 110, 110))
+        return self._place(img)
 
     def message(self, title, detail="", color=SYMBOL):
         img = self.blank()

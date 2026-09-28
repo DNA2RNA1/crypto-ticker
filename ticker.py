@@ -16,12 +16,20 @@ from datetime import datetime
 
 from PIL import Image
 
+from zoneinfo import ZoneInfo
+
+from feeds import FearGreed, Indices, parse_indices
+from session import session_change
 from icons import IconStore
 from prices import CoinGecko, PriceError
 from render import Renderer
 from usage import Usage
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+SCREEN_NAMES = ("clock", "feargreed", "indices", "coins")
+# Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
+CG_INDICES = [("spx", "sp500-xstock", "S&P 500"), ("ndq", "nasdaq-xstock", "NASDAQ")]
 log = logging.getLogger("ticker")
 
 
@@ -63,6 +71,10 @@ class Config:
     transition: str = "slide"
     layout: str = "classic"
     featured: list = field(default_factory=list)
+    screens: list = field(default_factory=lambda: list(SCREEN_NAMES))
+    indices_source: str = "coingecko"
+    indices: str = ""
+    timezone: str = ""
     brightness: int = 70
     dim_hours: str = ""
     dim_brightness: int = 15
@@ -93,6 +105,11 @@ class Config:
         c.transition = env("TRANSITION", c.transition).lower()
         c.layout = env("LAYOUT", c.layout).lower()
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
+        screens = [s.strip().lower() for s in env("SCREENS", ",".join(SCREEN_NAMES)).split(",")]
+        c.screens = [s for s in screens if s in SCREEN_NAMES] or ["coins"]
+        c.indices_source = env("INDICES_SOURCE", c.indices_source).lower()
+        c.indices = env("INDICES", "")
+        c.timezone = env("TIMEZONE", "")
         c.brightness = env("BRIGHTNESS", c.brightness, int)
         c.dim_hours = env("DIM_HOURS", "")
         c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int)
@@ -109,6 +126,14 @@ class Config:
         c.panel_type = env("LED_PANEL_TYPE", "")
         c.no_hardware_pulse = env("LED_NO_HARDWARE_PULSE", False, bool)
         return c
+
+
+def get_tz(name):
+    try:
+        return ZoneInfo(name) if name else None
+    except Exception:
+        log.warning("unknown TIMEZONE %r, using the Pi's clock setting", name)
+        return None
 
 
 def in_dim_window(spec, now=None):
@@ -139,13 +164,26 @@ class Ticker:
         self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons,
                                  layout=cfg.layout)
         self.assets = []
+        self.index_rows = []
+        self.fear_greed = FearGreed()
+        self.yahoo = Indices(parse_indices(cfg.indices))
+        self.tz = get_tz(cfg.timezone)
         self.stale = False
         self.next_fetch = 0.0
         self.current = None
 
+    def _cg_indices(self, cfg):
+        return "indices" in cfg.screens and cfg.indices_source == "coingecko"
+
     def _make_api(self, cfg):
-        return CoinGecko(cfg.symbols, cfg.currency, cfg.api_key, cfg.api_pro,
+        symbols = list(cfg.symbols)
+        if self._cg_indices(cfg):  # rides along in the same request: no extra calls
+            symbols += [f"{sym}:{cid}" for sym, cid, _ in CG_INDICES]
+        return CoinGecko(symbols, cfg.currency, cfg.api_key, cfg.api_pro,
                          on_call=self.usage.count_call)
+
+    def now(self):
+        return datetime.now(self.tz)
 
     def interval(self):
         """Seconds between price refreshes (fixed, or auto from the budget)."""
@@ -156,7 +194,18 @@ class Ticker:
         if now < self.next_fetch:
             return
         try:
-            self.assets = self.api.fetch()
+            fetched = self.api.fetch()
+            index_ids = {cid for _, cid, _ in CG_INDICES} if self._cg_indices(self.cfg) else set()
+            labels = {cid: label for _, cid, label in CG_INDICES}
+            self.assets = [a for a in fetched if a["id"] not in index_ids]
+            self.index_rows = []
+            for a in fetched:
+                if a["id"] in index_ids:
+                    change, is_open = session_change(a["price"], a["sparkline"], a.get("updated"))
+                    self.index_rows.append({
+                        "label": labels[a["id"]], "spark": a["sparkline"], "open": is_open,
+                        # fall back to the rolling 24h figure only if history is missing
+                        "change": change if change is not None else (a["change_24h"] or 0.0)})
             self.stale = False
             self.next_fetch = now + self.interval()
             log.info("prices: %s", ", ".join(f"{a['symbol']} {a['price']:g}" for a in self.assets))
@@ -184,11 +233,14 @@ class Ticker:
         for name in HARDWARE_FIELDS:  # panel wiring can't change without a restart
             setattr(new, name, getattr(self.cfg, name))
         old = self.cfg
-        if (new.symbols, new.currency, new.api_key, new.api_pro) != \
-                (old.symbols, old.currency, old.api_key, old.api_pro):
+        if (new.symbols, new.currency, new.api_key, new.api_pro, self._cg_indices(new)) != \
+                (old.symbols, old.currency, old.api_key, old.api_pro, self._cg_indices(old)):
             self.api = self._make_api(new)
             self.next_fetch = 0  # fetch the new list right away
         self.usage.budget = new.monthly_budget
+        self.tz = get_tz(new.timezone)
+        if new.indices != old.indices:
+            self.yahoo = Indices(parse_indices(new.indices))
         self.cfg = new
         self.next_fetch = min(self.next_fetch, time.time() + self.interval())
         self.renderer.layout = new.layout if new.layout in Renderer.LAYOUTS else "classic"
@@ -202,7 +254,7 @@ class Ticker:
         return self.api.search(query)
 
     def apply_brightness(self):
-        dim = in_dim_window(self.cfg.dim_hours)
+        dim = in_dim_window(self.cfg.dim_hours, self.now())
         self.display.set_brightness(self.cfg.dim_brightness if dim else self.cfg.brightness)
 
     def show(self, image, hold):
@@ -233,17 +285,43 @@ class Ticker:
         self.usage.tick()
         self.refresh()
         self.apply_brightness()
-        if not self.assets:  # nothing to show yet; wait for the retry without spinning
-            self.wake.wait(1.0)
-            return
-        for asset in list(self.assets):
-            if asset["symbol"].lower() in self.cfg.featured:
-                self.show(self.renderer.featured(asset), max(2.0, self.cfg.sleep * 0.6))
-                if self.reload_pending:
-                    return
-            self.show(self.renderer.asset(asset, stale=self.stale), self.cfg.sleep)
+        shown = 0
+        for screen in self.screens():
+            image, hold = screen()
+            self.show(image, hold)
+            shown += 1
             if self.reload_pending:
                 return
+        if not shown:  # nothing to show yet; wait for the retry without spinning
+            self.wake.wait(1.0)
+
+    def screens(self):
+        """The screens for one pass of the cycle, in the configured order.
+        Each item is a function returning (image, seconds to hold)."""
+        out = []
+        sleep = self.cfg.sleep
+        for name in self.cfg.screens:
+            if name == "clock":
+                out.append(lambda: (self.renderer.clock(self.now()), sleep))
+            elif name == "feargreed":
+                fg = self.fear_greed.update()
+                if fg:
+                    out.append(lambda fg=fg: (self.renderer.fear_greed(fg), sleep))
+            elif name == "indices":
+                if self.cfg.indices_source == "yahoo":
+                    data = self.yahoo.update()
+                    rows = [{"label": r["label"], "change": r["change"], "spark": r["intraday"]}
+                            for r in (data or [])]
+                else:
+                    rows = self.index_rows
+                if rows:
+                    out.append(lambda rows=rows: (self.renderer.indices(rows, tag=None), sleep))
+            elif name == "coins":
+                for asset in list(self.assets):
+                    if asset["symbol"].lower() in self.cfg.featured:
+                        out.append(lambda a=asset: (self.renderer.featured(a), max(2.0, sleep * 0.6)))
+                    out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
+        return out
 
     def run(self):
         self.apply_brightness()

@@ -39,6 +39,8 @@ EDITABLE = {  # key -> validator returning the string to store
     "CURRENCY": lambda v: _choice(v.lower(), ("usd", "eur", "gbp", "cad", "aud", "jpy")),
     "REFRESH_RATE": lambda v: "auto" if str(v).lower() in ("auto", "0", "") else _int(v, 60, 3600),
     "FEATURED": lambda v: _featured(v),
+    "SCREENS": lambda v: _screens(v),
+    "INDICES_SOURCE": lambda v: _choice(v, ("coingecko", "yahoo")),
 }
 
 MAX_FAILS = 5
@@ -66,6 +68,17 @@ def _dim(v):
     if not m or int(m[1]) > 23 or int(m[2]) > 23:
         raise ValueError("use start-end hours, e.g. 22-7")
     return v
+
+
+def _screens(v):
+    allowed = ("clock", "feargreed", "indices", "coins")
+    names = [x.strip() for x in v.split(",") if x.strip()]
+    bad = [x for x in names if x not in allowed]
+    if bad:
+        raise ValueError(f"unknown screen: {bad[0]}")
+    if "coins" not in names:
+        names.append("coins")
+    return ",".join(names)
 
 
 def _featured(v):
@@ -219,6 +232,8 @@ class WebApp:
             "usage": (self.ticker.usage.summary(self.ticker.interval()) if self.ticker else None),
             "pin_set": bool(s.get("WEB_PIN")),
             "featured": [x for x in (s.get("FEATURED") or "").split(",") if x],
+            "screens": (s.get("SCREENS") or "clock,feargreed,indices,coins").split(","),
+            "indices_source": s.get("INDICES_SOURCE") or "coingecko",
         }
 
     def save_icon(self, symbol, data):
@@ -463,6 +478,13 @@ function render(){
   <input type="file" id="file" accept="image/*" hidden>
   <h2>Add a coin</h2><input id="q" type="search" placeholder="Search name or ticker, e.g. cardano" autocomplete="off" autocorrect="off" autocapitalize="off">
   <div class="card" id="results" style="margin-top:8px"></div>
+  <h2>Screens</h2><div class="card">
+   ${[['clock','Clock'],['feargreed','Fear &amp; Greed index'],['indices','Market indices']].map(([k,l])=>
+     `<div class="row"><div class="grow">${l}</div><label class="switch"><input type="checkbox" data-screen="${k}" ${S.screens.includes(k)?'checked':''}><span></span></label></div>`).join('')}
+   ${S.screens.includes('indices')?`<div class="row"><div class="grow">Indices from<div class="name" style="white-space:normal">${S.indices_source=='yahoo'?'Real index values incl. the Dow. Unofficial source; may stop working.':'Tokenized S&amp;P 500 and Nasdaq funds. No extra CoinGecko calls.'}</div></div>
+     <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>`:''}
+  </div>
+  <p class="hint">Shown in this order at the start of each cycle, then your coins.</p>
   <h2>Display</h2><div class="card">
    <div class="row"><div class="grow">Layout</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('layout',[['classic','Icons'],['chart','Chart'],['mix','Mix']])}</div>
@@ -489,7 +511,8 @@ function render(){
 function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
-    const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,transition:S.transition,brightness:S.brightness,
+    const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
+      screens:S.screens.join(','),indices_source:S.indices_source,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}catch(e){if(e.message!='login')toast(e.message,true)}
   },extra===0?0:450);
@@ -514,6 +537,11 @@ function bind(){
     searchTimer=setTimeout(()=>search(q),350)};
   document.querySelectorAll('[data-seg]').forEach(s=>s.onclick=e=>{const b=e.target.closest('button');if(!b)return;
     S[s.dataset.seg]=b.dataset.v;s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x==b));save()});
+  document.querySelectorAll('[data-screen]').forEach(cb=>cb.onchange=()=>{
+    const order=['clock','feargreed','indices','coins'];
+    const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);on.add('coins');
+    S.screens=order.filter(k=>on.has(k));save();render()});
+  if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
   $('#bright').oninput=e=>{S.brightness=+e.target.value;$('#bv').textContent=S.brightness+'%';save()};
   $('#sleep').oninput=e=>{S.sleep=+e.target.value;$('#sv').textContent=S.sleep+'s';save()};
   $('#slide').onchange=e=>{S.transition=e.target.checked?'slide':'none';save()};
