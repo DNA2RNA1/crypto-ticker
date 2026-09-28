@@ -315,7 +315,7 @@ class Renderer:
         return ((ts - ref).total_seconds() / 86400) % 29.530588853
 
     def _moon(self, img, cx, cy, r, now):
-        """Moon phase disk: lit part pale yellow, dark part faint (Northern Hemisphere view)."""
+        """Moon phase disk in silver (Northern Hemisphere view)."""
         import math
         p = self.moon_age(now) / 29.530588853  # 0 new, 0.5 full
         k = math.cos(2 * math.pi * p)
@@ -327,28 +327,89 @@ class Renderer:
                 ny, nx = y / r, x / r
                 w = math.sqrt(max(0.0, 1 - ny * ny))
                 lit = nx > k * w if p < 0.5 else nx < -k * w
-                px[cx + x, cy + y] = (245, 225, 150) if lit else (35, 35, 48)
+                px[cx + x, cy + y] = (200, 210, 235) if lit else (30, 32, 50)
+
+    # WMO weather codes (Open-Meteo) -> icon kind
+    @staticmethod
+    def weather_kind(code):
+        if code == 0:
+            return "clear"
+        if code in (1, 2):
+            return "partly"
+        if code == 3:
+            return "cloudy"
+        if code in (45, 48):
+            return "fog"
+        if 71 <= code <= 77 or code in (85, 86):
+            return "snow"
+        if code >= 95:
+            return "storm"
+        if 51 <= code <= 67 or 80 <= code <= 82:
+            return "rain"
+        return "cloudy"
+
+    def _cloud(self, d, x, y, color=(200, 205, 215)):
+        """Small cloud with its top-left corner at (x, y); about 11x6."""
+        d.ellipse((x + 2, y, x + 7, y + 5), fill=color)
+        d.ellipse((x + 5, y + 1, x + 10, y + 5), fill=color)
+        d.rectangle((x, y + 3, x + 10, y + 5), fill=color)
+
+    def _sun(self, d, cx, cy, r=3, color=(255, 200, 0)):
+        d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=color)
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0), (-1, -1), (1, 1), (-1, 1), (1, -1)):
+            d.point((cx + dx * (r + 2), cy + dy * (r + 2)), fill=color)
+
+    def weather_icon(self, img, x, y, wx, now):
+        """Draw a weather icon (12 wide x 9 tall) with its top-left at (x, y)."""
+        d = ImageDraw.Draw(img)
+        kind = self.weather_kind(wx.get("code", 0))
+        day = wx.get("is_day", True)
+        if kind == "clear":
+            if day:
+                self._sun(d, x + 6, y + 4, r=2)
+            else:
+                self._moon(img, x + 6, y + 4, 4, now)
+        elif kind == "partly":
+            if day:
+                d.ellipse((x + 1, y, x + 6, y + 5), fill=(255, 200, 0))
+            else:
+                self._moon(img, x + 4, y + 3, 3, now)
+            self._cloud(d, x + 1, y + 3)
+        elif kind == "cloudy":
+            self._cloud(d, x + 1, y + 2)
+        elif kind == "fog":
+            for i, yy in enumerate((y + 2, y + 5, y + 8)):
+                d.line((x + 1 + i % 2, yy, x + 11 - (i + 1) % 2, yy), fill=(150, 150, 160))
+        else:
+            self._cloud(d, x + 1, y, (170, 175, 190))
+            if kind == "rain":
+                for dx in (2, 5, 8):
+                    d.line((x + 1 + dx, y + 7, x + dx, y + 8), fill=(60, 140, 255))
+            elif kind == "snow":
+                for dx, dy in ((2, 7), (5, 8), (8, 7)):
+                    d.point((x + 1 + dx, y + dy), fill=(255, 255, 255))
+            elif kind == "storm":
+                d.line([(x + 6, y + 5), (x + 4, y + 7), (x + 7, y + 7), (x + 5, y + 8)], fill=(255, 220, 0))
 
     def clock(self, now, weather=None, unit="F"):
-        """Big white time with live seconds and moon phase; colorful info row:
-        temperature (green), day and date (orange), humidity (blue)."""
+        """Big white time with live seconds; weather icon top-right;
+        bottom row: temperature (green) and day/date (orange)."""
         img = self._base()
         f = self.fonts
         hour = now.hour % 12 or 12
         t = f"{hour}:{now.minute:02d}"
         big = f["9x18B"]
         tw = big.width(t)
-        tx = max(0, (45 - tw) // 2)
-        big.draw(img, tx, 16, t, PRICE)
-        # right column: moon, AM/PM, seconds
-        self._moon(img, 57, 5, 4, now)
+        big.draw(img, max(0, (45 - tw) // 2), 16, t, PRICE)
+        # right column: weather icon, AM/PM, seconds
+        if weather:
+            self.weather_icon(img, 51, 0, weather, now)
         f["4x6"].draw(img, 46, 16, "AM" if now.hour < 12 else "PM", (170, 170, 170))
         f["5x8"].draw(img, 54, 16, f"{now.second:02d}", (60, 200, 255))
-        # info row: temperature (green) | day & date (orange) | humidity (blue)
+        # bottom row
         font = f["5x8"]
-        temp = f"{round(weather['temp'])}°" if weather else None
-        hum = f"{weather['humidity']}%" if weather else None
-        side = (font.width(temp) + font.width(hum) + 4) if weather else 0
+        temp = f"{round(weather['temp'])}°{unit}" if weather else None
+        side = font.width(temp) + 4 if weather else 0
         wd = now.strftime("%a").upper()
         for date in (f"{wd} {now.month}/{now.day}", f"{wd} {now.day}",
                      f"{now.month}/{now.day}", f"{now.day}"):
@@ -356,13 +417,9 @@ class Renderer:
                 break
         if weather:
             font.draw(img, 0, 30, temp, (60, 220, 90))
-            font.draw(img, 64 - font.width(hum), 30, hum, (60, 150, 255))
-            left = font.width(temp) + 2
-            right = 64 - font.width(hum) - 2
-            font.draw(img, left + (right - left - font.width(date)) // 2, 30, date, (255, 140, 0))
+            font.draw(img, 64 - font.width(date), 30, date, (255, 140, 0))
         else:
             font.draw(img, (64 - font.width(date)) // 2, 30, date, (255, 140, 0))
-        # thin divider between time and info row
         px = img.load()
         for xx in range(2, 62):
             px[xx, 21] = (40, 40, 40)

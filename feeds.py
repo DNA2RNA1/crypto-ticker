@@ -49,7 +49,7 @@ class Feed:
 
 
 class Weather(Feed):
-    """Outdoor temperature and humidity from Open-Meteo (free, no key, non-commercial)."""
+    """Outdoor temperature and conditions from Open-Meteo (free, no key, non-commercial)."""
     URL = "https://api.open-meteo.com/v1/forecast"
     refresh_every = 900
 
@@ -60,11 +60,12 @@ class Weather(Feed):
     def fetch(self):
         r = self.session.get(self.URL, params={
             "latitude": self.lat, "longitude": self.lon,
-            "current": "temperature_2m,relative_humidity_2m",
+            "current": "temperature_2m,weather_code,is_day",
             "temperature_unit": self.unit}, timeout=15)
         r.raise_for_status()
         cur = r.json()["current"]
-        return {"temp": float(cur["temperature_2m"]), "humidity": int(round(cur["relative_humidity_2m"]))}
+        return {"temp": float(cur["temperature_2m"]), "code": int(cur.get("weather_code") or 0),
+                "is_day": bool(cur.get("is_day", 1))}
 
 
 class FearGreed(Feed):

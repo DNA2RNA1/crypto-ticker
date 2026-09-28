@@ -72,7 +72,7 @@ def main():
         ticker.fear_greed.data = {"value": 70, "label": "Greed", "yesterday": 65,
                                   "history": [60, 58, 62, 66, 64, 63, 65, 70]}
         ticker.fear_greed.next_fetch = float("inf")
-        ticker.weather.data = {"temp": 76.8, "humidity": 46}
+        ticker.weather.data = {"temp": 76.8, "code": 0, "is_day": False}
         ticker.weather.next_fetch = float("inf")
     ticker.step()
     if ticker.assets:  # slide back to the first coin so the GIF loops cleanly
