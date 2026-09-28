@@ -392,7 +392,7 @@ class Renderer:
                 d.line([(x + 6, y + 5), (x + 4, y + 7), (x + 7, y + 7), (x + 5, y + 8)], fill=(255, 220, 0))
 
     def clock(self, now, weather=None, unit="F"):
-        """Big white time with live seconds; weather icon top-right;
+        """Big white time; weather icon and AM/PM top-right;
         bottom row: temperature (green) and day/date (orange)."""
         img = self._base()
         f = self.fonts
@@ -401,11 +401,11 @@ class Renderer:
         big = f["9x18B"]
         tw = big.width(t)
         big.draw(img, max(0, (45 - tw) // 2), 16, t, PRICE)
-        # right column: weather icon, AM/PM, seconds
+        # right column: weather icon, AM/PM under it
         if weather:
             self.weather_icon(img, 51, 0, weather, now)
-        f["4x6"].draw(img, 46, 16, "AM" if now.hour < 12 else "PM", (170, 170, 170))
-        f["5x8"].draw(img, 54, 16, f"{now.second:02d}", (60, 200, 255))
+        ampm = "AM" if now.hour < 12 else "PM"
+        f["5x8"].draw(img, 63 - f["5x8"].width(ampm), 17, ampm, (170, 170, 170))
         # bottom row
         font = f["5x8"]
         temp = f"{round(weather['temp'])}°{unit}" if weather else None

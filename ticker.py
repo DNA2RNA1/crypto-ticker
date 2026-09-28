@@ -316,12 +316,9 @@ class Ticker:
         out = []
         sleep = self.cfg.sleep
         for name in self.cfg.screens:
-            if name == "clock":  # redrawn every second so the seconds tick
+            if name == "clock":
                 wx = self.weather.update()
-                for i in range(max(1, int(round(sleep)))):
-                    out.append(lambda first=(i == 0), wx=wx:
-                               (self.renderer.clock(self.now(), wx, self.cfg.temp_unit),
-                                1.0 - (time.time() % 1) if not first else 1.0, first))
+                out.append(lambda wx=wx: (self.renderer.clock(self.now(), wx, self.cfg.temp_unit), sleep))
             elif name == "feargreed":
                 fg = self.fear_greed.update()
                 if fg:
