@@ -56,7 +56,7 @@ class Config:
     currency: str = "usd"
     api_key: str = ""
     api_pro: bool = False
-    refresh_rate: int = 600
+    refresh_rate: int = 300
     sleep: float = 5
     transition: str = "slide"
     layout: str = "classic"

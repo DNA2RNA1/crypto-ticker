@@ -86,7 +86,7 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 | SYMBOLS | (starter list) | Coins to show, in order. `ada:cardano` pins an exact CoinGecko id |
 | CURRENCY | usd | Price currency (usd, eur, gbp, …) |
 | COINGECKO_API_KEY | | Optional free Demo API key |
-| REFRESH_RATE | 600 | Seconds between price refreshes (min 60) |
+| REFRESH_RATE | 300 | Seconds between price refreshes (min 60) |
 | SLEEP | 5 | Seconds each coin is shown |
 | TRANSITION | slide | `slide` or `none` |
 | FEATURED | snek | Coins that get a big-picture screen first |
