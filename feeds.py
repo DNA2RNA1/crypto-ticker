@@ -94,7 +94,7 @@ class Indices(Feed):
             if price is None or not prev:
                 raise ValueError(f"incomplete data for {symbol}")
             out.append({"label": label, "price": float(price),
-                        "change": (price - prev) / prev * 100,
+                        "change": (price - prev) / prev * 100, "points": price - prev,
                         "prev_close": float(prev), "intraday": closes})
         return out
 

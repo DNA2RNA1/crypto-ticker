@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 SCREEN_NAMES = ("clock", "feargreed", "indices", "coins")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
-CG_INDICES = [("spx", "sp500-xstock", "S&P 500"), ("ndq", "nasdaq-xstock", "NASDAQ")]
+CG_INDICES = [("spx", "sp500-xstock", "S&P"), ("ndq", "nasdaq-xstock", "NAS")]
 log = logging.getLogger("ticker")
 
 
@@ -167,6 +167,7 @@ class Ticker:
         self.index_rows = []
         self.fear_greed = FearGreed()
         self.yahoo = Indices(parse_indices(cfg.indices))
+        self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
         self.tz = get_tz(cfg.timezone)
         self.stale = False
         self.next_fetch = 0.0
@@ -201,9 +202,11 @@ class Ticker:
             self.index_rows = []
             for a in fetched:
                 if a["id"] in index_ids:
-                    change, is_open = session_change(a["price"], a["sparkline"], a.get("updated"))
+                    change, is_open, chart, dollars = session_change(
+                        a["price"], a["sparkline"], a.get("updated"))
                     self.index_rows.append({
-                        "label": labels[a["id"]], "spark": a["sparkline"], "open": is_open,
+                        "label": labels[a["id"]], "spark": chart or a["sparkline"], "open": is_open,
+                        "abs": dollars, "unit": "$",  # per tokenized fund share, in USD
                         # fall back to the rolling 24h figure only if history is missing
                         "change": change if change is not None else (a["change_24h"] or 0.0)})
             self.stale = False
@@ -257,8 +260,8 @@ class Ticker:
         dim = in_dim_window(self.cfg.dim_hours, self.now())
         self.display.set_brightness(self.cfg.dim_brightness if dim else self.cfg.brightness)
 
-    def show(self, image, hold):
-        if self.current is not None and self.cfg.transition == "slide":
+    def show(self, image, hold, slide=True):
+        if slide and self.current is not None and self.cfg.transition == "slide":
             self.slide(self.current, image)
         self.display.show(image, hold)
         self.current = image
@@ -287,8 +290,8 @@ class Ticker:
         self.apply_brightness()
         shown = 0
         for screen in self.screens():
-            image, hold = screen()
-            self.show(image, hold)
+            image, hold, *opts = screen()
+            self.show(image, hold, slide=opts[0] if opts else True)
             shown += 1
             if self.reload_pending:
                 return
@@ -310,12 +313,21 @@ class Ticker:
             elif name == "indices":
                 if self.cfg.indices_source == "yahoo":
                     data = self.yahoo.update()
-                    rows = [{"label": r["label"], "change": r["change"], "spark": r["intraday"]}
-                            for r in (data or [])]
+                    rows = [{"label": r["label"], "change": r["change"], "spark": r["intraday"],
+                             "abs": r["points"], "unit": ""} for r in (data or [])]
                 else:
-                    rows = self.index_rows
-                if rows:
-                    out.append(lambda rows=rows: (self.renderer.indices(rows, tag=None), sleep))
+                    rows = list(self.index_rows)
+                    dow = self.yahoo_dow.update()
+                    if rows and dow:  # S&P, DOW, NAS order
+                        rows.insert(1, {"label": "DOW", "change": dow[0]["change"],
+                                        "abs": dow[0]["points"], "unit": "",
+                                        "spark": dow[0]["intraday"]})
+                if rows:  # % first, then flip in place to the $ / point change
+                    half = max(2.0, sleep / 2)
+                    out.append(lambda rows=rows: (self.renderer.indices(rows, tag=None), half))
+                    if any(r.get("abs") is not None for r in rows):
+                        out.append(lambda rows=rows: (
+                            self.renderer.indices(rows, tag=None, mode="abs"), half, False))
             elif name == "coins":
                 for asset in list(self.assets):
                     if asset["symbol"].lower() in self.cfg.featured:

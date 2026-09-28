@@ -55,22 +55,33 @@ def price_at(spark, end_ts, when):
     return spark[i]
 
 
+def _slice(spark, end_ts, start, stop):
+    n = len(spark)
+    i0 = max(0, round((n - 1) - (end_ts - start.timestamp()) / 3600))
+    i1 = min(n - 1, round((n - 1) - (end_ts - stop.timestamp()) / 3600))
+    return spark[i0:i1 + 1] if i1 > i0 else []
+
+
 def session_change(price, spark, updated_iso, now=None):
-    """Percent change the way the real index reports it, plus whether it's open."""
+    """(percent change, market open?, chart points, absolute change) as the real index reports it:
+    today vs the previous close while open; the last session's move when closed."""
     now_et = (now or datetime.now(timezone.utc)).astimezone(ET)
     try:
         end_ts = datetime.fromisoformat(updated_iso.replace("Z", "+00:00")).timestamp()
     except (AttributeError, ValueError):
         end_ts = now_et.timestamp()
+    is_open = market_open(now_et)
     if len(spark) < 30:
-        return None, market_open(now_et)
-    if market_open(now_et):
-        ref = price_at(spark, end_ts, _close_on(_prev_trading_day(now_et.date())))
-        cur = price
+        return None, is_open, [], None
+    if is_open:
+        start = _close_on(_prev_trading_day(now_et.date()))
+        stop = now_et
+        ref, cur = price_at(spark, end_ts, start), price
     else:
-        close = last_close(now_et)
-        cur = price_at(spark, end_ts, close)
-        ref = price_at(spark, end_ts, _close_on(_prev_trading_day(close.date())))
+        stop = last_close(now_et)
+        start = _close_on(_prev_trading_day(stop.date()))
+        ref, cur = price_at(spark, end_ts, start), price_at(spark, end_ts, stop)
+    chart = _slice(spark, end_ts, start, stop)
     if not ref or cur is None:
-        return None, market_open(now_et)
-    return (cur - ref) / ref * 100, market_open(now_et)
+        return None, is_open, chart, None
+    return (cur - ref) / ref * 100, is_open, chart, cur - ref

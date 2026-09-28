@@ -275,19 +275,63 @@ class Renderer:
         img.paste(base, ((self.w - 64) // 2, (self.h - 32) // 2))
         return img
 
+    # color themes through the day: (hour, top color, bottom color)
+    CLOCK_THEMES = [(0, (80, 120, 255), (170, 60, 255)),    # night: blue -> violet
+                    (6, (255, 150, 40), (255, 70, 120)),     # sunrise: orange -> pink
+                    (10, (255, 230, 60), (255, 140, 0)),     # day: yellow -> orange
+                    (17, (255, 90, 60), (200, 50, 200)),     # sunset: red -> magenta
+                    (20, (120, 90, 255), (40, 170, 255))]    # evening: purple -> sky blue
+
+    def _theme(self, hour):
+        theme = self.CLOCK_THEMES[0]
+        for t in self.CLOCK_THEMES:
+            if hour >= t[0]:
+                theme = t
+        return theme[1], theme[2]
+
+    def _gradient_text(self, img, font, x, baseline, text, top, bottom):
+        """Draw text filled with a vertical color gradient."""
+        mask = Image.new("RGB", img.size)
+        end = font.draw(mask, x, baseline, text, (255, 255, 255))
+        m = mask.convert("L")
+        bbox = m.getbbox() or (0, baseline - font.ascent, 0, baseline)
+        y0, y1 = bbox[1], bbox[3] - 1  # gradient spans the glyphs themselves
+        grad = Image.new("RGB", img.size)
+        gp = grad.load()
+        for y in range(max(0, y0), min(img.height, y1 + 1)):
+            t = (y - y0) / max(1, y1 - y0)
+            c = tuple(int(top[i] + (bottom[i] - top[i]) * t) for i in range(3))
+            for xx in range(img.width):
+                gp[xx, y] = c
+        img.paste(grad, (0, 0), m)
+        return end
+
     def clock(self, now):
         img = self._base()
         f = self.fonts
+        top, bottom = self._theme(now.hour)
         hour = now.hour % 12 or 12
         t = f"{hour}:{now.minute:02d}"
         ampm = "AM" if now.hour < 12 else "PM"
         big = f["9x18B"]
         tw = big.width(t) + 2 + f["5x8"].width(ampm)
         x = (64 - tw) // 2
-        end = big.draw(img, x, 17, t, PRICE)
-        f["5x8"].draw(img, end + 2, 9, ampm, SYMBOL)
-        date = now.strftime("%a %b %-d").upper()
-        f["5x8"].draw(img, (64 - f["5x8"].width(date)) // 2, 29, date, DIM_TEXT)
+        end = self._gradient_text(img, big, x, 17, t, top, bottom)
+        f["5x8"].draw(img, end + 2, 9, ampm, bottom)
+        # date: weekday in the theme color, month/day in white
+        wd, md = now.strftime("%a").upper(), now.strftime("%b %-d").upper()
+        dw = f["5x8"].width(wd) + 5 + f["5x8"].width(md)
+        dx = (64 - dw) // 2
+        dx = f["5x8"].draw(img, dx, 27, wd, top)
+        f["5x8"].draw(img, dx + 5, 27, md, (200, 200, 200))
+        # day-progress bar along the bottom, colored by time of day
+        px = img.load()
+        minutes = now.hour * 60 + now.minute
+        for xx in range(64):
+            hr = xx / 64 * 24
+            c = self._theme(int(hr))[0]
+            lit = xx <= minutes / 1440 * 63
+            px[xx, 31] = c if lit else tuple(v // 6 for v in c)
         return self._place(img)
 
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),
@@ -300,33 +344,64 @@ class Renderer:
         return self.FG_ZONES[-1][1]
 
     def fear_greed(self, fg):
+        """Speedometer-style gauge: red-to-green arc lit up to today's value,
+        white needle, big number, mood on top, change vs yesterday and last week."""
+        import math
         img = self._base()
         f = self.fonts
-        v = fg["value"]
+        v = max(0, min(100, fg["value"]))
         color = self._fg_color(v)
-        title = "FEAR & GREED"
-        f["5x8"].draw(img, (64 - f["5x8"].width(title)) // 2, 7, title, DIM_TEXT)
-        num = str(v)
-        end = f["9x18B"].draw(img, 1, 23, num, color)
-        words = fg["label"].upper().split()
-        x = end + 3
-        if len(words) == 1:
-            f["5x8"].draw(img, x, 19, words[0], color)
-        else:
-            f["5x8"].draw(img, x, 15, words[0], color)
-            f["5x8"].draw(img, x, 23, " ".join(words[1:]), color)
-        # gauge: red -> green bar with a white marker at today's value
         px = img.load()
-        for xx in range(2, 62):
-            c = self._fg_color(round((xx - 2) / 59 * 100))
-            for yy in (28, 29):
-                px[xx, yy] = tuple(int(ch * 0.45) for ch in c)
-        mx = 2 + round(v / 100 * 59)
-        for yy in range(26, 31):
-            px[max(2, min(61, mx)), yy] = (255, 255, 255)
+        # gauge: semicircle centred at the bottom-left
+        cx, cy, r_out, r_in = 16, 30, 15, 11
+        for y in range(cy - r_out, cy + 1):
+            for x in range(cx - r_out, cx + r_out + 1):
+                d = math.hypot(x - cx, y - cy)
+                if r_in <= d <= r_out + 0.3:
+                    ang = math.degrees(math.atan2(cy - y, x - cx))  # 180 = left, 0 = right
+                    val = (180 - ang) / 180 * 100
+                    c = self._fg_color(round(val))
+                    lit = val <= v + 0.5
+                    px[x, y] = c if lit else tuple(ch // 5 for ch in c)
+        # needle
+        ang = math.radians(180 - v / 100 * 180)
+        for i in range(0, r_out - 1):
+            x = round(cx + math.cos(ang) * i)
+            y = round(cy - math.sin(ang) * i)
+            if 0 <= x < 64 and 0 <= y < 32:
+                px[x, y] = (255, 255, 255)
+        for dx in (-1, 0, 1):
+            px[cx + dx, cy] = (255, 255, 255)
+        # mood label across the top
+        label = fg["label"].upper()
+        lf = f["5x8"] if f["5x8"].width(label) <= 62 else f["4x6"]
+        lf.draw(img, 63 - lf.width(label), 7 if lf is f["5x8"] else 6, label, color)
+        # big number on the right
+        num = str(v)
+        nw = f["9x18B"].width(num)
+        self._gradient_text(img, f["9x18B"], 63 - nw - 4, 24, num,
+                            tuple(min(255, c + 60) for c in color), color)
+        # change vs yesterday (D) and a week ago (W)
+        hist = fg.get("history") or []
+        parts = []
+        for tag, back in (("D", 1), ("W", 7)):
+            if len(hist) > back:
+                d = v - hist[-1 - back]
+                parts.append((f"{tag}{d:+d}", UP if d > 0 else DOWN if d < 0 else FLAT))
+        x = 63 - sum(f["4x6"].width(t) for t, _ in parts) - 3 * max(0, len(parts) - 1)
+        for t, c in parts:
+            x = f["4x6"].draw(img, x, 31, t, c) + 3
         return self._place(img)
 
-    def indices(self, rows, tag="7D"):
+    @staticmethod
+    def abs_text(value, unit):
+        if value is None:
+            return "--"
+        mag = abs(value)
+        num = f"{mag:,.2f}" if mag < 10 else f"{mag:,.1f}" if mag < 100 else f"{mag:,.0f}"
+        return f"{'+' if value >= 0 else '-'}{unit}{num}"
+
+    def indices(self, rows, tag="7D", mode="pct"):
         """Market page: one band per index with label, 24h change and a chart."""
         img = self._base()
         f = self.fonts
@@ -335,7 +410,8 @@ class Renderer:
         for i, r in enumerate(rows[:n]):
             top = i * band
             color = trend_color(r["change"])
-            ctext = change_text(r["change"])
+            ctext = (self.abs_text(r.get("abs"), r.get("unit", "")) if mode == "abs"
+                     else change_text(r["change"]))
             if n <= 2:  # label + change on one line, chart underneath
                 f["5x8"].draw(img, 1, top + 7, r["label"], PRICE)
                 f["5x8"].draw(img, 63 - f["5x8"].width(ctext), top + 7, ctext, color)

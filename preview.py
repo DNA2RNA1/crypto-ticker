@@ -63,10 +63,14 @@ def main():
     if args.sample:
         ticker.assets = sample_assets(cfg.symbols)
         ticker.next_fetch = float("inf")
-        idx = sample_assets(["spx:sp500-xstock", "ndq:nasdaq-xstock"])
-        ticker.index_rows = [{"label": "S&P 500", "change": 0.42, "spark": idx[0]["sparkline"]},
-                             {"label": "NASDAQ", "change": -0.31, "spark": idx[1]["sparkline"]}]
-        ticker.fear_greed.data = {"value": 70, "label": "Greed", "yesterday": 65, "history": []}
+        up = [100 + i * 0.05 + (i % 5) * 0.03 for i in range(24)]
+        down = [100 - i * 0.03 + (i % 4) * 0.02 for i in range(24)]
+        ticker.index_rows = [{"label": "S&P", "change": 0.42, "abs": 3.24, "unit": "$", "spark": up},
+                             {"label": "NAS", "change": -0.31, "abs": -2.31, "unit": "$", "spark": down}]
+        ticker.yahoo_dow.data = [{"label": "DOW", "change": 0.18, "points": 81.4, "intraday": up}]
+        ticker.yahoo_dow.next_fetch = float("inf")
+        ticker.fear_greed.data = {"value": 70, "label": "Greed", "yesterday": 65,
+                                  "history": [60, 58, 62, 66, 64, 63, 65, 70]}
         ticker.fear_greed.next_fetch = float("inf")
     ticker.step()
     if ticker.assets:  # slide back to the first coin so the GIF loops cleanly
