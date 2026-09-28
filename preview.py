@@ -35,7 +35,7 @@ def sample_assets(symbols):
         for i in range(168):
             v *= 1 + rng.gauss(drift / 168, 0.006) + 0.004 * math.sin(i / 9)
             walk.append(v)
-        walk[-1] = price
+        walk = [x * price / walk[-1] for x in walk]  # end exactly at the current price
         out.append({"symbol": sym.upper(), "id": coin_id, "name": coin_id,
                     "price": price, "change_24h": rng.uniform(-6, 6),
                     "sparkline": walk, "image": None})

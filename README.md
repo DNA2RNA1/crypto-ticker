@@ -100,6 +100,18 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 
 **Custom icons:** put a PNG at `icons/<symbol>.png` (e.g. `icons/ada.png`) to replace the downloaded one.
 
+## iPhone widget (home screen, lock screen, StandBy)
+
+`iphone/CryptoTicker.js` is a widget for the free **Scriptable** app with the same chart look.
+
+1. Install Scriptable from the App Store. Tap **+**, paste the whole file, and name it "Crypto Ticker".
+2. Add a Scriptable widget, long-press it → **Edit Widget**: Script = Crypto Ticker, Parameter = a coin (`btc`, `pepe`, `night`).
+   A medium widget takes up to three: `btc,ada,snek`.
+3. For StandBy, add small Scriptable widgets to StandBy's stacks, one coin each, and swipe to switch.
+
+iOS decides when widgets refresh (usually every 15–30 minutes); tapping the widget opens the coin on CoinGecko.
+If the phone is offline, it keeps showing the last prices with an "offline" note.
+
 ## Preview without a Pi
 
 ```bash
