@@ -86,7 +86,8 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 | SYMBOLS | (starter list) | Coins to show, in order. `ada:cardano` pins an exact CoinGecko id |
 | CURRENCY | usd | Price currency (usd, eur, gbp, …) |
 | COINGECKO_API_KEY | | Optional free Demo API key |
-| REFRESH_RATE | 300 | Seconds between price refreshes (min 60) |
+| REFRESH_RATE | auto | `auto` refreshes as often as once a minute while staying under the monthly budget; or a fixed number of seconds (min 60) |
+| MONTHLY_CALL_BUDGET | 10000 | CoinGecko calls allowed per month (free Demo plan: 10,000) |
 | SLEEP | 5 | Seconds each coin is shown |
 | TRANSITION | slide | `slide` or `none` |
 | FEATURED | snek | Coins that get a big-picture screen first |
@@ -132,7 +133,7 @@ For a live on-screen emulator: `pip install RGBMatrixEmulator` then `python tick
 ## Troubleshooting
 
 - **Flicker or garbled pixels:** raise `LED_SLOWDOWN_GPIO` by 1 and restart.
-- **`NO DATA / RATE LIMIT`:** raise `REFRESH_RATE`, or add a free CoinGecko Demo key.
+- **`NO DATA / RATE LIMIT`:** use `REFRESH_RATE=auto` (or a slower rate), and add a free CoinGecko Demo key. The phone page shows this month's call count.
 - **Wrong coin for a ticker:** pin it, e.g. `SYMBOLS=btc,uni:uniswap`.
 - **Blank panel, service running:** check the log; make sure you rebooted after install (the audio driver must be off).
 

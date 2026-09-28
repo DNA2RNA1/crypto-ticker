@@ -37,7 +37,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "DIM_HOURS": lambda v: _dim(v),
     "DIM_BRIGHTNESS": lambda v: _int(v, 1, 100),
     "CURRENCY": lambda v: _choice(v.lower(), ("usd", "eur", "gbp", "cad", "aud", "jpy")),
-    "REFRESH_RATE": lambda v: _int(v, 60, 3600),
+    "REFRESH_RATE": lambda v: "auto" if str(v).lower() in ("auto", "0", "") else _int(v, 60, 3600),
     "FEATURED": lambda v: _featured(v),
 }
 
@@ -215,7 +215,8 @@ class WebApp:
             "dim_hours": s.get("DIM_HOURS", ""),
             "dim_brightness": int(s.get("DIM_BRIGHTNESS") or 15),
             "currency": s.get("CURRENCY", "usd"),
-            "refresh_rate": int(s.get("REFRESH_RATE") or 600),
+            "refresh_rate": (s.get("REFRESH_RATE") or "auto").lower(),
+            "usage": (self.ticker.usage.summary(self.ticker.interval()) if self.ticker else None),
             "pin_set": bool(s.get("WEB_PIN")),
             "featured": [x for x in (s.get("FEATURED") or "").split(",") if x],
         }
@@ -479,7 +480,8 @@ function render(){
   </div>
   <h2>Prices</h2><div class="card">
    <div class="row"><div class="grow">Currency</div><select id="cur">${['usd','eur','gbp','cad','aud','jpy'].map(c=>`<option ${S.currency==c?'selected':''}>${c}</option>`).join('')}</select></div>
-   <div class="row"><div class="grow">Refresh prices every</div><select id="rr">${[[60,'1 min'],[120,'2 min'],[300,'5 min'],[600,'10 min'],[900,'15 min'],[1800,'30 min']].map(([v,l])=>`<option value="${v}" ${S.refresh_rate==v?'selected':''}>${l}</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Refresh prices every</div><select id="rr">${[['auto','Auto'],['60','1 min'],['120','2 min'],['180','3 min'],['300','5 min'],['600','10 min'],['900','15 min'],['1800','30 min']].map(([v,l])=>`<option value="${v}" ${String(S.refresh_rate)==v?'selected':''}>${l}</option>`).join('')}</select></div>
+   ${usageRow()}
   </div>
   <p class="hint">Changes show on the ticker within a few seconds.${S.pin_set?'':' <span class="err">No PIN set: anyone on your Wi-Fi can change this. Add WEB_PIN to settings.env.</span>'}</p>`;
   bind();
@@ -519,7 +521,20 @@ function bind(){
   if($('#dfrom')){const f=()=>{S.dim_hours=$('#dfrom').value+'-'+$('#dto').value;save()};$('#dfrom').onchange=f;$('#dto').onchange=f;
     $('#dbright').oninput=e=>{S.dim_brightness=+e.target.value;$('#dbv').textContent=S.dim_brightness+'%';save()}}
   $('#cur').onchange=e=>{S.currency=e.target.value;save()};
-  $('#rr').onchange=e=>{S.refresh_rate=+e.target.value;save()};
+  $('#rr').onchange=e=>{S.refresh_rate=e.target.value;save();setTimeout(load,1200)};
+}
+function usageRow(){
+  const u=S.usage;if(!u)return '';
+  const pct=Math.min(100,Math.round(u.calls/u.budget*100));
+  const every=u.interval<90?'every minute':`every ${(u.interval/60).toFixed(u.interval%60?1:0)} min`;
+  const perMonth=Math.round(30*24*3600/u.interval);
+  const note=S.refresh_rate=='auto'
+    ? `Auto: refreshing ${every}. Speeds up or slows down to stay under the free limit.`
+    : (perMonth>u.budget?`<span class="err">If left on 24/7 this rate would use ~${perMonth.toLocaleString()} calls a month.</span> Fine if the ticker is off part of the day; Auto handles this for you.`:`Refreshing ${every}.`);
+  return `<div class="row" style="display:block"><div style="display:flex;justify-content:space-between"><span>Calls this month</span>
+    <span class="val">${u.calls.toLocaleString()} / ${u.budget.toLocaleString()}</span></div>
+    <div style="height:6px;background:#0f1216;border-radius:3px;margin:8px 0 6px"><div style="height:6px;width:${pct}%;border-radius:3px;background:${pct>85?'var(--down)':'var(--up)'}"></div></div>
+    <div class="name" style="white-space:normal">${note}</div></div>`;
 }
 function pickIcon(c){
   const f=$('#file');f.value='';

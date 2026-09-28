@@ -19,11 +19,12 @@ class PriceError(Exception):
 
 
 class CoinGecko:
-    def __init__(self, symbols, currency="usd", api_key="", pro=False, timeout=15):
+    def __init__(self, symbols, currency="usd", api_key="", pro=False, timeout=15, on_call=None):
         """symbols: list of entries, each either a ticker ("btc") or
         "ticker:coingecko-id" ("ada:cardano") to pin an exact coin."""
         self.currency = currency.lower()
         self.timeout = timeout
+        self.on_call = on_call  # called once per API request (for the monthly budget)
         self.base = PRO_API if pro else API
         self.session = requests.Session()
         self.session.headers["User-Agent"] = "crypto-ticker/2.0"
@@ -43,6 +44,8 @@ class CoinGecko:
     def _markets(self, **params):
         params.update(vs_currency=self.currency, sparkline="true",
                       price_change_percentage="24h")
+        if self.on_call:
+            self.on_call()
         try:
             r = self.session.get(f"{self.base}/coins/markets", params=params,
                                  timeout=self.timeout)
@@ -101,6 +104,8 @@ class CoinGecko:
 
     def search(self, query, limit=12):
         """Coins matching a name or ticker, best-ranked first."""
+        if self.on_call:
+            self.on_call()
         try:
             r = self.session.get(f"{self.base}/search", params={"query": query},
                                  timeout=self.timeout)

@@ -19,6 +19,7 @@ from PIL import Image
 from icons import IconStore
 from prices import CoinGecko, PriceError
 from render import Renderer
+from usage import Usage
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 log = logging.getLogger("ticker")
@@ -56,7 +57,8 @@ class Config:
     currency: str = "usd"
     api_key: str = ""
     api_pro: bool = False
-    refresh_rate: int = 300
+    refresh_rate: int = 0          # seconds; 0 = auto (fit the monthly budget)
+    monthly_budget: int = 10000
     sleep: float = 5
     transition: str = "slide"
     layout: str = "classic"
@@ -84,7 +86,9 @@ class Config:
         c.currency = env("CURRENCY", c.currency).lower()
         c.api_key = env("COINGECKO_API_KEY", "")
         c.api_pro = env("COINGECKO_PRO", False, bool)
-        c.refresh_rate = max(60, env("REFRESH_RATE", c.refresh_rate, int))
+        rr = env("REFRESH_RATE", "auto").strip().lower()
+        c.refresh_rate = 0 if rr in ("", "auto", "0") else max(60, int(rr))
+        c.monthly_budget = env("MONTHLY_CALL_BUDGET", c.monthly_budget, int)
         c.sleep = env("SLEEP", c.sleep, float)
         c.transition = env("TRANSITION", c.transition).lower()
         c.layout = env("LAYOUT", c.layout).lower()
@@ -129,7 +133,8 @@ class Ticker:
         self.reload_pending = False
         if hasattr(display, "wake"):
             display.wake = self.wake
-        self.api = CoinGecko(cfg.symbols, cfg.currency, cfg.api_key, cfg.api_pro)
+        self.usage = Usage(cfg.monthly_budget)
+        self.api = self._make_api(cfg)
         self.icons = IconStore(download=cfg.download_icons)
         self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons,
                                  layout=cfg.layout)
@@ -138,6 +143,14 @@ class Ticker:
         self.next_fetch = 0.0
         self.current = None
 
+    def _make_api(self, cfg):
+        return CoinGecko(cfg.symbols, cfg.currency, cfg.api_key, cfg.api_pro,
+                         on_call=self.usage.count_call)
+
+    def interval(self):
+        """Seconds between price refreshes (fixed, or auto from the budget)."""
+        return self.cfg.refresh_rate or self.usage.auto_interval()
+
     def refresh(self, now=None):
         now = now or time.time()
         if now < self.next_fetch:
@@ -145,16 +158,16 @@ class Ticker:
         try:
             self.assets = self.api.fetch()
             self.stale = False
-            self.next_fetch = now + self.cfg.refresh_rate
+            self.next_fetch = now + self.interval()
             log.info("prices: %s", ", ".join(f"{a['symbol']} {a['price']:g}" for a in self.assets))
         except PriceError as exc:
             log.error("price fetch failed: %s", exc)
             self.stale = bool(self.assets)
-            self.next_fetch = now + min(60, self.cfg.refresh_rate)
+            self.next_fetch = now + min(60, self.interval())
             if not self.assets:
                 reason = "RATE LIMIT" if "429" in str(exc) else "NO NETWORK?"
                 self.show(self.renderer.message("NO DATA", reason, color=(230, 40, 30)),
-                          hold=min(30, self.cfg.refresh_rate))
+                          hold=min(30, self.interval()))
 
     def request_reload(self):
         """Called from the settings page after it saves settings.env."""
@@ -173,10 +186,11 @@ class Ticker:
         old = self.cfg
         if (new.symbols, new.currency, new.api_key, new.api_pro) != \
                 (old.symbols, old.currency, old.api_key, old.api_pro):
-            self.api = CoinGecko(new.symbols, new.currency, new.api_key, new.api_pro)
+            self.api = self._make_api(new)
             self.next_fetch = 0  # fetch the new list right away
-        elif new.refresh_rate < old.refresh_rate:
-            self.next_fetch = min(self.next_fetch, time.time() + new.refresh_rate)
+        self.usage.budget = new.monthly_budget
+        self.cfg = new
+        self.next_fetch = min(self.next_fetch, time.time() + self.interval())
         self.renderer.layout = new.layout if new.layout in Renderer.LAYOUTS else "classic"
         self.renderer.currency = new.currency
         self.icons.forget()  # pick up any newly uploaded icons
@@ -216,6 +230,7 @@ class Ticker:
         """Show every asset once (stops early if settings changed)."""
         if self.reload_pending:
             self.reload()
+        self.usage.tick()
         self.refresh()
         self.apply_brightness()
         if not self.assets:  # nothing to show yet; wait for the retry without spinning
