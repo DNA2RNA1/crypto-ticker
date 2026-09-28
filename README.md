@@ -89,6 +89,7 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 | REFRESH_RATE | 600 | Seconds between price refreshes (min 60) |
 | SLEEP | 5 | Seconds each coin is shown |
 | TRANSITION | slide | `slide` or `none` |
+| FEATURED | snek | Coins that get a big-picture screen first |
 | LAYOUT | classic | `classic` (icon + mini chart), `chart` (full-screen 7-day chart behind the text), or `mix` (alternate) |
 | BRIGHTNESS | 70 | 1–100 |
 | DIM_HOURS / DIM_BRIGHTNESS | off / 15 | e.g. `22-7` dims from 10pm to 7am |
@@ -98,7 +99,12 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 | LED_GPIO_MAPPING | adafruit-hat | `adafruit-hat-pwm` if you soldered the PWM jumper |
 | LED_SLOWDOWN_GPIO | 1 | Pi Zero 0–1, Pi 3 about 2, Pi 4/5 about 4. Raise it if the panel flickers |
 
-**Custom icons:** put a PNG at `icons/<symbol>.png` (e.g. `icons/ada.png`) to replace the downloaded one.
+**Custom icons:** on the phone settings page, tap a coin's picture and choose a photo; it's resized
+and replaces the downloaded icon (tap *Reset picture* to undo). Or copy a PNG to `icons/<symbol>.png`.
+Your pictures stay on the Pi (they're not committed to git).
+
+**Featured coins:** tap ★ on the phone page (or set `FEATURED=snek`). A featured coin gets a
+big-picture screen (32×32 icon, symbol, 24h change, mini chart) before its price screen.
 
 ## iPhone widget (home screen, lock screen, StandBy)
 

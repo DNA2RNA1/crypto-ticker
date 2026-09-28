@@ -4,3 +4,5 @@ __pycache__/
 /venv/
 /cache/
 /preview*.gif
+# your own coin pictures stay on the Pi, not on GitHub
+/icons/*.png

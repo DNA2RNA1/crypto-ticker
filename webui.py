@@ -24,6 +24,8 @@ log = logging.getLogger("ticker.web")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "cache")
+ICON_DIR = os.path.join(HERE, "icons")
+MAX_UPLOAD = 8 * 1024 * 1024
 COIN_META = os.path.join(CACHE, "coins.json")
 
 EDITABLE = {  # key -> validator returning the string to store
@@ -36,6 +38,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "DIM_BRIGHTNESS": lambda v: _int(v, 1, 100),
     "CURRENCY": lambda v: _choice(v.lower(), ("usd", "eur", "gbp", "cad", "aud", "jpy")),
     "REFRESH_RATE": lambda v: _int(v, 60, 3600),
+    "FEATURED": lambda v: _featured(v),
 }
 
 MAX_FAILS = 5
@@ -63,6 +66,14 @@ def _dim(v):
     if not m or int(m[1]) > 23 or int(m[2]) > 23:
         raise ValueError("use start-end hours, e.g. 22-7")
     return v
+
+
+def _featured(v):
+    syms = [e.strip().lower() for e in v.split(",") if e.strip()]
+    for e in syms:
+        if not re.fullmatch(r"[a-z0-9.\-]+", e):
+            raise ValueError(f"bad featured coin: {e}")
+    return ",".join(syms)
 
 
 def _symbols(v):
@@ -188,9 +199,12 @@ class WebApp:
             sym, _, cid = entry.partition(":")
             a = live.get(sym, {})
             m = meta.get(cid or a.get("id", ""), {})
+            custom = os.path.exists(os.path.join(ICON_DIR, f"{sym}.png"))
             coins.append({"entry": entry, "symbol": sym.upper(),
                           "name": m.get("name") or a.get("name") or "",
-                          "image": m.get("image") or a.get("image") or "",
+                          "image": (f"/icons/{sym}.png?v={int(os.path.getmtime(os.path.join(ICON_DIR, sym + '.png')))}"
+                                    if custom else m.get("image") or a.get("image") or ""),
+                          "custom_icon": custom,
                           "price": a.get("price")})
         return {
             "coins": coins,
@@ -203,7 +217,33 @@ class WebApp:
             "currency": s.get("CURRENCY", "usd"),
             "refresh_rate": int(s.get("REFRESH_RATE") or 600),
             "pin_set": bool(s.get("WEB_PIN")),
+            "featured": [x for x in (s.get("FEATURED") or "").split(",") if x],
         }
+
+    def save_icon(self, symbol, data):
+        """Store an uploaded picture as icons/<symbol>.png (it overrides the default)."""
+        if not re.fullmatch(r"[a-z0-9.\-]+", symbol):
+            raise ValueError("bad coin")
+        if not data or len(data) > MAX_UPLOAD:
+            raise ValueError("picture missing or too large")
+        try:
+            img = Image.open(io.BytesIO(data))
+            img.load()
+        except Exception:
+            raise ValueError("that file isn't a picture I can read")
+        img = img.convert("RGBA")
+        img.thumbnail((256, 256))
+        os.makedirs(ICON_DIR, exist_ok=True)
+        img.save(os.path.join(ICON_DIR, f"{symbol}.png"))
+        if self.ticker:
+            self.ticker.request_reload()
+
+    def reset_icon(self, symbol):
+        path = os.path.join(ICON_DIR, f"{symbol}.png")
+        if re.fullmatch(r"[a-z0-9.\-]+", symbol) and os.path.exists(path):
+            os.remove(path)
+        if self.ticker:
+            self.ticker.request_reload()
 
     def save(self, data):
         updates = {}
@@ -270,6 +310,10 @@ def make_handler(app):
                 return self._send(200, PAGE.encode(), "text/html; charset=utf-8")
             if url.path in ("/icon.png", "/apple-touch-icon.png"):
                 return self._send(200, app.icon_png(), "image/png")
+            m = re.fullmatch(r"/icons/([a-z0-9.\-]+)\.png", url.path)
+            if m and os.path.exists(os.path.join(ICON_DIR, m[1] + ".png")):
+                with open(os.path.join(ICON_DIR, m[1] + ".png"), "rb") as fh:
+                    return self._send(200, fh.read(), "image/png")
             if url.path == "/api/state":
                 return self._send(200, {"authed": self._authed(), "pin_set": bool(app.pin())})
             if not self._authed():
@@ -297,6 +341,19 @@ def make_handler(app):
                 return self._send(200, {"ok": True}, headers={"Set-Cookie": cookie})
             if not self._authed():
                 return self._send(401, {"error": "login required"})
+            if url.path in ("/api/icon", "/api/icon/reset"):
+                sym = parse_qs(url.query).get("sym", [""])[0].lower()
+                try:
+                    if url.path == "/api/icon":
+                        n = int(self.headers.get("Content-Length") or 0)
+                        if n > MAX_UPLOAD:
+                            raise ValueError("picture too large")
+                        app.save_icon(sym, self.rfile.read(n))
+                    else:
+                        app.reset_icon(sym)
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+                return self._send(200, {"ok": True})
             if url.path == "/api/settings":
                 try:
                     saved = app.save(self._body())
@@ -337,7 +394,10 @@ h1{font-size:28px;margin:18px 0 4px}h2{font-size:13px;text-transform:uppercase;l
 .row img,.ph{width:30px;height:30px;border-radius:50%;background:#222;flex:none}
 .grow{flex:1;min-width:0}.sym{font-weight:700}.name{color:var(--muted);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .btn{border:0;background:#232830;color:var(--text);width:38px;height:38px;border-radius:10px;font-size:17px}
-.btn:disabled{opacity:.25}.del{color:var(--down)}
+.btn:disabled{opacity:.25}.del{color:var(--down)}.star{color:#5a616b;font-size:20px}.star.on{color:var(--accent)}
+.pic{position:relative;flex:none;border:0;background:none;padding:0}.pic:after{content:"✎";position:absolute;right:-4px;bottom:-4px;font-size:11px;
+ background:#2b313a;color:var(--text);border-radius:50%;width:16px;height:16px;line-height:16px;text-align:center}
+.link{color:var(--accent);text-decoration:none}
 input[type=search],input[type=password]{width:100%;padding:13px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:17px}
 .seg{display:flex;width:100%;background:#0f1216;border-radius:10px;padding:3px;gap:3px}
 .seg button{flex:1;border:0;background:none;color:var(--muted);padding:9px 0;border-radius:8px;font-size:15px}
@@ -383,7 +443,11 @@ async function load(){
 }
 function coinRow(c,i,n){
   const img=c.image?`<img src="${esc(c.image)}" alt="">`:'<div class="ph"></div>';
-  return `<div class="row">${img}<div class="grow"><div class="sym">${esc(c.symbol)}</div><div class="name">${esc(c.name||c.entry)}</div></div>
+  const sym=c.entry.split(':')[0], fav=(S.featured||[]).includes(sym);
+  const sub=c.custom_icon?`<a href="#" class="link" data-reset="${i}">Reset picture</a>`:esc(c.name||c.entry);
+  return `<div class="row"><button class="pic" data-pic="${i}" aria-label="Change icon">${img}</button>
+  <div class="grow"><div class="sym">${esc(c.symbol)}</div><div class="name">${sub}</div></div>
+  <button class="btn star ${fav?'on':''}" data-star="${i}" aria-label="Feature">★</button>
   <button class="btn" data-up="${i}" ${i==0?'disabled':''} aria-label="Move up">↑</button>
   <button class="btn" data-down="${i}" ${i==n-1?'disabled':''} aria-label="Move down">↓</button>
   <button class="btn del" data-del="${i}" aria-label="Remove">✕</button></div>`;
@@ -394,6 +458,8 @@ function render(){
   const dim=S.dim_hours?S.dim_hours.split('-').map(Number):null;
   app.innerHTML=`<h1>Ticker</h1>
   <h2>Coins</h2><div class="card" id="coins">${S.coins.map((c,i)=>coinRow(c,i,S.coins.length)).join('')}</div>
+  <p class="hint">★ = featured: gets a big-picture screen before its price. Tap a coin's picture to use your own.</p>
+  <input type="file" id="file" accept="image/*" hidden>
   <h2>Add a coin</h2><input id="q" type="search" placeholder="Search name or ticker, e.g. cardano" autocomplete="off" autocorrect="off" autocapitalize="off">
   <div class="card" id="results" style="margin-top:8px"></div>
   <h2>Display</h2><div class="card">
@@ -421,15 +487,21 @@ function render(){
 function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
-    const body={symbols:S.coins.map(c=>c.entry).join(','),layout:S.layout,transition:S.transition,brightness:S.brightness,
+    const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}catch(e){if(e.message!='login')toast(e.message,true)}
   },extra===0?0:450);
 }
 function bind(){
   $('#coins').onclick=e=>{
+    const r=e.target.closest('[data-reset]');
+    if(r){e.preventDefault();resetIcon(S.coins[+r.dataset.reset]);return}
     const b=e.target.closest('button');if(!b)return;
     const L=S.coins;
+    if(b.dataset.pic!==undefined){pickIcon(L[+b.dataset.pic]);return}
+    if(b.dataset.star!==undefined){const sym=L[+b.dataset.star].entry.split(':')[0];S.featured=S.featured||[];
+      S.featured=S.featured.includes(sym)?S.featured.filter(x=>x!=sym):[...S.featured,sym];
+      b.classList.toggle('on');save(0);return}
     if(b.dataset.del!==undefined){if(L.length<2)return toast('Keep at least one coin',true);L.splice(+b.dataset.del,1)}
     else if(b.dataset.up!==undefined){const i=+b.dataset.up;[L[i-1],L[i]]=[L[i],L[i-1]]}
     else if(b.dataset.down!==undefined){const i=+b.dataset.down;[L[i+1],L[i]]=[L[i],L[i+1]]}
@@ -448,6 +520,30 @@ function bind(){
     $('#dbright').oninput=e=>{S.dim_brightness=+e.target.value;$('#dbv').textContent=S.dim_brightness+'%';save()}}
   $('#cur').onchange=e=>{S.currency=e.target.value;save()};
   $('#rr').onchange=e=>{S.refresh_rate=+e.target.value;save()};
+}
+function pickIcon(c){
+  const f=$('#file');f.value='';
+  f.onchange=async()=>{
+    const file=f.files[0];if(!file)return;
+    try{
+      // shrink on the phone first: small upload, and HEIC photos become PNG
+      const bmp=await createImageBitmap(file);const k=Math.min(1,256/Math.max(bmp.width,bmp.height));
+      const cv=document.createElement('canvas');cv.width=Math.round(bmp.width*k);cv.height=Math.round(bmp.height*k);
+      cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);
+      const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+      const sym=c.entry.split(':')[0];
+      const r=await fetch('/api/icon?sym='+encodeURIComponent(sym),{method:'POST',headers:{'Content-Type':'image/png'},body:blob});
+      if(r.status==401)return showLogin();
+      if(!r.ok)throw new Error((await r.json()).error);
+      toast('New picture for '+c.symbol);load();
+    }catch(e){toast(e.message||'Upload failed',true)}
+  };
+  f.click();
+}
+async function resetIcon(c){
+  const sym=c.entry.split(':')[0];
+  try{await api('/api/icon/reset?sym='+encodeURIComponent(sym),{});toast(c.symbol+' back to default');load()}
+  catch(e){if(e.message!='login')toast(e.message,true)}
 }
 async function search(q){
   const box=$('#results');box.innerHTML='<div class="row"><div class="grow name">Searching…</div></div>';

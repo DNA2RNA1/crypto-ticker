@@ -60,6 +60,7 @@ class Config:
     sleep: float = 5
     transition: str = "slide"
     layout: str = "classic"
+    featured: list = field(default_factory=list)
     brightness: int = 70
     dim_hours: str = ""
     dim_brightness: int = 15
@@ -87,6 +88,7 @@ class Config:
         c.sleep = env("SLEEP", c.sleep, float)
         c.transition = env("TRANSITION", c.transition).lower()
         c.layout = env("LAYOUT", c.layout).lower()
+        c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.brightness = env("BRIGHTNESS", c.brightness, int)
         c.dim_hours = env("DIM_HOURS", "")
         c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int)
@@ -177,6 +179,7 @@ class Ticker:
             self.next_fetch = min(self.next_fetch, time.time() + new.refresh_rate)
         self.renderer.layout = new.layout if new.layout in Renderer.LAYOUTS else "classic"
         self.renderer.currency = new.currency
+        self.icons.forget()  # pick up any newly uploaded icons
         self.cfg = new
         self.apply_brightness()
         log.info("settings reloaded: %s", ",".join(new.symbols))
@@ -219,6 +222,10 @@ class Ticker:
             self.wake.wait(1.0)
             return
         for asset in list(self.assets):
+            if asset["symbol"].lower() in self.cfg.featured:
+                self.show(self.renderer.featured(asset), max(2.0, self.cfg.sleep * 0.6))
+                if self.reload_pending:
+                    return
             self.show(self.renderer.asset(asset, stale=self.stale), self.cfg.sleep)
             if self.reload_pending:
                 return

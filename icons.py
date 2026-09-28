@@ -44,6 +44,11 @@ class IconStore:
             self._mem[key] = self._fit(src, size) if src else self._badge(asset["symbol"], font, size)
         return self._mem[key]
 
+    def forget(self):
+        """Drop in-memory icons so new files in icons/ are picked up."""
+        self._mem.clear()
+        self._src.clear()
+
     def _load_source(self, asset):
         sym = asset["symbol"].lower()
         for path in (os.path.join(USER_DIR, f"{sym}.png"),

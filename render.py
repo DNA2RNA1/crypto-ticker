@@ -234,6 +234,22 @@ class Renderer:
             font.draw(img, (self.w - font.width(text)) // 2, self.h - 2, text, PRICE)
         return img
 
+    def featured(self, asset):
+        """Splash for a favorite coin: big icon on the left; symbol, 24h change
+        and a mini 7-day chart on the right. Shown before its price screen."""
+        img = self.blank()
+        f = self.fonts
+        size = min(self.h, 48 if self.tall else 32)
+        if self.icons:
+            img.paste(self.icons.get(asset, f["7x13B"], size=size), (0, (self.h - size) // 2))
+        x = size + 2
+        change = asset.get("change_24h")
+        sym_font = f["7x13B"] if f["7x13B"].width(asset["symbol"]) <= self.w - x else f["6x13B"]
+        sym_font.draw(img, x, 11, asset["symbol"], SYMBOL)
+        f["5x8"].draw(img, x, 20, change_text(change), trend_color(change))
+        self._sparkline(img, asset.get("sparkline", []), (x, 23, self.w - 1, self.h - 1))
+        return img
+
     def message(self, title, detail="", color=SYMBOL):
         img = self.blank()
         f = self.fonts
