@@ -1,0 +1,16 @@
+[Unit]
+Description=Crypto price ticker on RGB LED matrix
+Wants=network-online.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+WorkingDirectory=__DIR__
+ExecStart=__DIR__/venv/bin/python __DIR__/ticker.py
+Restart=always
+RestartSec=10
+# The LED library needs root for precise GPIO timing.
+User=root
+
+[Install]
+WantedBy=multi-user.target

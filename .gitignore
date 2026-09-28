@@ -1,3 +1,6 @@
 *.pyc
-
+__pycache__/
 /settings.env
+/venv/
+/cache/
+/preview*.gif

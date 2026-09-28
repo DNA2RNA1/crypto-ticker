@@ -1,160 +1,202 @@
 #!/usr/bin/env python3
+"""Crypto price ticker for an RGB LED matrix on a Raspberry Pi.
 
-import itertools
+Run on the Pi:        sudo ./venv/bin/python ticker.py
+Try it on a PC:       python ticker.py --emulate      (needs RGBMatrixEmulator)
+Settings come from environment variables or settings.env (see settings.env.example).
+"""
+
+import argparse
+import logging
 import os
 import time
+from dataclasses import dataclass, field
+from datetime import datetime
 
-from frame import Frame
-from rgbmatrix import graphics
-from price_apis import get_api_cls, logger
+from PIL import Image
+
+from icons import IconStore
+from prices import CoinGecko, PriceError
+from render import Renderer
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+log = logging.getLogger("ticker")
 
 
-class Ticker(Frame):
-    def __init__(self, *args, **kwargs):
-        """Initialize the Ticker class
+def load_env_file(path):
+    """Read KEY=value lines into os.environ (existing variables win)."""
+    if not os.path.exists(path):
+        return
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
-        Gather the users settings from environment variables, then initialize the
-        LED Panel Frame class.
-        """
-        # initialize variables used for price data cache
-        self._cached_price_data = None
-        self._last_fetch_time = 0
 
-        # Set up the API
-        api_cls = get_api_cls(os.environ.get('API', 'coingecko'))
-        self.api = api_cls(symbols=self.get_symbols(), currency=self.get_currency())
+def env(name, default, cast=str):
+    raw = os.environ.get(name, "")
+    if raw == "":
+        return default
+    if cast is bool:
+        return raw.lower() in ("1", "true", "yes", "on")
+    return cast(raw)
 
-        # Get user settings
-        self.refresh_rate = int(os.environ.get('REFRESH_RATE', 300))  # 300s or 5m
-        self.sleep = int(os.environ.get('SLEEP', 3))  # 3s
 
-        super().__init__(*args, **kwargs)
+@dataclass
+class Config:
+    symbols: list = field(default_factory=lambda: ["btc", "eth"])
+    currency: str = "usd"
+    api_key: str = ""
+    api_pro: bool = False
+    refresh_rate: int = 600
+    sleep: float = 5
+    transition: str = "slide"
+    brightness: int = 70
+    dim_hours: str = ""
+    dim_brightness: int = 15
+    download_icons: bool = True
+    rows: int = 32
+    cols: int = 64
+    chain: int = 1
+    parallel: int = 1
+    gpio_mapping: str = "adafruit-hat"
+    gpio_slowdown: int = 1
+    pwm_bits: int = 11
+    pwm_lsb_nanoseconds: int = 130
+    rgb_sequence: str = "RGB"
+    panel_type: str = ""
+    no_hardware_pulse: bool = False
 
-    def get_symbols(self):
-        """Get the symbols to include"""
-        symbols = os.environ.get('SYMBOLS', 'btc,eth')
-        if not symbols:
-            return 'btc,eth'
-        return symbols
+    @classmethod
+    def from_env(cls):
+        c = cls()
+        c.symbols = [s for s in env("SYMBOLS", "btc,eth").split(",") if s.strip()]
+        c.currency = env("CURRENCY", c.currency).lower()
+        c.api_key = env("COINGECKO_API_KEY", "")
+        c.api_pro = env("COINGECKO_PRO", False, bool)
+        c.refresh_rate = max(60, env("REFRESH_RATE", c.refresh_rate, int))
+        c.sleep = env("SLEEP", c.sleep, float)
+        c.transition = env("TRANSITION", c.transition).lower()
+        c.brightness = env("BRIGHTNESS", c.brightness, int)
+        c.dim_hours = env("DIM_HOURS", "")
+        c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int)
+        c.download_icons = env("DOWNLOAD_ICONS", True, bool)
+        c.rows = env("LED_ROWS", c.rows, int)
+        c.cols = env("LED_COLS", c.cols, int)
+        c.chain = env("LED_CHAIN", c.chain, int)
+        c.parallel = env("LED_PARALLEL", c.parallel, int)
+        c.gpio_mapping = env("LED_GPIO_MAPPING", c.gpio_mapping)
+        c.gpio_slowdown = env("LED_SLOWDOWN_GPIO", c.gpio_slowdown, int)
+        c.pwm_bits = env("LED_PWM_BITS", c.pwm_bits, int)
+        c.pwm_lsb_nanoseconds = env("LED_PWM_LSB_NANOSECONDS", c.pwm_lsb_nanoseconds, int)
+        c.rgb_sequence = env("LED_RGB_SEQUENCE", c.rgb_sequence)
+        c.panel_type = env("LED_PANEL_TYPE", "")
+        c.no_hardware_pulse = env("LED_NO_HARDWARE_PULSE", False, bool)
+        return c
 
-    def get_currency(self):
-        """Get the currency to use"""
-        currency = os.environ.get('CURRENCY', 'usd')
-        if not currency:
-            return 'usd'
-        return currency
 
-    @property
-    def price_data(self):
-        """Price data for the requested assets, update automatically.
+def in_dim_window(spec, now=None):
+    """spec like '22-7' (10pm to 7am). Empty spec means never dim."""
+    if not spec or "-" not in spec:
+        return False
+    start, end = (int(p) % 24 for p in spec.split("-", 1))
+    hour = (now or datetime.now()).hour
+    return start <= hour < end if start < end else (hour >= start or hour < end)
 
-        This function will return a cached copy of the asset prices unless its time to
-        fetch fresh data. We'll use the REFRESH_RATE environment variable to determine
-        if it's time to refresh data.
 
-        Returns:
-            Updated price data. See self.api.fetch_price_data.
-        """
-        # Determine if the cache is stale
-        cache_is_stale = (time.time() - self._last_fetch_time) > self.refresh_rate
+class Ticker:
+    def __init__(self, cfg, display):
+        self.cfg = cfg
+        self.display = display
+        self.api = CoinGecko(cfg.symbols, cfg.currency, cfg.api_key, cfg.api_pro)
+        self.icons = IconStore(download=cfg.download_icons)
+        self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons)
+        self.assets = []
+        self.stale = False
+        self.next_fetch = 0.0
+        self.current = None
 
-        # See if we should return the cached price data
-        if self._cached_price_data and not cache_is_stale:
-            logger.info('Using cached price data.')
-            return self._cached_price_data
+    def refresh(self, now=None):
+        now = now or time.time()
+        if now < self.next_fetch:
+            return
+        try:
+            self.assets = self.api.fetch()
+            self.stale = False
+            self.next_fetch = now + self.cfg.refresh_rate
+            log.info("prices: %s", ", ".join(f"{a['symbol']} {a['price']:g}" for a in self.assets))
+        except PriceError as exc:
+            log.error("price fetch failed: %s", exc)
+            self.stale = bool(self.assets)
+            self.next_fetch = now + min(60, self.cfg.refresh_rate)
+            if not self.assets:
+                reason = "RATE LIMIT" if "429" in str(exc) else "NO NETWORK?"
+                self.show(self.renderer.message("NO DATA", reason, color=(230, 40, 30)),
+                          hold=min(30, self.cfg.refresh_rate))
 
-        # Otherwise fetch new data and set the _last_fetch_time
-        price_data = self.api.fetch_price_data()
-        self._last_fetch_time = time.time()
-        self._cached_price_data = price_data
+    def apply_brightness(self):
+        dim = in_dim_window(self.cfg.dim_hours)
+        self.display.set_brightness(self.cfg.dim_brightness if dim else self.cfg.brightness)
 
-        return price_data
+    def show(self, image, hold):
+        if self.current is not None and self.cfg.transition == "slide":
+            self.slide(self.current, image)
+        self.display.show(image, hold)
+        self.current = image
 
-    def get_ticker_canvas(self, asset):
-        """Build the ticker canvas given an asset
+    def slide(self, old, new, frames=14, duration=0.45):
+        w = self.display.width
+        for i in range(1, frames):
+            t = i / frames
+            t = 1 - (1 - t) ** 3  # ease-out
+            dx = round(w * t)
+            frame = Image.new("RGB", old.size)
+            frame.paste(old, (-dx, 0))
+            frame.paste(new, (w - dx, 0))
+            self.display.show(frame, duration / frames)
 
-        Returns:
-            A canvas object with the symbol, change, and price drawn.
-        """
-        # Generate a fresh canvas
-        canvas = self.matrix.CreateFrameCanvas()
-        canvas.Clear()
+    def loading(self):
+        for tick in range(4):
+            self.display.show(self.renderer.loading(tick), 0.3)
 
-        # Create fonts for displaying prices
-        font_symbol = graphics.Font()
-        font_symbol.LoadFont('fonts/7x13.bdf')
-
-        font_price = graphics.Font()
-        font_price.LoadFont('fonts/6x12.bdf')
-
-        font_change = graphics.Font()
-        font_change.LoadFont('fonts/6x10.bdf')
-
-        # To right align, we have to calculate the width of the text
-        change_width = sum(
-            [font_change.CharacterWidth(ord(c)) for c in asset['change_24h']]
-        )
-        change_x = 62 - change_width
-
-        # Get colors
-        main_color = graphics.Color(255, 255, 0)
-        change_color = (
-            graphics.Color(194, 24, 7)
-            if asset['change_24h'].startswith('-')
-            else graphics.Color(46, 139, 87)
-        )
-
-        # Load a smaller font to andle 6-figure asset prices
-        if len(asset['price']) > 10:
-            font_price.LoadFont('fonts/5x8.bdf')
-
-        # Draw the elements on the canvas
-        graphics.DrawText(canvas, font_symbol, 3, 12, main_color, asset['symbol'])
-        graphics.DrawText(canvas, font_price, 3, 28, main_color, asset['price'])
-        graphics.DrawText(
-            canvas, font_change, change_x, 10, change_color, asset['change_24h']
-        )
-
-        return canvas
-
-    def get_error_canvas(self):
-        """Build an error canvas to show on errors"""
-        canvas = self.matrix.CreateFrameCanvas()
-        canvas.Clear()
-        font = graphics.Font()
-        font.LoadFont('../rpi-rgb-led-matrix/fonts/7x13.bdf')
-        color = graphics.Color(194, 24, 7)
-        graphics.DrawText(canvas, font, 15, 20, color, 'ERROR')
-        return canvas
-
-    def get_assets(self):
-        """Generator method that yields assets infinitely.
-
-        Since it uses `self.price_data` it will always return the latest prices,
-        respecting the REFRESH_RATE.
-        """
-        # The size of the price_data list should not change, even when updated
-        price_data_length = len(self.price_data)
-
-        for index in itertools.cycle(range(price_data_length)):
-            try:
-                yield self.price_data[index]
-            except IndexError:
-                yield None
+    def step(self):
+        """Show every asset once."""
+        self.refresh()
+        self.apply_brightness()
+        for asset in list(self.assets):
+            self.show(self.renderer.asset(asset, stale=self.stale), self.cfg.sleep)
 
     def run(self):
-        """Run the loop and display ticker prices.
-
-        This is called by process.
-        """
-        for asset in self.get_assets():
-            if asset:
-                canvas = self.get_ticker_canvas(asset)
-            else:
-                canvas = self.get_error_canvas()
-            self.matrix.SwapOnVSync(canvas)
-            time.sleep(self.sleep)
+        self.apply_brightness()
+        self.loading()
+        while True:
+            self.step()
 
 
-if __name__ == '__main__':
-    Ticker().process()
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--emulate", action="store_true",
+                        help="use RGBMatrixEmulator instead of the real panel")
+    parser.add_argument("--env", default=os.path.join(HERE, "settings.env"))
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    load_env_file(args.env)
+    cfg = Config.from_env()
+
+    from display import MatrixDisplay
+    display = MatrixDisplay(cfg, emulate=args.emulate)
+    try:
+        Ticker(cfg, display).run()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        display.close()
+
+
+if __name__ == "__main__":
+    main()
