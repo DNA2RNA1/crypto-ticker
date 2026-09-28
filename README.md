@@ -4,7 +4,9 @@ Crypto prices on an RGB LED matrix driven by a Raspberry Pi. This is an updated
 version of the [Howchoo crypto ticker](https://howchoo.com/pi/raspberry-pi-cryptocurrency-ticker)
 for current Raspberry Pi OS. The hardware is the same; the software is rewritten.
 
-![preview](docs/preview.gif)
+| `LAYOUT=classic` | `LAYOUT=chart` |
+|--|--|
+| ![classic](docs/preview.gif) | ![chart](docs/preview-chart.gif) |
 
 Each coin screen shows:
 
@@ -71,6 +73,7 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 | REFRESH_RATE | 600 | Seconds between price refreshes (min 60) |
 | SLEEP | 5 | Seconds each coin is shown |
 | TRANSITION | slide | `slide` or `none` |
+| LAYOUT | classic | `classic` (icon + mini chart), `chart` (full-screen 7-day chart behind the text), or `mix` (alternate) |
 | BRIGHTNESS | 70 | 1–100 |
 | DIM_HOURS / DIM_BRIGHTNESS | off / 15 | e.g. `22-7` dims from 10pm to 7am |
 | DOWNLOAD_ICONS | true | Fetch coin icons automatically |

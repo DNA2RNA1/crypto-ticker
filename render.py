@@ -53,8 +53,12 @@ def change_text(change):
 
 
 class Renderer:
-    def __init__(self, width=64, height=32, currency="usd", icons=None):
+    LAYOUTS = ("classic", "chart", "mix")
+
+    def __init__(self, width=64, height=32, currency="usd", icons=None, layout="classic"):
         self.w, self.h = width, height
+        self.layout = layout if layout in self.LAYOUTS else "classic"
+        self._count = 0
         self.currency = currency
         self.fonts = load_fonts()
         self.tall = height >= 64
@@ -97,8 +101,76 @@ class Renderer:
             prev = y
         draw.point((x1, prev), fill=(255, 255, 255))  # latest price
 
+    def _outlined(self, img, font, x, baseline, text, color):
+        """Text with a 1px black outline so it stays readable over the chart."""
+        for dx, dy in ((-1, -1), (0, -1), (1, -1), (-1, 0), (1, 0), (-1, 1), (0, 1), (1, 1)):
+            font.draw(img, x + dx, baseline + dy, text, (0, 0, 0))
+        return font.draw(img, x, baseline, text, color)
+
+    def _area_chart(self, img, points, top, bottom):
+        """Full-width 7-day chart: bright edge line, fill fading toward the bottom."""
+        width = self.w
+        if len(points) < 2:
+            return
+        step = (len(points) - 1) / (width - 1)
+        cols = [points[round(i * step)] for i in range(width)]
+        lo, hi = min(cols), max(cols)
+        span = (hi - lo) or 1.0
+        color = trend_color((cols[-1] - cols[0]) / cols[0] * 100 if cols[0] else 0)
+        px = img.load()
+        prev = None
+        for x, v in enumerate(cols):
+            y = bottom - round((v - lo) / span * (bottom - top))
+            depth = max(1, bottom - y)
+            for yy in range(y + 1, bottom + 1):
+                k = 0.50 - 0.35 * (yy - y) / depth  # 50% under the line -> 15% at bottom
+                px[x, yy] = tuple(int(c * k) for c in color)
+            # edge line, filled vertically so steep moves stay connected
+            a, b = (y, y) if prev is None else (min(prev, y), max(prev, y))
+            for yy in range(a, b + 1):
+                px[x, yy] = color
+            prev = y
+
     # --- screens ----------------------------------------------------------
     def asset(self, asset, stale=False):
+        layout = self.layout
+        if layout == "mix":
+            layout = ("classic", "chart")[self._count % 2]
+        self._count += 1
+        img = self._chart_screen(asset) if layout == "chart" else self._classic_screen(asset)
+        if stale:  # prices couldn't be refreshed: small red marker bottom-right
+            ImageDraw.Draw(img).rectangle((self.w - 2, self.h - 2, self.w - 1, self.h - 1), fill=DOWN)
+        return img
+
+    def _chart_screen(self, asset):
+        """Chart fills the panel; symbol, change and price float on top."""
+        img = self.blank()
+        f = self.fonts
+        change = asset.get("change_24h")
+        ctext = change_text(change)
+        prices = price_candidates(asset["price"], self.currency)
+        big = self.tall
+        sym_font = f["7x13"] if big else f["6x10"]
+        chg_font = f["6x10"] if big else f["5x8"]
+        top_base = 12 if big else 8
+        # tall panels put the change on its own line under the symbol
+        chg_base = top_base + 11 if big else top_base
+        self._area_chart(img, asset.get("sparkline", []),
+                         top=chg_base + 3 if big else top_base + 1, bottom=self.h - 1)
+        x = 1
+        if big and self.icons:
+            icon = self.icons.get(asset, f["6x10"])
+            small = icon.resize((12, 12), Image.BOX) if icon.width > 12 else icon
+            img.paste(small, (1, 1))
+            x = 15
+        self._outlined(img, sym_font, x, top_base, asset["symbol"], PRICE)
+        cw = chg_font.width(ctext)
+        self._outlined(img, chg_font, self.w - cw - 1, chg_base, ctext, trend_color(change))
+        font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w - 1)
+        self._outlined(img, font, 1, self.h - 2, text, PRICE)
+        return img
+
+    def _classic_screen(self, asset):
         img = self.blank()
         f = self.fonts
         icon = self.icons.get(asset, f["6x10"]) if self.icons else None
@@ -126,9 +198,6 @@ class Renderer:
             self._sparkline(img, asset.get("sparkline", []), (sx, 1, self.w - 1, 14))
             font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w)
             font.draw(img, (self.w - font.width(text)) // 2, self.h - 2, text, PRICE)
-
-        if stale:  # prices couldn't be refreshed: small red marker bottom-right
-            ImageDraw.Draw(img).rectangle((self.w - 2, self.h - 2, self.w - 1, self.h - 1), fill=DOWN)
         return img
 
     def message(self, title, detail="", color=SYMBOL):

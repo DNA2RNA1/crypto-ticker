@@ -54,6 +54,7 @@ class Config:
     refresh_rate: int = 600
     sleep: float = 5
     transition: str = "slide"
+    layout: str = "classic"
     brightness: int = 70
     dim_hours: str = ""
     dim_brightness: int = 15
@@ -80,6 +81,7 @@ class Config:
         c.refresh_rate = max(60, env("REFRESH_RATE", c.refresh_rate, int))
         c.sleep = env("SLEEP", c.sleep, float)
         c.transition = env("TRANSITION", c.transition).lower()
+        c.layout = env("LAYOUT", c.layout).lower()
         c.brightness = env("BRIGHTNESS", c.brightness, int)
         c.dim_hours = env("DIM_HOURS", "")
         c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int)
@@ -113,7 +115,8 @@ class Ticker:
         self.display = display
         self.api = CoinGecko(cfg.symbols, cfg.currency, cfg.api_key, cfg.api_pro)
         self.icons = IconStore(download=cfg.download_icons)
-        self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons)
+        self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons,
+                                 layout=cfg.layout)
         self.assets = []
         self.stale = False
         self.next_fetch = 0.0
