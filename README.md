@@ -104,7 +104,7 @@ and replaces the downloaded icon (tap *Reset picture* to undo). Or copy a PNG to
 Your pictures stay on the Pi (they're not committed to git).
 
 **Featured coins:** tap ★ on the phone page (or set `FEATURED=snek`). A featured coin gets a
-big-picture screen (32×32 icon, symbol, 24h change, mini chart) before its price screen.
+big-picture screen (large icon, symbol, 24h change and price) before its price screen.
 
 ## iPhone widget (home screen, lock screen, StandBy)
 

@@ -235,19 +235,32 @@ class Renderer:
         return img
 
     def featured(self, asset):
-        """Splash for a favorite coin: big icon on the left; symbol, 24h change
-        and a mini 7-day chart on the right. Shown before its price screen."""
+        """Splash for a favorite coin: big picture top-left, symbol and 24h
+        change to its right, price along the bottom. Shown before the coin's
+        regular price screen."""
         img = self.blank()
         f = self.fonts
-        size = min(self.h, 48 if self.tall else 32)
-        if self.icons:
-            img.paste(self.icons.get(asset, f["7x13B"], size=size), (0, (self.h - size) // 2))
-        x = size + 2
         change = asset.get("change_24h")
+        prices = price_candidates(asset["price"], self.currency)
+        # price along the bottom, as big as fits (keeping full precision)
+        pfonts = [f["6x10"], f["5x8"]] if not self.tall else [f["7x13"], f["6x12"], f["5x8"]]
+        pfont, ptext = self._fit_text(prices, pfonts, self.w - 1)
+        price_top = self.h - 1 - pfont.ascent  # first row the price can use
+        # picture fills the space above the price, trimmed to its visible part
+        box_h = price_top - 1
+        box_w = min(box_h + 8, self.w // 2)
+        if self.icons:
+            pic = self.icons.get(asset, f["7x13B"], size=max(box_w, box_h))
+            bbox = pic.getbbox()
+            if bbox:
+                pic = pic.crop(bbox)
+            pic.thumbnail((box_w, box_h), Image.LANCZOS)
+            img.paste(pic, ((box_w - pic.width) // 2, (box_h - pic.height) // 2))
+        x = box_w + 2
         sym_font = f["7x13B"] if f["7x13B"].width(asset["symbol"]) <= self.w - x else f["6x13B"]
         sym_font.draw(img, x, 11, asset["symbol"], SYMBOL)
         f["5x8"].draw(img, x, 20, change_text(change), trend_color(change))
-        self._sparkline(img, asset.get("sparkline", []), (x, 23, self.w - 1, self.h - 1))
+        pfont.draw(img, (self.w - pfont.width(ptext)) // 2, self.h - 1, ptext, PRICE)
         return img
 
     def message(self, title, detail="", color=SYMBOL):
