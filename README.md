@@ -61,13 +61,29 @@ The ticker starts automatically at boot.
 | Update the code | `git pull && sudo systemctl restart crypto-ticker` |
 | Stop it | `sudo systemctl stop crypto-ticker` |
 
+## Change coins and settings from your phone
+
+The ticker runs a small settings page on your home Wi-Fi:
+
+1. On your iPhone (same Wi-Fi), open **http://raspberrypi.local:8080** in Safari.
+   Use your Pi's hostname if you changed it; `install.sh` prints the exact address.
+2. Enter the PIN you chose during install.
+3. Tap **Share → Add to Home Screen** to get an app icon.
+
+From there you can search for and add coins (it shows each coin's rank and icon, so you pick
+the real one and not a copycat), remove and reorder them, switch the layout, and set
+brightness, time per coin, and night dimming. Changes show on the panel within a few seconds.
+
+Five wrong PINs lock the page for 5 minutes. It's only reachable on your home network.
+To change the PIN, edit `WEB_PIN` in `settings.env` and restart the ticker.
+
 ## Settings
 
 All settings live in `settings.env`; see `settings.env.example` for the full list with comments.
 
 | Name | Default | What it does |
 |--|--|--|
-| SYMBOLS | btc,eth | Coins to show, in order. `ada:cardano` pins an exact CoinGecko id |
+| SYMBOLS | (starter list) | Coins to show, in order. `ada:cardano` pins an exact CoinGecko id |
 | CURRENCY | usd | Price currency (usd, eur, gbp, …) |
 | COINGECKO_API_KEY | | Optional free Demo API key |
 | REFRESH_RATE | 600 | Seconds between price refreshes (min 60) |
@@ -77,6 +93,7 @@ All settings live in `settings.env`; see `settings.env.example` for the full lis
 | BRIGHTNESS | 70 | 1–100 |
 | DIM_HOURS / DIM_BRIGHTNESS | off / 15 | e.g. `22-7` dims from 10pm to 7am |
 | DOWNLOAD_ICONS | true | Fetch coin icons automatically |
+| WEB_PIN / WEB_PORT | (asked at install) / 8080 | Phone settings page PIN and port |
 | LED_ROWS / LED_COLS / LED_CHAIN | 32 / 64 / 1 | Panel size |
 | LED_GPIO_MAPPING | adafruit-hat | `adafruit-hat-pwm` if you soldered the PWM jumper |
 | LED_SLOWDOWN_GPIO | 1 | Pi Zero 0–1, Pi 3 about 2, Pi 4/5 about 4. Raise it if the panel flickers |

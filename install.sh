@@ -35,8 +35,19 @@ fi
 
 if [ ! -f "$HERE/settings.env" ]; then
     cp "$HERE/settings.env.example" "$HERE/settings.env"
-    echo "==> Created settings.env - edit it to pick your coins"
+    echo "==> Created settings.env"
 fi
+if ! grep -q "^WEB_PIN=." "$HERE/settings.env"; then
+    read -rp "Choose a PIN for the phone settings page (digits, Enter for none): " PIN
+    if [ -n "$PIN" ]; then
+        if grep -q "^WEB_PIN=" "$HERE/settings.env"; then
+            sed -i "s/^WEB_PIN=.*/WEB_PIN=$PIN/" "$HERE/settings.env"
+        else
+            echo "WEB_PIN=$PIN" >> "$HERE/settings.env"
+        fi
+    fi
+fi
+chmod 600 "$HERE/settings.env"
 
 echo "==> Installing the auto-start service"
 sed "s#__DIR__#$HERE#g" "$HERE/crypto-ticker.service" | sudo tee /etc/systemd/system/crypto-ticker.service >/dev/null
@@ -48,4 +59,7 @@ echo "Done. Reboot once so the audio change takes effect:   sudo reboot"
 echo "After that the ticker starts on its own at boot."
 echo "  status:   sudo systemctl status crypto-ticker"
 echo "  logs:     journalctl -u crypto-ticker -f"
-echo "  restart:  sudo systemctl restart crypto-ticker   (after editing settings.env)"
+echo "  restart:  sudo systemctl restart crypto-ticker   (after editing settings.env by hand)"
+echo
+echo "Phone settings page: http://$(hostname).local:8080"
+echo "  (in Safari: Share -> Add to Home Screen)"

@@ -98,3 +98,18 @@ class CoinGecko:
         if not assets:
             raise PriceError("no usable price data returned")
         return assets
+
+    def search(self, query, limit=12):
+        """Coins matching a name or ticker, best-ranked first."""
+        try:
+            r = self.session.get(f"{self.base}/search", params={"query": query},
+                                 timeout=self.timeout)
+        except requests.RequestException as exc:
+            raise PriceError(f"network error: {exc}") from exc
+        if r.status_code != 200:
+            raise PriceError(f"HTTP {r.status_code}")
+        coins = r.json().get("coins", [])
+        coins.sort(key=lambda c: c.get("market_cap_rank") or 10**9)
+        return [{"id": c["id"], "name": c.get("name", ""), "symbol": (c.get("symbol") or "").upper(),
+                 "market_cap_rank": c.get("market_cap_rank"), "thumb": c.get("large") or c.get("thumb")}
+                for c in coins[:limit]]

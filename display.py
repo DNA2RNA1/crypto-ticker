@@ -31,11 +31,16 @@ class MatrixDisplay:
         self.canvas = self.matrix.CreateFrameCanvas()
         self.width, self.height = self.matrix.width, self.matrix.height
 
+    wake = None  # threading.Event; lets a settings change interrupt a long hold
+
     def show(self, image, hold=0.0):
         self.canvas.SetImage(image.convert("RGB"))
         self.canvas = self.matrix.SwapOnVSync(self.canvas)
         if hold:
-            time.sleep(hold)
+            if self.wake is not None and hold > 0.2:
+                self.wake.wait(hold)
+            else:
+                time.sleep(hold)
 
     def set_brightness(self, value):
         if self.matrix.brightness != value:

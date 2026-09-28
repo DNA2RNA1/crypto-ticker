@@ -22,7 +22,7 @@ CURRENCY_SIGNS = {"usd": "$", "eur": "€", "gbp": "£", "jpy": "¥", "cad": "$"
 
 def load_fonts():
     return {name: BDFFont(os.path.join(FONT_DIR, f"{name}.bdf"))
-            for name in ("5x8", "6x10", "6x12", "7x13")}
+            for name in ("4x6", "5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B")}
 
 
 def trend_color(change):
@@ -150,24 +150,35 @@ class Renderer:
         ctext = change_text(change)
         prices = price_candidates(asset["price"], self.currency)
         big = self.tall
-        sym_font = f["7x13"] if big else f["6x10"]
+        sym_font = f["7x13B"] if big else f["6x13B"]
         chg_font = f["6x10"] if big else f["5x8"]
-        top_base = 12 if big else 8
+        top_base = 12 if big else 10
         # tall panels put the change on its own line under the symbol
         chg_base = top_base + 11 if big else top_base
         self._area_chart(img, asset.get("sparkline", []),
                          top=chg_base + 3 if big else top_base + 1, bottom=self.h - 1)
-        x = 1
-        if big and self.icons:
-            icon = self.icons.get(asset, f["6x10"])
-            small = icon.resize((12, 12), Image.BOX) if icon.width > 12 else icon
-            img.paste(small, (1, 1))
-            x = 15
-        self._outlined(img, sym_font, x, top_base, asset["symbol"], PRICE)
         cw = chg_font.width(ctext)
+        # small coin icon in the top-left, unless it would push the symbol
+        # into the 24h change on the right (long symbol + big move)
+        isz = 12 if big else 10
+        x = 1
+        if self.icons and isz + 2 + sym_font.width(asset["symbol"]) + 2 <= self.w - cw - 1:
+            img.paste(self.icons.get(asset, f["6x10"], size=isz), (0, 0))
+            x = isz + 2
+        self._outlined(img, sym_font, x, top_base, asset["symbol"], PRICE)
         self._outlined(img, chg_font, self.w - cw - 1, chg_base, ctext, trend_color(change))
-        font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w - 1)
+        # "7D" tag in the bottom-right corner marks the chart's time span.
+        # Fit the price in the space left of it; only if that's impossible
+        # does the price get the full width and the tag is skipped.
+        tag_w = f["4x6"].width("7D")
+        fonts = [f["7x13"], f["6x12"], f["5x8"]]
+        font, text = self._fit_text(prices, fonts, self.w - tag_w - 4)
+        show_tag = font.width(text) <= self.w - tag_w - 4
+        if not show_tag:
+            font, text = self._fit_text(prices, fonts, self.w - 1)
         self._outlined(img, font, 1, self.h - 2, text, PRICE)
+        if show_tag:
+            self._outlined(img, f["4x6"], self.w - tag_w - 1, self.h - 1, "7D", (170, 170, 170))
         return img
 
     def _classic_screen(self, asset):
@@ -182,7 +193,7 @@ class Renderer:
             if icon:
                 img.paste(icon, (2, 2))
             tx = 2 + self.icon_size + 3
-            end1 = f["7x13"].draw(img, tx, 13, asset["symbol"], SYMBOL)
+            end1 = f["7x13B"].draw(img, tx, 13, asset["symbol"], SYMBOL)
             end2 = f["6x10"].draw(img, tx, 25, ctext, trend_color(change))
             font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w - 2)
             font.draw(img, (self.w - font.width(text)) // 2, 42, text, PRICE)
@@ -191,7 +202,7 @@ class Renderer:
             if icon:
                 img.paste(icon, (0, 0))
             tx = self.icon_size + 2
-            end1 = f["7x13"].draw(img, tx, 10, asset["symbol"], SYMBOL)
+            end1 = f["7x13B"].draw(img, tx, 10, asset["symbol"], SYMBOL)
             # symbol uses rows 1-9, change rows 12-18, price rows 21-30: 2px gaps
             end2 = f["5x8"].draw(img, tx, 18, ctext, trend_color(change))
             sx = max(end1, end2) + 2

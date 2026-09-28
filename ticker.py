@@ -9,6 +9,7 @@ Settings come from environment variables or settings.env (see settings.env.examp
 import argparse
 import logging
 import os
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -23,8 +24,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 log = logging.getLogger("ticker")
 
 
-def load_env_file(path):
-    """Read KEY=value lines into os.environ (existing variables win)."""
+def load_env_file(path, override=False):
+    """Read KEY=value lines into os.environ (existing variables win unless override)."""
     if not os.path.exists(path):
         return
     with open(path) as fh:
@@ -33,7 +34,11 @@ def load_env_file(path):
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+            value = value.strip().strip('"').strip("'")
+            if override:
+                os.environ[key.strip()] = value
+            else:
+                os.environ.setdefault(key.strip(), value)
 
 
 def env(name, default, cast=str):
@@ -109,10 +114,19 @@ def in_dim_window(spec, now=None):
     return start <= hour < end if start < end else (hour >= start or hour < end)
 
 
+HARDWARE_FIELDS = ("rows", "cols", "chain", "parallel", "gpio_mapping", "gpio_slowdown", "pwm_bits",
+                   "pwm_lsb_nanoseconds", "rgb_sequence", "panel_type", "no_hardware_pulse")
+
+
 class Ticker:
-    def __init__(self, cfg, display):
+    def __init__(self, cfg, display, env_path=None):
         self.cfg = cfg
         self.display = display
+        self.env_path = env_path
+        self.wake = threading.Event()  # set by the settings page to cut a wait short
+        self.reload_pending = False
+        if hasattr(display, "wake"):
+            display.wake = self.wake
         self.api = CoinGecko(cfg.symbols, cfg.currency, cfg.api_key, cfg.api_pro)
         self.icons = IconStore(download=cfg.download_icons)
         self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons,
@@ -140,6 +154,36 @@ class Ticker:
                 self.show(self.renderer.message("NO DATA", reason, color=(230, 40, 30)),
                           hold=min(30, self.cfg.refresh_rate))
 
+    def request_reload(self):
+        """Called from the settings page after it saves settings.env."""
+        self.reload_pending = True
+        self.wake.set()
+
+    def reload(self):
+        self.reload_pending = False
+        self.wake.clear()
+        if not self.env_path:
+            return
+        load_env_file(self.env_path, override=True)
+        new = Config.from_env()
+        for name in HARDWARE_FIELDS:  # panel wiring can't change without a restart
+            setattr(new, name, getattr(self.cfg, name))
+        old = self.cfg
+        if (new.symbols, new.currency, new.api_key, new.api_pro) != \
+                (old.symbols, old.currency, old.api_key, old.api_pro):
+            self.api = CoinGecko(new.symbols, new.currency, new.api_key, new.api_pro)
+            self.next_fetch = 0  # fetch the new list right away
+        elif new.refresh_rate < old.refresh_rate:
+            self.next_fetch = min(self.next_fetch, time.time() + new.refresh_rate)
+        self.renderer.layout = new.layout if new.layout in Renderer.LAYOUTS else "classic"
+        self.renderer.currency = new.currency
+        self.cfg = new
+        self.apply_brightness()
+        log.info("settings reloaded: %s", ",".join(new.symbols))
+
+    def search(self, query):
+        return self.api.search(query)
+
     def apply_brightness(self):
         dim = in_dim_window(self.cfg.dim_hours)
         self.display.set_brightness(self.cfg.dim_brightness if dim else self.cfg.brightness)
@@ -166,11 +210,18 @@ class Ticker:
             self.display.show(self.renderer.loading(tick), 0.3)
 
     def step(self):
-        """Show every asset once."""
+        """Show every asset once (stops early if settings changed)."""
+        if self.reload_pending:
+            self.reload()
         self.refresh()
         self.apply_brightness()
+        if not self.assets:  # nothing to show yet; wait for the retry without spinning
+            self.wake.wait(1.0)
+            return
         for asset in list(self.assets):
             self.show(self.renderer.asset(asset, stale=self.stale), self.cfg.sleep)
+            if self.reload_pending:
+                return
 
     def run(self):
         self.apply_brightness()
@@ -193,8 +244,16 @@ def main():
 
     from display import MatrixDisplay
     display = MatrixDisplay(cfg, emulate=args.emulate)
+    ticker = Ticker(cfg, display, env_path=args.env)
+    if env("WEB_ENABLED", True, bool):
+        import webui
+        try:
+            webui.start(webui.WebApp(args.env, ticker, search=ticker.search),
+                        port=env("WEB_PORT", 8080, int))
+        except OSError as exc:
+            log.error("settings page could not start: %s", exc)
     try:
-        Ticker(cfg, display).run()
+        ticker.run()
     except KeyboardInterrupt:
         pass
     finally:

@@ -22,12 +22,14 @@ def sample_assets(symbols):
         "btc": ("bitcoin", 109234.56), "eth": ("ethereum", 4012.37),
         "ada": ("cardano", 0.8123), "sol": ("solana", 212.44),
         "doge": ("dogecoin", 0.2471), "xrp": ("ripple", 2.913),
+        "link": ("chainlink", 22.41), "hbar": ("hedera-hashgraph", 0.2412),
+        "pepe": ("pepe", 0.00001123), "snek": ("snek", 0.00341), "night": ("midnight-3", 0.02696),
     }
     rng = random.Random(7)
     out = []
     for sym in symbols:
-        sym = sym.split(":")[0].lower()
-        coin_id, price = known.get(sym, (sym, 1.2345))
+        sym, _, pinned = sym.lower().partition(":")
+        coin_id, price = known.get(sym, (pinned or sym, 1.2345))
         drift = rng.uniform(-0.12, 0.12)
         walk, v = [], price * (1 - drift)
         for i in range(168):
