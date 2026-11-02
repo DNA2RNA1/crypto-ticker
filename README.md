@@ -15,9 +15,9 @@ between each other. Everything can be changed from your phone.
 
 More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/screenshots/):
 
-| Coin | Featured | List view (5) | List view (4) | Stale prices | No data |
+| Coin | Featured | List view (4) | List view (5) | Stale prices | No data |
 |--|--|--|--|--|--|
-| ![](docs/screenshots/07-coin-classic.png) | ![](docs/screenshots/06-featured.png) | ![](docs/screenshots/10c-list-view-5.png) | ![](docs/screenshots/10d-list-view-4.png) | ![](docs/screenshots/10-coin-stale.png) | ![](docs/screenshots/11-no-data-offline.png) |
+| ![](docs/screenshots/07-coin-classic.png) | ![](docs/screenshots/06-featured.png) | ![](docs/screenshots/10d-list-view-4.png) | ![](docs/screenshots/10c-list-view-5.png) | ![](docs/screenshots/10-coin-stale.png) | ![](docs/screenshots/11-no-data-offline.png) |
 
 ## Contents
 
@@ -130,7 +130,7 @@ value is logged as a warning and the default is used.
 | `LAYOUT` | `classic` | `classic` (icon + mini chart), `chart` (full-screen chart), `mix` |
 | `FEATURED` | | Starred coins: get a big-picture screen before their price |
 | `FOCUS` | `off` | `on` = coin rotation shows only starred coins (clock, Fear & Greed and indices keep running). With nothing starred, all coins show |
-| `LIST_VIEW` | `off` | `off`, `5` (pages of 5 coins: ▲/▼ + price) or `4` (pages of 4: price + % change). Starred coins keep their big screens |
+| `LIST_VIEW` | `off` | `off`, `4` (pages of 4: price + % change; the phone page's switch turns this on) or `5` (pages of 5 coins: ▲/▼ + price). Starred coins keep their big screens |
 | `LIST_PAGE_SECONDS` | `6` | Seconds per list page (2–60) |
 | `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle (coins always last) |
 | `INDICES_SOURCE` | `coingecko` | `coingecko` (tokenized funds, no extra calls) or `yahoo` (real index values; unofficial) |

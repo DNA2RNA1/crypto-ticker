@@ -22,8 +22,15 @@ CURRENCY_SIGNS = {"usd": "$", "eur": "€", "gbp": "£", "jpy": "¥", "cad": "$"
 
 
 def load_fonts():
-    return {name: BDFFont(os.path.join(FONT_DIR, f"{name}.bdf"))
-            for name in ("4x6", "5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B", "9x18B")}
+    fonts = {name: BDFFont(os.path.join(FONT_DIR, f"{name}.bdf"))
+             for name in ("4x6", "5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B", "9x18B")}
+    # 5x8 draws "." as a small plus centered on the baseline and "," with a tail below
+    # it; on LEDs both look like "+" hanging under the line ("3.3%"). Redraw them to sit
+    # on the baseline (row 7 of 8 is the baseline row; row 8 is the descender).
+    f = fonts["5x8"]
+    f.override(".", [".....", ".....", ".....", ".....", ".....", ".##..", ".##..", "....."])
+    f.override(",", [".....", ".....", ".....", ".....", ".##..", ".##..", ".#...", "....."])
+    return fonts
 
 
 def trend_color(change):

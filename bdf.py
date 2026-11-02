@@ -50,6 +50,19 @@ class BDFFont:
                     self.glyphs[enc] = (mask, xoff, yoff, w, h, adv)
                 enc = adv = bbx = None
 
+    def override(self, char, rows, yoff=None):
+        """Replace one glyph with a hand-drawn bitmap: ``rows`` are strings like "..#..",
+        top to bottom, using the font's usual cell (same width/advance, bottom at yoff)."""
+        old = self._glyph(char)
+        w, h = len(rows[0]), len(rows)
+        mask = Image.new("1", (w, h), 0)
+        px = mask.load()
+        for y, row in enumerate(rows):
+            for x, bit in enumerate(row):
+                if bit == "#":
+                    px[x, y] = 1
+        self.glyphs[ord(char)] = (mask, 0, -self.descent if yoff is None else yoff, w, h, old[5])
+
     @property
     def height(self):
         return self.ascent + self.descent

@@ -114,3 +114,21 @@ def test_list_settings_from_env(monkeypatch):
     assert c.list_view == 4 and c.focus is True and c.list_page_seconds == 60
     monkeypatch.setenv("LIST_VIEW", "6")
     assert Config.from_env().list_view == 0
+
+
+def test_5x8_punctuation_sits_on_the_baseline():
+    """'.' and ',' must not drop into the descender row (they looked like '+' marks)."""
+    from PIL import Image
+
+    from render import load_fonts
+
+    font = load_fonts()["5x8"]
+    for ch in ".,":
+        img = Image.new("1", (5, 12), 0)
+        font.draw(img, 0, 9, ch, 1)          # baseline at y=9: glyph rows must end at y=8
+        rows = [y for y in range(12) if any(img.getpixel((x, y)) for x in range(5))]
+        digit = Image.new("1", (5, 12), 0)
+        font.draw(digit, 0, 9, "3", 1)
+        digit_rows = [y for y in range(12) if any(digit.getpixel((x, y)) for x in range(5))]
+        assert max(rows) == max(digit_rows), ch     # same bottom row as the digits
+        assert len(rows) <= 3, ch                   # a dot / short comma, not a plus
