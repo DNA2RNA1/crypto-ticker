@@ -10,7 +10,9 @@
 #   ./install.sh --deploy-key    only create the SSH deploy key for the Update button and show it
 #   ./install.sh --enterprise-wifi         only add a work (WPA2-Enterprise, PEAP) Wi-Fi profile
 #   ./install.sh --remove-enterprise-wifi  only remove that work Wi-Fi profile
-# A normal run never changes Wi-Fi settings; only the two options above do.
+#   ./install.sh --add-wifi      only save another ordinary Wi-Fi network (e.g. a phone hotspot)
+#   ./install.sh --list-wifi     only list saved Wi-Fi networks and the ones in range
+# A normal run never changes Wi-Fi settings; only the Wi-Fi options above do.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -20,7 +22,7 @@ SERVICE=crypto-ticker
 PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0 WIFI=""
 DEPLOY_KEY="$HOME/.ssh/crypto-ticker-deploy"
 
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --pin) PIN="${2:-}"; ASK_PIN=0; shift ;;
@@ -30,6 +32,8 @@ while [ $# -gt 0 ]; do
         --deploy-key) KEY_ONLY=1 ;;
         --enterprise-wifi) WIFI=add ;;
         --remove-enterprise-wifi) WIFI=remove ;;
+        --add-wifi) WIFI=add-psk ;;
+        --list-wifi) WIFI=list ;;
         -h|--help) usage 0 ;;
         *) echo "Unknown option: $1" >&2; usage 1 ;;
     esac
@@ -73,6 +77,14 @@ enterprise_wifi() {
     local helper="$HERE/wifi_enterprise.py"
     if [ "$WIFI" = remove ]; then
         sudo python3 "$helper" remove
+        return
+    fi
+    if [ "$WIFI" = list ]; then
+        python3 -B "$helper" list
+        return
+    fi
+    if [ "$WIFI" = add-psk ]; then
+        add_wifi "$helper"
         return
     fi
     if sudo python3 "$helper" exists; then
@@ -120,6 +132,26 @@ enterprise_wifi() {
     unset pass
     echo "NetworkManager will join it automatically when it's in range (your home network wins if both are)."
     echo "Remove it with:  ./install.sh --remove-enterprise-wifi"
+}
+
+add_wifi() {  # an ordinary WPA2/WPA3-Personal network, e.g. a phone hotspot
+    local helper="$1" ssid pass pass2 hidden
+    echo "Save another Wi-Fi network (for example a phone hotspot). Nothing else changes,"
+    echo "and the Pi doesn't switch networks now: it joins this one when it's in range."
+    read -rp "Network name (SSID): " ssid
+    while true; do
+        read -rsp "Password (Enter for an open network): " pass; echo
+        [ -z "$pass" ] && break
+        read -rsp "Password again: " pass2; echo
+        [ "$pass" = "$pass2" ] && break
+        echo "The passwords didn't match. Try again."
+    done
+    unset pass2
+    read -rp "Is it a hidden network (doesn't show up in Wi-Fi lists)? [y/N] " hidden
+    # name, password, hidden: on stdin, NUL-separated, never in a command line
+    printf '%s\0' "$ssid" "$pass" "$hidden" | sudo python3 "$helper" add-psk
+    unset pass
+    echo "See all saved networks with:  ./install.sh --list-wifi"
 }
 
 if [ -n "$WIFI" ]; then

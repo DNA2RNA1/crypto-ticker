@@ -31,6 +31,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 1. [Hardware](#hardware)
 2. [Wiring check](#wiring-check)
 3. [Install](#install)
+   - [Other Wi-Fi networks (phone hotspot)](#other-wi-fi-networks-phone-hotspot)
    - [Work Wi-Fi (WPA2-Enterprise)](#work-wi-fi-wpa2-enterprise)
 4. [Configuration](#configuration)
 5. [Weather, news and sports screens](#weather-news-and-sports-screens)
@@ -119,9 +120,29 @@ It shows solid **red, green, blue, white**, then a white border with colored cor
 | Apply hand edits to settings.env | `sudo systemctl restart crypto-ticker` |
 | Update | **Update** button on the phone page, or over SSH: `git pull && ./install.sh --skip-build && sudo systemctl restart crypto-ticker` |
 | Stop / start at boot | `sudo systemctl disable --now crypto-ticker` / `sudo systemctl enable --now crypto-ticker` |
+| Health check (changes nothing) | `./doctor.sh` |
+| Save another Wi-Fi network / list them | `./install.sh --add-wifi` / `./install.sh --list-wifi` |
 
 **First run tip:** start minimal (`SCREENS=coins`, `WEB_ENABLED=false`), get prices on the panel,
 then turn features back on one at a time and watch the log after each.
+
+### Other Wi-Fi networks (phone hotspot)
+
+To take the ticker somewhere else, save another ordinary Wi-Fi network (WPA2/WPA3-Personal, or open),
+for example your phone's hotspot:
+
+```bash
+./install.sh --add-wifi
+./install.sh --list-wifi
+```
+
+`--add-wifi` asks for the network name and password (typed twice, not shown; Enter for an open
+network) and whether it's hidden. It saves a root-only NetworkManager profile named
+`ticker-wifi-<name>` and doesn't switch networks now, so your SSH session stays up; the Pi joins it
+whenever it's in range, and prefers your home network if both are. The password never appears on a
+command line. `--list-wifi` shows every saved network (no passwords), which one is connected, and what
+else is in range. To remove one: `sudo nmcli connection delete ticker-wifi-<name>` (the name is shown
+in brackets by `--list-wifi`). Normal installs never touch Wi-Fi settings.
 
 ### Work Wi-Fi (WPA2-Enterprise)
 
@@ -407,6 +428,19 @@ writes `docs/preview-scroll.gif`, the scroll transition made by the real `Ticker
 
 ## Troubleshooting
 
+**First, run the health check and paste its output when asking for help:**
+
+```bash
+cd ~/crypto-ticker
+./doctor.sh
+```
+
+It prints a short report: OS and Pi model, Wi-Fi network and signal, internet access, whether
+CoinGecko, Open-Meteo, ESPN, GitHub and each news feed can be reached, the service status and its
+last 30 log lines (errors marked `!!`), free disk space and memory, the panel settings, and whether
+the deploy key works. Each line is OK, WARN or FAIL with a one-line fix. It never changes anything
+and never prints passwords, the PIN or API keys. If it can't read the log, run `sudo ./doctor.sh`.
+
 | Problem | What to do |
 |--|--|
 | Panel blank, service running | `journalctl -u crypto-ticker -n 50`. Did you reboot after install (audio must be off)? Run `--test-pattern` |
@@ -456,7 +490,8 @@ Scriptable's API (`tests/widget/scriptable_stub.mjs`), not the real app.
 | `news.py`, `sports.py`, `scroller.py` | News feeds, ESPN scores and the league table, scrolling text |
 | `feeds.py`, `session.py`, `usage.py`, `icons.py`, `bdf.py` | Weather/F&G/indices, market sessions, API budget, icons, fonts |
 | `install.sh`, `crypto-ticker.service` | Install and auto-start |
-| `wifi_enterprise.py` | Work Wi-Fi profile for `install.sh --enterprise-wifi` (NetworkManager keyfile) |
+| `wifi_enterprise.py` | Extra Wi-Fi profiles for `install.sh --enterprise-wifi`, `--add-wifi`, `--list-wifi` |
+| `doctor.sh`, `doctor.py` | Read-only health check |
 | `launcher.py`, `updater.py`, `sysinfo.py` | Service entry point + update safety net, Update/Roll back, Wi-Fi and uptime |
 | `tools/` | Demo settings server, Playwright screenshot scripts, scroll frame-time benchmark |
 | `screenshots.py`, `preview.py`, `sample.py` | Emulator screenshots, GIF preview, sample data |
