@@ -92,9 +92,13 @@ test("failed fetch shows cached prices marked stale", async () => {
   await run("accessoryRectangular", "coins:btc,eth", coingecko, fsys)
   const t = texts(await run("accessoryRectangular", "coins:btc,eth", offline, fsys))
   assert.match(t, /BTC .*\$109,235/)
-  assert.match(t, /⚠︎ offline · now/)
-  assert.match(texts(await run("accessoryInline", "coins:btc,eth", offline, fsys)), /^⚠︎ /)
-  assert.ok(drawn(await run("accessoryCircular", "coins:btc,eth", offline, fsys)).some(o => o.text === "⚠︎"))
+  assert.match(t, /Offline · now/)
+  assert.doesNotMatch(t, /⚠/)
+  assert.match(texts(await run("accessoryInline", "coins:btc,eth", offline, fsys)), /^Offline · /)
+  const circ = await run("accessoryCircular", "coins:btc,eth", offline, fsys)
+  assert.ok(drawn(circ).some(o => o.text === "OLD"))
+  const size = allNodes(circ).find(n => n.kind === "image").imageSize
+  assert.deepEqual([size.width, size.height], [72, 72])  // fits the circular widget
   assert.match(texts(await run("small", "coins:btc,eth", offline, fsys)), /offline/)
 })
 
@@ -127,7 +131,7 @@ test("news: offline shows cached headline marked stale", async () => {
   const fsys = makeFS()
   await run("accessoryRectangular", "news:https://news.example/rss", () => ({ text: RSS }), fsys)
   const w = await run("accessoryRectangular", "news:https://news.example/rss", offline, fsys)
-  assert.match(texts(w), /^⚠︎ · Coin Daily · 2h \| Bitcoin/)
+  assert.match(texts(w), /^Offline · Coin Daily · 2h \| Bitcoin/)
 })
 
 test("news: bad URL or broken feed gives a clear error", async () => {

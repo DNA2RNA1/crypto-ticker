@@ -38,8 +38,9 @@
 //
 // Lock-screen widgets are monochrome, so direction is shown with ▲/▼, never color alone.
 // If a fetch fails (no signal, rate limit), the last good data is shown and marked:
-// "offline" on the home screen, ⚠︎ on the lock screen. iOS decides when widgets refresh
-// (usually every 15-30 minutes).
+// "offline" on the home screen, "Offline" on the lock screen, and "OLD" in the circular
+// widget. Words, not ⚠︎: at lock-screen size a warning triangle looks like the ▲ arrow.
+// iOS decides when widgets refresh (usually every 15-30 minutes).
 
 // ----- settings you can change -----
 const DEFAULT_COINS = "btc"
@@ -324,7 +325,7 @@ function coinUrl(a) { return "https://www.coingecko.com/en/coins/" + a.id }
 function inlineCoin(assets, stale, key) {
   const a = assets[nextIndex(key, assets.length)]
   const w = new ListWidget()
-  w.addText(`${stale ? STALE + " " : ""}${a.sym} ${fmtPrice(a.price)} ${fmtChange(a.change)}`)
+  w.addText(`${stale ? "Offline · " : ""}${a.sym} ${fmtPrice(a.price)} ${fmtChange(a.change)}`)
   w.url = coinUrl(a)
   return w
 }
@@ -357,7 +358,8 @@ function gaugeImage(a, stale) {
   ctx.setFont(Font.boldSystemFont(17))
   const ch = a.change == null ? "--" : `${arrow(a.change)}${Math.abs(a.change).toFixed(Math.abs(a.change) < 10 ? 1 : 0)}%`
   ctx.drawTextInRect(ch, new Rect(14, 66, S - 28, 22))
-  if (stale) { ctx.setFont(Font.boldSystemFont(15)); ctx.drawTextInRect(STALE, new Rect(c - 12, 16, 24, 18)) }
+  // a word, not ⚠︎: at this size a warning triangle reads like the ▲ "up" arrow
+  if (stale) { ctx.setFont(Font.heavySystemFont(13)); ctx.drawTextInRect("OLD", new Rect(c - 20, 17, 40, 16)) }
   return ctx.getImage()
 }
 
@@ -365,7 +367,8 @@ function circularCoin(a, stale) {
   const w = new ListWidget()
   w.addAccessoryWidgetBackground = true
   w.setPadding(0, 0, 0, 0)
-  const img = w.addImage(gaugeImage(a, stale)); img.centerAlignImage()
+  // drawn at 120 pt for crisp lines; shown at the circular widget's size (about 72-76 pt)
+  const img = w.addImage(gaugeImage(a, stale)); img.imageSize = new Size(72, 72); img.centerAlignImage()
   w.url = coinUrl(a)
   return w
 }
@@ -375,7 +378,7 @@ function rectangularCoins(assets, stale, at) {
   if (assets.length === 1) {  // one coin: symbol, change, price, sparkline
     const a = assets[0]
     const top = w.addStack()
-    const s = top.addText((stale ? STALE + " " : "") + a.sym); s.font = Font.heavySystemFont(14)
+    const s = top.addText(a.sym + (stale ? " · offline" : "")); s.font = Font.heavySystemFont(14); s.lineLimit = 1
     top.addSpacer()
     const c = top.addText(fmtChange(a.change)); c.font = Font.boldSystemFont(12)
     const p = w.addText(fmtPrice(a.price)); p.font = Font.boldRoundedSystemFont(20); p.minimumScaleFactor = 0.6
@@ -394,7 +397,7 @@ function rectangularCoins(assets, stale, at) {
     const c = row.addText(fmtChange(a.change)); c.font = Font.boldSystemFont(12); c.lineLimit = 1
   }
   if (stale) {
-    const t = w.addText(`${STALE} offline · ${ago(at && at.getTime()) || "earlier"}`)
+    const t = w.addText(`Offline · ${ago(at && at.getTime()) || "earlier"}`)
     t.font = Font.systemFont(10)
   }
   w.url = coinUrl(assets[0])
@@ -403,21 +406,21 @@ function rectangularCoins(assets, stale, at) {
 
 // ---------- news widgets ----------
 function newsCaption(story, stale) {
-  return [stale ? STALE : "", story.source, ago(story.at)].filter(Boolean).join(" · ")
+  return [stale ? "Offline" : "", story.source, ago(story.at)].filter(Boolean).join(" · ")
 }
 
 function newsWidget(story, stale, family) {
   const w = new ListWidget()
   w.url = story.link
   if (family === "accessoryInline") {
-    w.addText(`${stale ? STALE + " " : ""}${story.title}`)
+    w.addText(`${stale ? "Offline · " : ""}${story.title}`)
     return w
   }
   if (family === "accessoryCircular") {
     w.addAccessoryWidgetBackground = true
     const initials = story.source.split(/[\s.\-]+/).filter(Boolean).map(x => x[0]).join("").slice(0, 3).toUpperCase()
     const a = w.addText(initials || "NEWS"); a.font = Font.heavySystemFont(16); a.centerAlignText()
-    const b = w.addText((stale ? STALE + " " : "") + (ago(story.at) || "—")); b.font = Font.boldSystemFont(12); b.centerAlignText()
+    const b = w.addText(stale ? "OLD" : (ago(story.at) || "—")); b.font = Font.boldSystemFont(12); b.centerAlignText()
     return w
   }
   if (family === "accessoryRectangular") {
