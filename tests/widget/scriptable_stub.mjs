@@ -17,14 +17,22 @@ export class Path {
   move(p) { this.points.push(p) } addLine(p) { this.points.push(p) } closeSubpath() {}
 }
 export class DrawContext {
-  constructor() { this.ops = [] }
-  addPath(p) { this.ops.push({ op: "path", n: p.points.length, points: p.points }) }
-  strokePath() { this.ops.push({ op: "stroke", color: this.stroke }) } fillPath() { this.ops.push({ op: "fill" }) }
-  setStrokeColor(c) { this.stroke = c } setFillColor(c) { this.fill = c } setLineWidth(w) {} setFont(f) {}
-  setTextColor(c) {} setTextAlignedCenter() {} setTextAlignedRight() {}
-  fillRect() {} fillEllipse() {}
-  drawTextInRect(t) { this.ops.push({ op: "text", text: t }) }
-  getImage() { return { image: true, ops: this.ops } }
+  // Records every drawing call with its style, so tests can inspect it and
+  // tools/widget_screenshots.mjs can turn it into an SVG.
+  constructor() { this.ops = []; this.lw = 1; this.align = "left" }
+  addPath(p) { this.path = p; this.ops.push({ op: "path", n: p.points.length, points: p.points }) }
+  strokePath() { this.ops.push({ op: "stroke", color: this.stroke, width: this.lw, points: this.path?.points || [] }) }
+  fillPath() { this.ops.push({ op: "fill", color: this.fill, points: this.path?.points || [] }) }
+  setStrokeColor(c) { this.stroke = c } setFillColor(c) { this.fill = c } setLineWidth(w) { this.lw = w }
+  setFont(f) { this.font = f } setTextColor(c) { this.textColor = c }
+  setTextAlignedCenter() { this.align = "center" } setTextAlignedRight() { this.align = "right" }
+  setTextAlignedLeft() { this.align = "left" }
+  fillRect(r) { this.ops.push({ op: "rect", rect: r, color: this.fill }) }
+  fillEllipse(r) { this.ops.push({ op: "ellipse", rect: r, color: this.fill }) }
+  drawTextInRect(t, r) {
+    this.ops.push({ op: "text", text: t, rect: r, font: this.font, color: this.textColor, align: this.align })
+  }
+  getImage() { return { image: true, ops: this.ops, size: this.size } }
 }
 class Element {
   constructor(kind, extra = {}) { this.kind = kind; Object.assign(this, extra); this.children = [] }
@@ -32,8 +40,10 @@ class Element {
   addImage(img) { const e = new Element("image", { img }); this.children.push(e); return e }
   addStack() { const e = new Element("stack"); this.children.push(e); return e }
   addSpacer(n) { this.children.push(new Element("spacer", { n })) }
-  layoutVertically() {} layoutHorizontally() {} centerAlignContent() {} centerAlignImage() {} centerAlignText() {}
-  setPadding() {}
+  layoutVertically() { this.vertical = true } layoutHorizontally() { this.vertical = false }
+  centerAlignContent() { this.centered = true } centerAlignImage() { this.align = "center" }
+  centerAlignText() { this.align = "center" }
+  setPadding(t, l, b, r) { this.padding = [t, l, b, r] }
 }
 export class ListWidget extends Element {
   constructor() { super("widget") }
@@ -88,7 +98,11 @@ export async function runWidget({ family, param, route, fsys }) {
     constructor(url) { this.url = url; this.headers = {} }
     async loadJSON() { return (await route(this.url)).json }
     async loadString() { return (await route(this.url)).text }
-    async loadImage() { throw new Error("no images in tests") }
+    async loadImage() {
+      const r = await route(this.url)
+      if (!r || !r.image) throw new Error("no image")
+      return r.image
+    }
   }
   const globals = {
     Color, Font, Size, Point, Rect, Path, DrawContext, ListWidget, XMLParser, Request,

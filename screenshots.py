@@ -91,10 +91,51 @@ def main():
         ("11-no-data-offline", offline),
         ("12-no-data-rate-limit", rate_limited),
     ]
+    paths = []
     for name, make in shots:
         t.display.show(make())
         path = t.display.screenshot(os.path.join(args.out, f"{name}.png"))
+        paths.append((name, path))
         print("wrote", os.path.relpath(path))
+    sheet = contact_sheet(paths, os.path.join(args.out, "panel-contact-sheet.png"))
+    print("wrote", os.path.relpath(sheet))
+
+
+LABELS = {
+    "01-loading": "Loading", "02-clock": "Clock + weather", "03-fear-greed": "Fear & Greed",
+    "04-indices-percent": "Indices (% change)", "05-indices-change": "Indices ($ / points)",
+    "06-featured": "Featured (starred) coin", "07-coin-classic": "Coin: classic layout",
+    "08-coin-chart": "Coin: chart layout", "09-coin-tiny-price": "Coin: tiny price",
+    "10-coin-stale": "Stale price (red dot)", "10b-coin-chart-stale": "Stale price, chart layout",
+    "10c-list-view-5": "List view: 5 rows", "10d-list-view-4": "List view: 4 rows + %",
+    "10e-list-view-5-stale": "List view, stale", "11-no-data-offline": "Offline, no cached prices",
+    "12-no-data-rate-limit": "Rate limited, no cached prices",
+}
+
+
+def contact_sheet(paths, out, cols=4, scale=0.5):
+    """All panel screenshots in one labeled grid."""
+    from PIL import Image, ImageDraw, ImageFont
+    shots = [(LABELS.get(n, n), Image.open(p).convert("RGB")) for n, p in paths]
+    w = int(shots[0][1].width * scale)
+    h = int(shots[0][1].height * scale)
+    pad, label_h, title_h = 16, 30, 56
+    rows = (len(shots) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * (w + pad) + pad, title_h + rows * (h + label_h + pad) + pad), (24, 26, 30))
+    d = ImageDraw.Draw(sheet)
+    try:
+        title_font, font = ImageFont.load_default(26), ImageFont.load_default(17)
+    except TypeError:  # Pillow < 10.1
+        title_font = font = ImageFont.load_default()
+    d.text((pad, 16), "Crypto Ticker: every panel screen (64x32, emulator, sample data)", fill=(235, 238, 242),
+           font=title_font)
+    for i, (label, img) in enumerate(shots):
+        x = pad + (i % cols) * (w + pad)
+        y = title_h + (i // cols) * (h + label_h + pad)
+        sheet.paste(img.resize((w, h), Image.LANCZOS), (x, y))
+        d.text((x, y + h + 6), label, fill=(170, 176, 186), font=font)
+    sheet.save(out)
+    return out
 
 
 if __name__ == "__main__":
