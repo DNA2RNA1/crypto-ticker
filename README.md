@@ -26,11 +26,13 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 3. [Install](#install)
 4. [Configuration](#configuration)
 5. [Phone settings page](#phone-settings-page)
-6. [iPhone widget](#iphone-widget)
-7. [Running without hardware (emulator)](#running-without-hardware-emulator)
-8. [How failures are handled](#how-failures-are-handled)
-9. [Troubleshooting](#troubleshooting)
-10. [Development](#development)
+6. [Updating (and rolling back)](#updating-and-rolling-back)
+7. [iPhone widget](#iphone-widget)
+8. [Running without hardware (emulator)](#running-without-hardware-emulator)
+9. [How failures are handled](#how-failures-are-handled)
+10. [Troubleshooting](#troubleshooting)
+11. [Development](#development)
+12. [Screenshots](#screenshots)
 
 ## Hardware
 
@@ -106,7 +108,7 @@ It shows solid **red, green, blue, white**, then a white border with colored cor
 | Is it running? | `sudo systemctl status crypto-ticker` |
 | Live log | `journalctl -u crypto-ticker -f` or `tail -f logs/ticker.log` |
 | Apply hand edits to settings.env | `sudo systemctl restart crypto-ticker` |
-| Update | `git pull && ./install.sh --skip-build && sudo systemctl restart crypto-ticker` |
+| Update | **Update** button on the phone page, or over SSH: `git pull && ./install.sh --skip-build && sudo systemctl restart crypto-ticker` |
 | Stop / start at boot | `sudo systemctl disable --now crypto-ticker` / `sudo systemctl enable --now crypto-ticker` |
 
 **First run tip:** start minimal (`SCREENS=coins`, `WEB_ENABLED=false`), get prices on the panel,
@@ -147,6 +149,8 @@ value is logged as a warning and the default is used.
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `LOG_FILE` | `logs/ticker.log` | Rotating log file; blank = journal only |
 | `LOG_MAX_KB` / `LOG_BACKUPS` | `512` / `3` | Log rotation: at most ~2 MB on the SD card |
+| `UPDATE_REMOTE` | SSH form of `origin` | Where the Update button pulls from, e.g. `git@github.com:owner/crypto-ticker.git` |
+| `UPDATE_SSH_KEY` | `~/.ssh/crypto-ticker-deploy` | Deploy key the Update button uses |
 
 **Custom icons:** tap a coin's picture on the phone page and choose a photo, or copy a PNG to
 `icons/<symbol>.png`. Your pictures stay on the Pi (they're not committed to git).
@@ -166,6 +170,63 @@ time zones, coordinates), and nothing is written unless all fields pass; the pag
 field was wrong. Bad hand edits in `settings.env` don't break the page either.
 The page is only reachable on your home network.
 
+At the bottom, **Status** shows when prices were last fetched, how long the ticker and the Pi
+have been running, the Wi-Fi signal (from `/proc/net/wireless`), and the last error, if any.
+**Software** shows the installed version with **Update** and **Roll back** buttons
+(see [Updating](#updating-and-rolling-back)).
+
+![Settings page: list view and status](docs/screenshots/settings-page-iphone-list-view.png)
+![Settings page: status and update](docs/screenshots/settings-page-iphone-status-update.png)
+
+## Updating (and rolling back)
+
+Tap **Update** on the phone page. The Pi then:
+
+1. refuses if code files in the ticker folder were edited by hand (`settings.env`, your icons,
+   logs and caches don't count);
+2. fetches the latest code from GitHub **over SSH with a deploy key** and fast-forwards to it,
+   remembering the previous version;
+3. if `requirements.txt` changed, saves a list of the installed packages and installs the new ones
+   **before restarting**. If that fails, the code and the packages are both put back;
+4. runs `ticker.py --check` on the new code (imports everything, reads your settings). If that
+   fails, the previous version is restored and nothing restarts;
+5. if `launcher.py` changed, runs the new launcher's `--self-check` and only then installs it;
+   otherwise the old launcher stays in use (it's the safety net, so it must never be broken);
+6. restarts the service. If the new version fails to start **3 times in a row**, the launcher
+   restores the previous version (and packages) by itself. After the new version has run for a
+   minute, it's marked good.
+
+**Roll back** puts the previous version back (code, packages if they changed, and launcher) and
+restarts. It's available after an update until you roll back.
+
+### Deploy key (needed once the repo is private)
+
+The Update button pulls over SSH as the folder's owner using a read-only **deploy key**.
+`install.sh` creates one and prints it. To set it up later or on its own:
+
+```bash
+cd ~/crypto-ticker
+./install.sh --deploy-key
+```
+
+It prints a line starting with `ssh-ed25519`. On GitHub, open the repo →
+**Settings → Deploy keys → Add deploy key**, paste it, leave **Allow write access** off, and save.
+Then tap **Update** again. To test it from the Pi:
+
+```bash
+ssh -i ~/.ssh/crypto-ticker-deploy -o IdentitiesOnly=yes -T git@github.com
+```
+
+GitHub answers "Hi …! You've successfully authenticated, but GitHub does not provide shell
+access." If the key is missing or not added, the phone page says
+**"Pi can't reach GitHub — deploy key needed"** and shows the public key to add.
+A Pi that's offline gets "check its internet connection" instead.
+
+Updating by hand over SSH still works (`git pull`, then `./install.sh --skip-build` to refresh the
+installed launcher, then restart). For a private repo, give git the key first:
+`git remote set-url origin git@github.com:<owner>/crypto-ticker.git` and add the key to
+`~/.ssh/config` or use `GIT_SSH_COMMAND="ssh -i ~/.ssh/crypto-ticker-deploy"`.
+
 ## iPhone widget
 
 `iphone/CryptoTicker.js` is a widget for the free **Scriptable** app. It fetches its own data,
@@ -183,7 +244,7 @@ set **Parameter**:
 Lock-screen widgets: **inline** (one line above the clock), **circular** (symbol, ▲/▼ and a ring
 gauge of the 24h change), **rectangular** (one coin with a sparkline, two coins, or a headline
 with source and age). They're monochrome, so direction is always shown with ▲/▼. If a fetch fails,
-the last good data is shown and marked "offline" (home screen) or ⚠︎ (lock screen). The comments
+the last good data is shown and marked "offline" (or "OLD" in the small circular widget). The comments
 at the top of the script have more setup examples. iOS decides when widgets refresh
 (usually every 15–30 minutes).
 
@@ -200,10 +261,12 @@ Open **http://localhost:8888** to watch the emulated panel (and http://localhost
 settings page). Other emulator outputs: `--emulator-adapter pygame` (desktop window),
 `terminal`, `tkinter`. Emulator look (pixel size, style) is in `emulator_config.json`.
 
-Screenshots of every screen:
+Screenshots (see [Screenshots](#screenshots)):
 
 ```bash
-python screenshots.py                      # writes docs/screenshots/*.png
+python screenshots.py                      # panel screens + panel-contact-sheet.png
+node tools/settings_screenshots.mjs        # phone settings page at iPhone size (Playwright)
+node tools/widget_screenshots.mjs          # iPhone widget variants (Playwright)
 ```
 
 Animated GIF preview: `python preview.py --sample` (writes `preview.gif`).
@@ -241,6 +304,10 @@ Animated GIF preview: `python preview.py --sample` (writes `preview.gif`).
 | Wrong coin for a ticker | Pin it: `SYMBOLS=btc,uni:uniswap` |
 | Can't open the phone page | Same Wi-Fi? Try the Pi's IP (`hostname -I`). Check `WEB_ENABLED=true` and the log |
 | Forgot the PIN | Edit `WEB_PIN` in `settings.env`, then `sudo systemctl restart crypto-ticker` |
+| "Pi can't reach GitHub — deploy key needed" | Set up the [deploy key](#deploy-key-needed-once-the-repo-is-private) |
+| "The SSH client is missing" | `sudo apt-get install -y openssh-client` |
+| "Files … were edited by hand" on Update | `git status` shows what; `git stash` or `git checkout -- <file>`, then update |
+| "The update didn't start … restored automatically" | The new version crashed at startup; you're back on the old one. `journalctl -u crypto-ticker -b` shows why |
 | Wrong time on the clock | Set `TIMEZONE` (or the location on the phone page); check `timedatectl` |
 | SD card filling up | `du -sh logs cache`; lower `LOG_MAX_KB` / `LOG_BACKUPS` |
 | Focus on but every coin shows | No coin is starred; tap ★ on the phone page (the page shows a hint) |
@@ -268,6 +335,8 @@ Scriptable's API (`tests/widget/scriptable_stub.mjs`), not the real app.
 | `webui.py` | Phone settings page with input validation |
 | `feeds.py`, `session.py`, `usage.py`, `icons.py`, `bdf.py` | Weather/F&G/indices, market sessions, API budget, icons, fonts |
 | `install.sh`, `crypto-ticker.service` | Install and auto-start |
+| `launcher.py`, `updater.py`, `sysinfo.py` | Service entry point + update safety net, Update/Roll back, Wi-Fi and uptime |
+| `tools/` | Demo settings server and Playwright screenshot scripts |
 | `screenshots.py`, `preview.py`, `sample.py` | Emulator screenshots, GIF preview, sample data |
 | `iphone/CryptoTicker.js` | Scriptable widget |
 
@@ -275,3 +344,19 @@ Price data from [CoinGecko](https://www.coingecko.com/en/api). Icons from CoinGe
 [spothq/cryptocurrency-icons](https://github.com/spothq/cryptocurrency-icons) as a fallback.
 LED driver: [hzeller/rpi-rgb-led-matrix](https://github.com/hzeller/rpi-rgb-led-matrix).
 Emulator: [RGBMatrixEmulator](https://github.com/ty-porter/RGBMatrixEmulator).
+
+## Screenshots
+
+All in [`docs/screenshots/`](docs/screenshots/). Panel screens are rendered by RGBMatrixEmulator
+with sample data. The settings page is the real page in headless Chromium at iPhone size, with
+sample data. Widget images are **approximate**: the real script runs against a stand-in for
+Scriptable and is drawn as HTML (fonts, spacing and icons differ from iOS).
+
+| | |
+|--|--|
+| Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `12-…`) |
+| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-list-view`, `-status-update`, `-deploy-key` |
+| iPhone widget | `widget-contact-sheet.png`, `widget-coins-*.png`, `widget-news-*.png` |
+
+![Every panel screen](docs/screenshots/panel-contact-sheet.png)
+![iPhone widget variants](docs/screenshots/widget-contact-sheet.png)

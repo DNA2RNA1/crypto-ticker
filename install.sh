@@ -7,21 +7,24 @@
 #   ./install.sh --no-pin        no PIN prompt (page is open to anyone on your Wi-Fi)
 #   ./install.sh --skip-build    don't (re)build the LED library (it takes 20-40 min on a Pi Zero)
 #   ./install.sh --no-service    install everything but don't enable auto-start
+#   ./install.sh --deploy-key    only create the SSH deploy key for the Update button and show it
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$(dirname "$HERE")/rpi-rgb-led-matrix"
 VENV="$HERE/venv"
 SERVICE=crypto-ticker
-PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1
+PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0
+DEPLOY_KEY="$HOME/.ssh/crypto-ticker-deploy"
 
-usage() { sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --pin) PIN="${2:-}"; ASK_PIN=0; shift ;;
         --no-pin) ASK_PIN=0 ;;
         --skip-build) BUILD=0 ;;
         --no-service) ENABLE_SERVICE=0 ;;
+        --deploy-key) KEY_ONLY=1 ;;
         -h|--help) usage 0 ;;
         *) echo "Unknown option: $1" >&2; usage 1 ;;
     esac
@@ -32,6 +35,30 @@ say()  { printf '\n==> %s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
 valid_pin() { [[ "$1" =~ ^[0-9]{4,8}$ ]]; }
+
+deploy_key() {  # SSH key the Update button uses to pull from GitHub (needed once the repo is private)
+    if [ ! -f "$DEPLOY_KEY" ]; then
+        mkdir -p "$HOME/.ssh"
+        chmod 700 "$HOME/.ssh"
+        ssh-keygen -q -t ed25519 -N "" -C "crypto-ticker@$(hostname)" -f "$DEPLOY_KEY"
+    fi
+    touch "$HOME/.ssh/known_hosts"
+    if ! grep -q "^github.com " "$HOME/.ssh/known_hosts"; then
+        ssh-keyscan -t ed25519 github.com 2>/dev/null >> "$HOME/.ssh/known_hosts" || true
+    fi
+    echo
+    echo "Deploy key for the Update button (public half, safe to share):"
+    echo
+    cat "$DEPLOY_KEY.pub"
+    echo
+    echo "On GitHub: the repo -> Settings -> Deploy keys -> Add deploy key."
+    echo "Paste the line above, leave \"Allow write access\" OFF, and save."
+}
+
+if [ "$KEY_ONLY" -eq 1 ]; then
+    deploy_key
+    exit 0
+fi
 
 # --- checks ---------------------------------------------------------------
 if [ "$(id -u)" -eq 0 ]; then
@@ -59,7 +86,7 @@ fi
 # --- packages and Python --------------------------------------------------
 say "Installing system packages"
 sudo apt-get update
-sudo apt-get install -y git python3 python3-venv python3-dev python3-pip cython3 cmake build-essential \
+sudo apt-get install -y git openssh-client python3 python3-venv python3-dev python3-pip cython3 cmake build-essential \
     libjpeg-dev zlib1g-dev libopenjp2-7 libtiff6
 
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
@@ -136,6 +163,11 @@ fi
 chmod 600 "$HERE/settings.env"
 
 # --- service --------------------------------------------------------------
+say "Installing the launcher (the service runs this copy; see launcher.py)"
+mkdir -p "$HERE/.launcher"
+"$VENV/bin/python" "$HERE/launcher.py" --self-check
+cp "$HERE/launcher.py" "$HERE/.launcher/launcher.py"
+
 say "Installing the systemd service"
 sed "s#__DIR__#$HERE#g" "$HERE/crypto-ticker.service" \
     | sudo tee /etc/systemd/system/$SERVICE.service >/dev/null
@@ -146,6 +178,9 @@ fi
 if command -v systemd-analyze >/dev/null; then
     sudo systemd-analyze verify /etc/systemd/system/$SERVICE.service || warn "systemd reported a problem with the unit file"
 fi
+
+say "Setting up the deploy key for the Update button"
+deploy_key
 
 PORT="$(grep -E '^WEB_PORT=[0-9]+$' "$HERE/settings.env" | cut -d= -f2 || true)"
 cat <<EOF

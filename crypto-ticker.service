@@ -11,7 +11,9 @@ StartLimitIntervalSec=0
 [Service]
 Type=simple
 WorkingDirectory=__DIR__
-ExecStart=__DIR__/venv/bin/python __DIR__/ticker.py
+# The installed launcher copy checks the last update (rolls it back if it keeps
+# failing to start), then runs ticker.py. See launcher.py.
+ExecStart=__DIR__/venv/bin/python __DIR__/.launcher/launcher.py
 Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=10

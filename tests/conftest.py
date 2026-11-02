@@ -3,9 +3,11 @@
 No test touches the network, the LED panel or the repo's own cache/ and logs/ folders.
 """
 
+import http.client as httpclient
 import json
 import os
 import sys
+import threading
 
 import pytest
 import requests
@@ -97,3 +99,42 @@ def isolate(tmp_path, monkeypatch):
     monkeypatch.setattr(ticker, "REQUEST_CACHE", str(tmp_path / "requests.json"))
     monkeypatch.setattr(ticker, "Usage", lambda budget: usage.Usage(budget, path=str(tmp_path / "usage.json")))
     yield
+
+
+# --- phone settings page -------------------------------------------------------
+@pytest.fixture
+def app(tmp_path, monkeypatch):
+    webui = _webui()
+    monkeypatch.setattr(webui, "CACHE", str(tmp_path / "cache"))
+    monkeypatch.setattr(webui, "COIN_META", str(tmp_path / "cache" / "coins.json"))
+    monkeypatch.setattr(webui, "ICON_DIR", str(tmp_path / "icons"))
+    env = tmp_path / "settings.env"
+    env.write_text("# my settings\nSYMBOLS=btc,eth\nBRIGHTNESS=70\nWEB_PIN=2468\n")
+    return webui.WebApp(str(env))
+
+
+# --- over HTTP ---------------------------------------------------------------
+@pytest.fixture
+def server(app):
+    srv = _webui().ThreadingHTTPServer(("127.0.0.1", 0), _webui().make_handler(app))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield srv
+    srv.shutdown()
+
+
+def request(server, method, path, body=b"", headers=None):
+    c = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+    c.request(method, path, body=body, headers=headers or {})
+    r = c.getresponse()
+    return r.status, json.loads(r.read() or b"{}"), r.getheader("Set-Cookie")
+
+
+def login(server):
+    status, _, cookie = request(server, "POST", "/api/login", json.dumps({"pin": "2468"}).encode())
+    assert status == 200
+    return {"Cookie": cookie.split(";")[0]}
+
+
+def _webui():
+    import webui
+    return webui

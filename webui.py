@@ -243,9 +243,10 @@ def write_settings(path, updates):
 
 # --- app state ---------------------------------------------------------------
 class WebApp:
-    def __init__(self, env_path, ticker=None, search=None):
+    def __init__(self, env_path, ticker=None, search=None, updater=None):
         self.env_path = env_path
         self.ticker = ticker
+        self.updater = updater
         self.search_fn = search  # callable(query) -> list of coins
         self.fails = {}  # ip -> (count, locked_until)
         os.makedirs(CACHE, exist_ok=True)
@@ -359,6 +360,17 @@ class WebApp:
             "focus": clean("FOCUS", "off"),
             "list_view": clean("LIST_VIEW", "off"),
             "list_page_seconds": int(clean("LIST_PAGE_SECONDS", "6")),
+        }
+
+    def status(self):
+        """Status section: price freshness, uptime, Wi-Fi, last error, software version."""
+        import sysinfo
+        return {
+            "now": time.time(),
+            "ticker": self.ticker.status() if self.ticker else None,
+            "system_uptime": sysinfo.system_uptime(),
+            "wifi": sysinfo.wifi(),
+            "update": self.updater.status() if self.updater else None,
         }
 
     def save_icon(self, symbol, data):
@@ -494,6 +506,8 @@ def make_handler(app):
                 return self._send(401, {"error": "login required"})
             if url.path == "/api/settings":
                 return self._send(200, app.settings())
+            if url.path == "/api/status":
+                return self._send(200, app.status())
             if url.path == "/api/geocode":
                 q = parse_qs(url.query).get("q", [""])[0].strip()[:64]
                 if len(q) < 3:
@@ -518,7 +532,7 @@ def make_handler(app):
         def do_POST(self):
             url = urlparse(self.path)
             try:
-                body = self._body() if url.path in ("/api/login", "/api/settings") else None
+                body = self._body() if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback") else None
             except OverflowError as exc:
                 return self._send(413, {"error": str(exc)})
             except ValueError as exc:
@@ -545,6 +559,18 @@ def make_handler(app):
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
                 return self._send(200, {"ok": True})
+            if url.path in ("/api/update", "/api/rollback"):
+                if not app.updater:
+                    return self._send(404, {"error": "updates aren't available here"})
+                from updater import UpdateError
+                try:
+                    if url.path == "/api/update":
+                        app.updater.start_update()
+                    else:
+                        app.updater.start_rollback()
+                except UpdateError as exc:
+                    return self._send(409, {"error": str(exc)})
+                return self._send(202, {"ok": True})
             if url.path == "/api/settings":
                 try:
                     saved = app.save(body)
@@ -699,8 +725,67 @@ function render(){
    <div class="row"><div class="grow">Refresh prices every</div><select id="rr">${[['auto','Auto'],['60','1 min'],['120','2 min'],['180','3 min'],['300','5 min'],['600','10 min'],['900','15 min'],['1800','30 min']].map(([v,l])=>`<option value="${v}" ${String(S.refresh_rate)==v?'selected':''}>${l}</option>`).join('')}</select></div>
    ${usageRow()}
   </div>
-  <p class="hint">Changes show on the ticker within a few seconds.${S.pin_set?'':' <span class="err">No PIN set: anyone on your Wi-Fi can change this. Add WEB_PIN to settings.env.</span>'}</p>`;
+  <p class="hint">Changes show on the ticker within a few seconds.${S.pin_set?'':' <span class="err">No PIN set: anyone on your Wi-Fi can change this. Add WEB_PIN to settings.env.</span>'}</p>
+  <h2>Status</h2><div class="card" id="status"><div class="row"><div class="grow name">Loading…</div></div></div>
+  <h2>Software</h2><div class="card" id="software"></div><div id="swhint"></div>`;
   bind();
+  loadStatus();
+}
+// ----- status + software update -----
+let statusTimer=null;
+const dur=s=>{s=Math.max(0,Math.round(s));const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return d?`${d} d ${h} h`:h?`${h} h ${m} min`:m?`${m} min`:`${s} s`};
+const ago=(t,now)=>t?(now-t<45?'just now':dur(now-t)+' ago'):'never';
+function statusRows(st){
+  const t=st.ticker,now=st.now,rows=[];
+  const row=(l,v,cls='')=>`<div class="row"><div class="grow">${l}</div><div class="val ${cls}" style="min-width:0;text-align:right">${v}</div></div>`;
+  if(t){
+    rows.push(row('Last price update', t.last_success?esc(ago(t.last_success,now)):'not yet', t.stale||!t.last_success&&t.last_error?'err':''));
+    if(t.stale)rows.push(`<div class="row" style="border-top:0;padding-top:0"><div class="grow name err" style="white-space:normal">Showing the last good prices (red dot on the panel).</div></div>`);
+    rows.push(row('Ticker running for',esc(dur(now-t.started_at))));
+  }
+  if(st.system_uptime!=null)rows.push(row('Pi up for',esc(dur(st.system_uptime))));
+  const w=st.wifi;
+  rows.push(row('Wi-Fi signal',w?esc(`${w.label[0].toUpperCase()+w.label.slice(1)}${w.dbm!=null?' · '+w.dbm+' dBm':' · '+w.quality+'%'}`):'not available',w&&w.label=='weak'?'err':''));
+  if(t){
+    rows.push(row('Last error',t.last_error?esc(ago(t.last_error_at,now)):'none',t.last_error&&t.stale?'err':''));
+    if(t.last_error)rows.push(`<div class="row" style="border-top:0;padding-top:0"><div class="grow name" style="white-space:normal;word-break:break-word">${esc(t.last_error.slice(0,200))}</div></div>`);
+  }
+  return rows.join('');
+}
+function softwareRows(u){
+  if(!u)return '<div class="row"><div class="grow name">Updates aren\'t available here.</div></div>';
+  const v=u.version, busy=u.state=='running'||u.state=='pending';
+  const btn=(id,label,cls='')=>`<button class="btn ${cls}" id="${id}" style="width:auto;padding:0 14px" ${busy?'disabled':''}>${label}</button>`;
+  const msgCls=['failed','rollback_failed'].includes(u.state)||u.needs_key?'err':'';
+  return `<div class="row"><div class="grow">Version<div class="name">${esc(v.commit)} · ${esc(v.date)} · ${esc(v.subject)}</div></div></div>
+   <div class="row" style="gap:8px"><div class="grow name ${msgCls}" style="white-space:normal">${esc(busy&&!u.message?'Working…':u.message||'')}</div>
+   ${u.can_rollback?btn('rollback','Roll back','del'):''}${btn('update',busy?'Updating…':'Update')}</div>`;
+}
+function swHint(u){
+  if(!u||!u.needs_key)return '';
+  return u.deploy_key?`<p class="hint">Add this public key to the GitHub repo under <b>Settings → Deploy keys</b> (read-only), then tap Update again:</p>
+   <div class="card"><div class="row"><div class="grow name" style="white-space:normal;word-break:break-all;font-family:ui-monospace,monospace;user-select:all">${esc(u.deploy_key)}</div></div></div>`
+   :`<p class="hint">No deploy key on the Pi yet. Over SSH run <b>./install.sh --deploy-key</b>; it prints the key to add on GitHub (see the README).</p>`;
+}
+async function loadStatus(){
+  clearTimeout(statusTimer);
+  let st;
+  try{st=await api('/api/status')}catch(e){statusTimer=setTimeout(loadStatus,5000);return}  // restarting
+  if(!$('#status'))return;
+  $('#status').innerHTML=statusRows(st);
+  $('#software').innerHTML=softwareRows(st.update);
+  $('#swhint').innerHTML=swHint(st.update);
+  if($('#update'))$('#update').onclick=async()=>{
+    if(!confirm('Update the ticker from GitHub? It restarts, and goes back to this version by itself if the update fails to start.'))return;
+    try{await api('/api/update',{});toast('Updating…')}catch(e){if(e.message!='login')toast(e.message,true)}
+    loadStatus()};
+  if($('#rollback'))$('#rollback').onclick=async()=>{
+    if(!confirm('Go back to the previous version ('+st.update.previous+')? The ticker restarts.'))return;
+    try{await api('/api/rollback',{});toast('Rolling back…')}catch(e){if(e.message!='login')toast(e.message,true)}
+    loadStatus()};
+  const busy=st.update&&['running','pending'].includes(st.update.state);
+  statusTimer=setTimeout(loadStatus,busy?3000:30000);
 }
 function save(extra){
   clearTimeout(saveTimer);

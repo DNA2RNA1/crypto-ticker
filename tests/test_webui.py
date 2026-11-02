@@ -1,22 +1,11 @@
 """Phone settings page: every input is validated before settings.env is touched."""
 
-import http.client
 import json
-import threading
 
 import pytest
 
 import webui
-
-
-@pytest.fixture
-def app(tmp_path, monkeypatch):
-    monkeypatch.setattr(webui, "CACHE", str(tmp_path / "cache"))
-    monkeypatch.setattr(webui, "COIN_META", str(tmp_path / "cache" / "coins.json"))
-    monkeypatch.setattr(webui, "ICON_DIR", str(tmp_path / "icons"))
-    env = tmp_path / "settings.env"
-    env.write_text("# my settings\nSYMBOLS=btc,eth\nBRIGHTNESS=70\nWEB_PIN=2468\n")
-    return webui.WebApp(str(env))
+from conftest import login, request
 
 
 GOOD = {"symbols": "btc:bitcoin,ada:cardano", "layout": "chart", "transition": "none", "brightness": 55,
@@ -126,28 +115,6 @@ def test_icon_upload_validation(app):
         app.save_icon("btc", b"not an image")
     with pytest.raises(ValueError):
         app.save_icon("btc", b"")
-
-
-# --- over HTTP ---------------------------------------------------------------
-@pytest.fixture
-def server(app):
-    srv = webui.ThreadingHTTPServer(("127.0.0.1", 0), webui.make_handler(app))
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    yield srv
-    srv.shutdown()
-
-
-def request(server, method, path, body=b"", headers=None):
-    c = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
-    c.request(method, path, body=body, headers=headers or {})
-    r = c.getresponse()
-    return r.status, json.loads(r.read() or b"{}"), r.getheader("Set-Cookie")
-
-
-def login(server):
-    status, _, cookie = request(server, "POST", "/api/login", json.dumps({"pin": "2468"}).encode())
-    assert status == 200
-    return {"Cookie": cookie.split(";")[0]}
 
 
 def test_http_requires_login(server):

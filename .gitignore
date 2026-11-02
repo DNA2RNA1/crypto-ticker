@@ -7,3 +7,4 @@ __pycache__/
 # your own coin pictures stay on the Pi, not on GitHub
 /icons/*.png
 /logs/
+/.launcher/

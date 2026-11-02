@@ -228,6 +228,8 @@ class Ticker:
         self.stale_since = None     # when those last good prices were fetched
         self.failures = 0           # consecutive failed refreshes (drives the backoff)
         self.last_success = None
+        self.last_error_at = None
+        self.started_at = time.time()
         self.last_error = None
         self.next_fetch = 0.0
         self.current = None
@@ -325,6 +327,7 @@ class Ticker:
             return
         self.failures += 1
         self.last_error = exc
+        self.last_error_at = time.time()
         delay = self.retry_delay(exc)
         self.next_fetch = time.time() + delay
         if not self.assets:  # cold start offline: fall back to the cached last good prices
@@ -340,6 +343,18 @@ class Ticker:
                 self.stale_since = self.last_success or time.time()
         log.error("price fetch failed (%d in a row): %s; next try in %ds%s", self.failures, exc,
                   delay, "; showing last good prices as stale" if self.assets else "")
+
+    def status(self):
+        """For the phone page's Status section."""
+        return {
+            "last_success": self.last_success,
+            "stale": self.stale,
+            "failures": self.failures,
+            "last_error": str(self.last_error) if self.last_error else None,
+            "last_error_at": self.last_error_at,
+            "started_at": self.started_at,
+            "coins": len(self.assets),
+        }
 
     def error_reason(self):
         exc = self.last_error
@@ -542,6 +557,33 @@ def test_pattern(display, renderer, seconds=2.0):
     display.show(img, seconds * 3)
 
 
+def self_check():
+    """Import everything the ticker needs and parse the settings, without touching the
+    panel or the network. The updater runs this on new code before restarting."""
+    import importlib
+    for name in ("display", "feeds", "icons", "prices", "render", "session", "usage", "webui",
+                 "cache", "retry", "logsetup", "sample", "updater", "launcher"):
+        importlib.import_module(name)
+    cfg = Config.from_env()
+    Renderer(cfg.cols * cfg.chain, cfg.rows * cfg.parallel).message("OK")
+    print("ticker self-check ok")
+    return 0
+
+
+def _mark_update_healthy_later(delay=60):
+    """After a minute of running, tell the launcher the latest update is good."""
+    def mark():
+        try:
+            import launcher
+            if launcher.mark_healthy(HERE):
+                log.info("update confirmed: running fine after %ds", delay)
+        except Exception as exc:
+            log.warning("could not record update health: %s", exc)
+    t = threading.Timer(delay, mark)
+    t.daemon = True
+    t.start()
+
+
 def _stop(signum, frame):
     raise SystemExit(0)  # unwinds to the finally below, which blanks the panel
 
@@ -555,12 +597,16 @@ def main():
                              "terminal, tkinter, sixel or raw")
     parser.add_argument("--sample", action="store_true",
                         help="show made-up prices and feed data (no network needed)")
+    parser.add_argument("--check", action="store_true",
+                        help="load settings and every module, then exit (used by the updater)")
     parser.add_argument("--test-pattern", action="store_true",
                         help="show a wiring test pattern on the panel and exit")
     parser.add_argument("--env", default=os.path.join(HERE, "settings.env"))
     args = parser.parse_args()
 
     load_env_file(args.env)
+    if args.check:
+        return self_check()
     setup_logging()
     cfg = Config.from_env()
     signal.signal(signal.SIGTERM, _stop)  # systemctl stop -> clean shutdown
@@ -580,12 +626,14 @@ def main():
     if env("WEB_ENABLED", True, bool):
         import webui
         try:
-            webui.start(webui.WebApp(args.env, ticker, search=ticker.search),
+            from updater import Updater
+            webui.start(webui.WebApp(args.env, ticker, search=ticker.search, updater=Updater()),
                         port=env("WEB_PORT", 8080, int, lo=1, hi=65535))
         except OSError as exc:
             log.error("settings page could not start: %s", exc)
     log.info("ticker started (%s, %dx%d)", "emulator" if args.emulate else "LED panel",
              display.width, display.height)
+    _mark_update_healthy_later()
     try:
         ticker.run()
     except KeyboardInterrupt:
@@ -597,4 +645,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
