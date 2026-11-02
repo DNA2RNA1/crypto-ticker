@@ -8,16 +8,19 @@
 #   ./install.sh --skip-build    don't (re)build the LED library (it takes 20-40 min on a Pi Zero)
 #   ./install.sh --no-service    install everything but don't enable auto-start
 #   ./install.sh --deploy-key    only create the SSH deploy key for the Update button and show it
+#   ./install.sh --enterprise-wifi         only add a work (WPA2-Enterprise, PEAP) Wi-Fi profile
+#   ./install.sh --remove-enterprise-wifi  only remove that work Wi-Fi profile
+# A normal run never changes Wi-Fi settings; only the two options above do.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$(dirname "$HERE")/rpi-rgb-led-matrix"
 VENV="$HERE/venv"
 SERVICE=crypto-ticker
-PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0
+PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0 WIFI=""
 DEPLOY_KEY="$HOME/.ssh/crypto-ticker-deploy"
 
-usage() { sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --pin) PIN="${2:-}"; ASK_PIN=0; shift ;;
@@ -25,6 +28,8 @@ while [ $# -gt 0 ]; do
         --skip-build) BUILD=0 ;;
         --no-service) ENABLE_SERVICE=0 ;;
         --deploy-key) KEY_ONLY=1 ;;
+        --enterprise-wifi) WIFI=add ;;
+        --remove-enterprise-wifi) WIFI=remove ;;
         -h|--help) usage 0 ;;
         *) echo "Unknown option: $1" >&2; usage 1 ;;
     esac
@@ -57,6 +62,68 @@ deploy_key() {  # SSH key the Update button uses to pull from GitHub (needed onc
 
 if [ "$KEY_ONLY" -eq 1 ]; then
     deploy_key
+    exit 0
+fi
+
+# --- work Wi-Fi (only with --enterprise-wifi / --remove-enterprise-wifi) ---------
+# Adds or removes one NetworkManager profile and exits; a normal install never gets here.
+enterprise_wifi() {
+    command -v nmcli >/dev/null || die "nmcli not found. Raspberry Pi OS Bookworm uses NetworkManager; older releases aren't supported."
+    nmcli -t -f RUNNING general 2>/dev/null | grep -q running || die "NetworkManager isn't running."
+    local helper="$HERE/wifi_enterprise.py"
+    if [ "$WIFI" = remove ]; then
+        sudo python3 "$helper" remove
+        return
+    fi
+    if sudo python3 "$helper" exists; then
+        read -rp "A work Wi-Fi profile already exists. Replace it? [y/N] " ans
+        [[ "$ans" =~ ^[Yy] ]] || { echo "Left it as it is."; return; }
+    fi
+    local ssid user pass pass2 anon check="" ca="" domain="" choice confirm
+    echo "Work Wi-Fi (WPA2-Enterprise, PEAP with MSCHAPv2). Your home Wi-Fi stays as it is."
+    read -rp "Network name (SSID): " ssid
+    read -rp "Username: " user
+    while true; do
+        read -rsp "Password: " pass; echo
+        read -rsp "Password again: " pass2; echo
+        [ -n "$pass" ] && [ "$pass" = "$pass2" ] && break
+        echo "The passwords didn't match (or were empty). Try again."
+    done
+    unset pass2
+    read -rp "Anonymous identity (outer identity; Enter to skip): " anon
+    echo
+    echo "How should the Pi check that it's talking to the real network?"
+    echo "  1) a CA certificate file from your IT department (best)"
+    echo "  2) the system's trusted certificates plus the server's domain name"
+    echo "  3) skip the check (not recommended)"
+    while [ -z "$check" ]; do
+        read -rp "Choose 1, 2 or 3: " choice
+        case "$choice" in
+            1) check="file"
+               read -rp "Path to the certificate (.pem/.crt): " ca
+               ca="$(realpath -e "$ca" 2>/dev/null || true)"
+               [ -n "$ca" ] || { echo "File not found."; check=""; continue; }
+               read -rp "Server domain to match, e.g. radius.example.com (Enter to skip): " domain ;;
+            2) check="system"
+               read -rp "Server domain, e.g. radius.example.com: " domain
+               [ -n "$domain" ] || { echo "The domain is needed for this option."; check=""; } ;;
+            3) check="none"
+               warn "Without a server check, any access point using this network name can collect your"
+               warn "username and an MSCHAPv2 exchange that can be cracked offline to recover your password."
+               read -rp "Type 'skip' to continue without the check: " confirm
+               [ "$confirm" = skip ] || { echo "OK, choose again."; check=""; } ;;
+            *) echo "Please type 1, 2 or 3." ;;
+        esac
+    done
+    # Fields go to the helper on stdin, NUL-separated: never in a command line.
+    printf '%s\0' "$ssid" "$user" "$pass" "$anon" "$check" "$ca" "$domain" | sudo python3 "$helper" add
+    unset pass
+    echo "NetworkManager will join it automatically when it's in range (your home network wins if both are)."
+    echo "Remove it with:  ./install.sh --remove-enterprise-wifi"
+}
+
+if [ -n "$WIFI" ]; then
+    enterprise_wifi
     exit 0
 fi
 

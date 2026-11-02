@@ -31,6 +31,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 1. [Hardware](#hardware)
 2. [Wiring check](#wiring-check)
 3. [Install](#install)
+   - [Work Wi-Fi (WPA2-Enterprise)](#work-wi-fi-wpa2-enterprise)
 4. [Configuration](#configuration)
 5. [Weather, news and sports screens](#weather-news-and-sports-screens)
 6. [Phone settings page](#phone-settings-page)
@@ -121,6 +122,58 @@ It shows solid **red, green, blue, white**, then a white border with colored cor
 
 **First run tip:** start minimal (`SCREENS=coins`, `WEB_ENABLED=false`), get prices on the panel,
 then turn features back on one at a time and watch the log after each.
+
+### Work Wi-Fi (WPA2-Enterprise)
+
+To take the ticker to work, add a second Wi-Fi profile for a WPA2-Enterprise network that uses
+**PEAP with MSCHAPv2** (a username and password, the common setup for company Wi-Fi). Your home
+Wi-Fi stays exactly as it is; NetworkManager (standard on Raspberry Pi OS Bookworm) joins whichever
+network is in range, and prefers home if both are.
+
+```bash
+./install.sh --enterprise-wifi
+```
+
+It asks for the network name, your username and password (typed twice, not shown), an optional
+anonymous (outer) identity, and how to check the network's server:
+
+1. **A CA certificate file** from your IT department (best). Optionally also the server's domain
+   name (e.g. `radius.example.com`).
+2. **The system's trusted certificates plus the server's domain name**, if the network's server uses
+   a certificate from a public authority.
+3. **Skip the check.** Only if you can't get the certificate. Without it, anything broadcasting the
+   same network name can collect your username and an MSCHAPv2 exchange that can be cracked offline
+   to recover your password. You have to type `skip` to confirm.
+
+To remove the profile again (the certificate copy too):
+
+```bash
+./install.sh --remove-enterprise-wifi
+```
+
+Running it again replaces the profile. A normal `./install.sh` never touches Wi-Fi settings; only
+these two options do, and they change nothing else.
+
+**Where the password goes.** The profile is one NetworkManager file,
+`/etc/NetworkManager/system-connections/ticker-work-wifi.nmconnection`, readable only by root
+(mode 600); a certificate you supply is copied to `/etc/crypto-ticker/work-wifi-ca.pem`. The
+password is stored there in plain text: NetworkManager can't log in to PEAP/MSCHAPv2 with an NT
+hash (it hands the password to wpa_supplicant over D-Bus, and wpa_supplicant only accepts the
+`hash:` form in its own config files). Anyone who can read the SD card can read it, so treat the card
+like a key, and if your work password is also your company login, consider asking IT for a
+separate device account. The password is never written into this repository, a command line or
+the logs.
+
+**At work, the phone settings page may not be reachable.** Company networks often keep devices from
+seeing each other (client isolation), block the `.local` names the page uses, or put phones and
+other devices on different networks. Change settings at home, or ask IT. Also on a work network:
+the price, weather, news and sports sources may be blocked by a firewall or proxy (the panel then
+shows the last good data, marked stale), and the **Update** button may not reach GitHub if outgoing
+SSH (port 22) is blocked.
+
+To check it: `nmcli connection show` lists `ticker-work-wifi`; `nmcli device wifi list` shows which
+networks the Pi can see; `journalctl -u NetworkManager -b | grep -i 802-1x` shows why a login failed
+(wrong password, or the certificate check failed).
 
 ## Configuration
 
@@ -364,6 +417,8 @@ writes `docs/preview-scroll.gif`, the scroll transition made by the real `Ticker
 | Red dot in the corner | Prices couldn't be refreshed; they're the last good ones. Check the log for why |
 | Wrong coin for a ticker | Pin it: `SYMBOLS=btc,uni:uniswap` |
 | Can't open the phone page | Same Wi-Fi? Try the Pi's IP (`hostname -I`). Check `WEB_ENABLED=true` and the log |
+| Doesn't join the work Wi-Fi | `journalctl -u NetworkManager -b \| grep -i 802-1x`: a certificate error means the CA file or domain doesn't match (ask IT); an authentication failure means the username/password. Re-run `./install.sh --enterprise-wifi` to fix them |
+| Can't open the settings page at work | Expected on many company networks (devices can't see each other). Change settings at home |
 | Forgot the PIN | Edit `WEB_PIN` in `settings.env`, then `sudo systemctl restart crypto-ticker` |
 | "Pi can't reach GitHub — deploy key needed" | Set up the [deploy key](#deploy-key-needed-once-the-repo-is-private) |
 | "The SSH client is missing" | `sudo apt-get install -y openssh-client` |
@@ -401,6 +456,7 @@ Scriptable's API (`tests/widget/scriptable_stub.mjs`), not the real app.
 | `news.py`, `sports.py`, `scroller.py` | News feeds, ESPN scores and the league table, scrolling text |
 | `feeds.py`, `session.py`, `usage.py`, `icons.py`, `bdf.py` | Weather/F&G/indices, market sessions, API budget, icons, fonts |
 | `install.sh`, `crypto-ticker.service` | Install and auto-start |
+| `wifi_enterprise.py` | Work Wi-Fi profile for `install.sh --enterprise-wifi` (NetworkManager keyfile) |
 | `launcher.py`, `updater.py`, `sysinfo.py` | Service entry point + update safety net, Update/Roll back, Wi-Fi and uptime |
 | `tools/` | Demo settings server, Playwright screenshot scripts, scroll frame-time benchmark |
 | `screenshots.py`, `preview.py`, `sample.py` | Emulator screenshots, GIF preview, sample data |
