@@ -47,6 +47,9 @@ EDITABLE = {  # key -> validator returning the string to store
     "TIMEZONE": lambda v: _tz(v),
     "INDICES_SOURCE": lambda v: _choice(v.strip().lower(), ("coingecko", "yahoo")),
     "INDICES_VIEW": lambda v: _choice(v.strip().lower(), ("percent", "both")),
+    "NEWS_FEEDS": lambda v: _feeds(v),
+    "NEWS_PER_CYCLE": lambda v: _int(v, 1, 10),
+    "NEWS_SPEED": lambda v: _choice(v.strip().lower(), ("slow", "normal", "fast")),
     "FOCUS": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "LIST_VIEW": lambda v: _choice(v.strip().lower(), ("off", "5", "4")),
     "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
@@ -68,7 +71,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
           "WEATHER_PLACE": "Place name", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
           "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "FOCUS": "Focus", "LIST_VIEW": "List view",
-          "LIST_PAGE_SECONDS": "Seconds per page"}
+          "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "News feeds",
+          "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed"}
 
 
 def _int(v, lo, hi):
@@ -128,8 +132,11 @@ def _tz(v):
     return v
 
 
+SCREENS = ("clock", "weather", "feargreed", "indices", "news", "sports", "coins")
+
+
 def _screens(v):
-    allowed = ("clock", "feargreed", "indices", "coins")
+    allowed = SCREENS
     names = []
     for x in (n.strip().lower() for n in v.split(",")):
         if not x:
@@ -171,6 +178,63 @@ def _symbols(v):
     if len(entries) > 30:
         raise ValueError("30 coins max")
     return ",".join(entries)
+
+
+def _feeds(v):
+    """Feed URLs, one per line (or comma separated) -> comma-separated list."""
+    urls = []
+    for u in re.split(r"[\s,]+", str(v).strip()):
+        if not u:
+            continue
+        if len(u) > 300 or not re.fullmatch(r"https?://[A-Za-z0-9.\-]+(:\d{1,5})?(/[^\s,<>\"']*)?", u):
+            raise ValueError(f"not a feed URL: {u[:60]}")
+        if u not in urls:
+            urls.append(u)
+    if not urls:
+        raise ValueError("add at least one feed URL")
+    if len(urls) > 8:
+        raise ValueError("8 feeds max")
+    return ",".join(urls)
+
+
+def _favorites(v):
+    """ESPN team favorites "id:ABBR,id:ABBR" (ids are numbers)."""
+    out = []
+    for part in (p.strip() for p in str(v).split(",")):
+        if not part:
+            continue
+        m = re.fullmatch(r"(\d{1,10}):([A-Za-z0-9&.'-]{1,6})", part)
+        if not m:
+            raise ValueError(f"bad team: {part[:20]}")
+        item = f"{m[1]}:{m[2].upper()}"
+        if item not in out:
+            out.append(item)
+    if len(out) > 20:
+        raise ValueError("20 favorites max")
+    return ",".join(out)
+
+
+def _default_feeds():
+    from news import DEFAULT_FEEDS
+    return DEFAULT_FEEDS
+
+
+def _sports_keys():
+    from sports import LEAGUES, TOP_CHOICES
+    keys = {}
+    for lg in LEAGUES:
+        k = lg.key.upper()
+        keys[f"SPORTS_{k}"] = lambda v: _choice(v.strip().lower(), ("on", "off"))
+        choices = tuple(str(n) for n in TOP_CHOICES[lg.rankings])
+        keys[f"SPORTS_{k}_TOP"] = lambda v, c=choices: _choice(str(v).strip(), c)
+        keys[f"SPORTS_{k}_FAVORITES"] = lambda v: _favorites(v)
+        LABELS[f"SPORTS_{k}"] = lg.name
+        LABELS[f"SPORTS_{k}_TOP"] = f"{lg.name} top teams"
+        LABELS[f"SPORTS_{k}_FAVORITES"] = f"{lg.name} favorites"
+    return keys
+
+
+EDITABLE.update(_sports_keys())
 
 
 def _refresh(v):
@@ -352,6 +416,7 @@ class WebApp:
             "pin_set": bool(s.get("WEB_PIN")),
             "featured": [x for x in clean("FEATURED", "").split(",") if x],
             "screens": clean("SCREENS", "clock,feargreed,indices,coins").split(","),
+            "screen_names": list(SCREENS),
             "indices_source": clean("INDICES_SOURCE", "coingecko"),
             "indices_view": clean("INDICES_VIEW", "percent"),
             "weather_place": clean("WEATHER_PLACE", "") or ("Edinburg, Texas, US" if not s.get("WEATHER_LAT") else ""),
@@ -362,7 +427,32 @@ class WebApp:
             "focus": clean("FOCUS", "off"),
             "list_view": clean("LIST_VIEW", "off"),
             "list_page_seconds": int(clean("LIST_PAGE_SECONDS", "6")),
+            "news_feeds": clean("NEWS_FEEDS", ",".join(_default_feeds())).split(","),
+            "news_per_cycle": int(clean("NEWS_PER_CYCLE", "3")),
+            "news_speed": clean("NEWS_SPEED", "normal"),
+            "sports": self._sports(clean),
         }
+
+    def _sports(self, clean):
+        """One entry per league for the Sports cards (out-of-season ones flagged)."""
+        from sports import LEAGUES, TOP_CHOICES, in_season, parse_favorites
+        out = []
+        for lg in LEAGUES:
+            k = lg.key.upper()
+            favs = parse_favorites(clean(f"SPORTS_{k}_FAVORITES", ""))
+            out.append({"key": lg.key, "name": lg.name, "in_season": in_season(lg), "rankings": lg.rankings,
+                        "on": clean(f"SPORTS_{k}", "on" if lg.default_on else "off") == "on",
+                        "top": int(clean(f"SPORTS_{k}_TOP", str(lg.default_top))),
+                        "top_choices": list(TOP_CHOICES[lg.rankings]),
+                        "favorites": [{"id": i, "abbr": a} for i, a in favs]})
+        return out
+
+    def team_search(self, league, query):
+        sports = getattr(self.ticker, "sports", None)
+        if sports is None:
+            from sports import Sports
+            sports = self._sports_client = getattr(self, "_sports_client", None) or Sports({})
+        return sports.search_teams(league, query)
 
     def status(self):
         """Status section: price freshness, uptime, Wi-Fi, last error, software version."""
@@ -520,6 +610,17 @@ def make_handler(app):
                 except Exception as exc:
                     log.warning("geocode failed: %s", exc)
                     return self._send(502, {"error": "Location lookup failed. Check the Pi's internet."})
+            if url.path == "/api/teams":
+                qs = parse_qs(url.query)
+                league = qs.get("league", [""])[0][:10]
+                q = qs.get("q", [""])[0].strip()[:40]
+                try:
+                    return self._send(200, {"teams": app.team_search(league, q)})
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+                except Exception as exc:
+                    log.warning("team search failed: %s", exc)
+                    return self._send(502, {"error": "Team search failed. Check the Pi's internet."})
             if url.path == "/api/search":
                 q = parse_qs(url.query).get("q", [""])[0].strip()[:64]
                 if len(q) < 2:
@@ -629,6 +730,9 @@ select{background:#232830;color:var(--text);border:0;border-radius:8px;padding:8
  padding:10px 18px;border-radius:20px;font-size:15px;opacity:0;transition:opacity .25s;pointer-events:none}
 #toast.show{opacity:1}.err{color:var(--down)}
 .hint{color:var(--muted);font-size:13px;margin:8px 4px}
+.chip{display:inline-flex;align-items:center;gap:6px;background:#232830;border-radius:16px;padding:5px 6px 5px 11px;font-weight:600;font-size:14px}
+.chip button{border:0;background:#39404a;color:var(--down);border-radius:50%;width:22px;height:22px;font-size:12px;line-height:22px;padding:0}
+.chip:first-letter{color:var(--accent)}
 .login{max-width:320px;margin:22vh auto 0;text-align:center}
 .login button{margin-top:12px;width:100%;padding:13px;border:0;border-radius:12px;background:var(--accent);color:#000;font-size:17px;font-weight:600}
 .switch{position:relative;width:51px;height:31px;flex:none}.switch input{display:none}
@@ -675,6 +779,52 @@ function seg(key,opts){return `<div class="seg" data-seg="${key}">${opts.map(([v
 function focusHint(){const h=$('#focushint');if(!h)return;
   const syms=S.coins.map(c=>c.entry.split(':')[0]);
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
+const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',
+  news:'News headlines',sports:'Sports scores'};
+function screenOrder(){  // enabled screens in their saved order, then the others
+  const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
+  const o=(S.screen_order||[]).filter(k=>all.includes(k));
+  for(const k of S.screens)if(all.includes(k)&&!o.includes(k))o.push(k);
+  for(const k of all)if(!o.includes(k))o.push(k);
+  return S.screen_order=o;
+}
+function saveScreens(order,on){S.screens=[...order.filter(k=>on.has(k)),'coins'];save();render()}
+function newsRows(){
+  return `<h2>News headlines</h2><div class="card">
+   <div class="row" style="display:block"><div>Feeds<div class="name" style="white-space:normal">RSS or Atom URLs, one per line. Each is checked every 15 minutes.</div></div>
+    <textarea id="feeds" rows="${Math.max(3,(S.news_feeds||[]).length)}" wrap="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+     style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f1216;color:var(--text);font:13px ui-monospace,monospace">${esc((S.news_feeds||[]).join('\n'))}</textarea></div>
+   <div class="row"><div class="grow">Headlines per cycle</div><select id="nper">${[1,2,3,4,5,6,8,10].map(n=>`<option ${S.news_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Scroll speed</div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('news_speed',[['slow','Slow'],['normal','Normal'],['fast','Fast']])}</div>
+  </div>`;
+}
+const lg=k=>S.sports.find(l=>l.key==k);
+function sportsSection(){
+  const on=(S.sports||[]).filter(l=>l.in_season), off=(S.sports||[]).filter(l=>!l.in_season);
+  return `<h2>Sports</h2>${on.map(l=>`<div class="card" style="margin-bottom:12px">
+    <div class="row"><div class="grow"><span class="sym">${esc(l.name)}</span></div>
+     <label class="switch"><input type="checkbox" data-lg="${l.key}" ${l.on?'checked':''}><span></span></label></div>
+    ${l.on?`<div class="row"><div class="grow">Top teams<div class="name" style="white-space:normal">${l.rankings?'From the AP poll':'Best records'}</div></div>
+     <select data-lgtop="${l.key}">${l.top_choices.map(n=>`<option value="${n}" ${l.top==n?'selected':''}>${n?(l.rankings?'AP Top '+n:'Top '+n):'Off'}</option>`).join('')}</select></div>
+    <div class="row" style="flex-wrap:wrap;gap:6px"><div class="grow" style="flex-basis:100%">Favorites<div class="name">Shown with a ★, plus their next game.</div></div>
+     ${l.favorites.map(f=>`<span class="chip">★ ${esc(f.abbr)}<button data-unfav="${l.key}/${f.id}" aria-label="Remove">✕</button></span>`).join('')||'<span class="name">None yet</span>'}</div>
+    <div class="row" style="border-top:0;padding-top:0"><input type="search" data-teamq="${l.key}" placeholder="Add a team, e.g. ${l.rankings?'alabama':'bills'}" autocomplete="off" autocorrect="off" autocapitalize="off"></div>
+    <div id="teams-${l.key}"></div>`:''}
+   </div>`).join('')}
+   <p class="hint">A game shows if either team is a top team or a favorite: live games first, then finals from the last 24 hours, then each favorite's next game.${off.length?' Out of season (hidden): '+off.map(l=>esc(l.name)).join(', ')+'.':''}</p>`;
+}
+async function teamSearch(key,q,box){
+  try{
+    const {teams}=await api('/api/teams?league='+key+'&q='+encodeURIComponent(q));
+    if(!teams.length){box.innerHTML='<div class="row"><div class="grow name">No matches</div></div>';return}
+    box.innerHTML=teams.map((t,i)=>`<div class="row" data-ti="${i}"><div class="ph" style="background:#${/^[0-9a-f]{6}$/i.test(t.color||'')?t.color:'444'}"></div>
+      <div class="grow"><div class="sym">${esc(t.abbr)}</div><div class="name">${esc(t.name)}</div></div><div class="add">＋</div></div>`).join('');
+    box.onclick=e=>{const r=e.target.closest('[data-ti]');if(!r)return;const t=teams[+r.dataset.ti],l=lg(key);
+      if(l.favorites.some(f=>f.id==t.id))return toast('Already a favorite');
+      l.favorites.push({id:t.id,abbr:t.abbr});toast('Added '+t.abbr);save(0);render()};
+  }catch(e){if(e.message!='login')box.innerHTML=`<div class="row"><div class="grow err">${esc(e.message)}</div></div>`}
+}
 function hourSel(id,val){return `<select id="${id}">${[...Array(24).keys()].map(h=>`<option value="${h}" ${h==val?'selected':''}>${(h%12||12)+(h<12?' am':' pm')}</option>`).join('')}</select>`}
 function render(){
   const dim=S.dim_hours?S.dim_hours.split('-').map(Number):null;
@@ -688,8 +838,10 @@ function render(){
   <h2>Add a coin</h2><input id="q" type="search" placeholder="Search name or ticker, e.g. cardano" autocomplete="off" autocorrect="off" autocapitalize="off">
   <div class="card" id="results" style="margin-top:8px"></div>
   <h2>Screens</h2><div class="card">
-   ${[['clock','Clock'],['feargreed','Fear &amp; Greed index'],['indices','Market indices']].map(([k,l])=>
-     `<div class="row"><div class="grow">${l}</div><label class="switch"><input type="checkbox" data-screen="${k}" ${S.screens.includes(k)?'checked':''}><span></span></label></div>`).join('')}
+   ${screenOrder().map((k,i,a)=>`<div class="row"><div class="grow">${SCREEN_LABELS[k]}</div>
+     <button class="btn" data-sup="${k}" ${i==0?'disabled':''} aria-label="Move up">↑</button>
+     <button class="btn" data-sdown="${k}" ${i==a.length-1?'disabled':''} aria-label="Move down">↓</button>
+     <label class="switch"><input type="checkbox" data-screen="${k}" ${S.screens.includes(k)?'checked':''}><span></span></label></div>`).join('')}
    ${S.screens.includes('indices')?`<div class="row"><div class="grow">Indices from<div class="name" style="white-space:normal">${S.indices_source=='yahoo'?'Real index values incl. the Dow. Unofficial source; may stop working.':'Tokenized S&amp;P 500 and Nasdaq funds. No extra CoinGecko calls.'}</div></div>
      <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>
    <div class="row"><div class="grow">Also show $ / point change<div class="name" style="white-space:normal">${S.indices_source=='yahoo'
@@ -697,7 +849,9 @@ function render(){
      :'Flips from % to the $ change halfway through. S&amp;P and Nasdaq are tokenized-fund prices ($ per share, not index points); switch the source to Yahoo for real points. The Dow is always points.'}</div></div>
      <label class="switch"><input type="checkbox" id="iview" ${S.indices_view=='both'?'checked':''}><span></span></label></div>`:''}
   </div>
-  <p class="hint">Shown in this order at the start of each cycle, then your coins.</p>
+  ${S.screens.includes('news')?newsRows():''}
+  <p class="hint">Shown in this order at the start of each cycle, then your coins. The weather screen uses the location below.</p>
+  ${S.screens.includes('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
    <div class="row"><div class="grow">Location<div class="name" id="wplace">${esc(S.weather_place||(S.weather_lat+', '+S.weather_lon))}</div></div></div>
    <div class="row" style="border-top:0;padding-top:0;gap:8px">
@@ -800,7 +954,9 @@ function save(extra){
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
       screens:S.screens.join(','),indices_source:S.indices_source,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
-      sleep:S.sleep,focus:S.focus,list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
+      sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
+      ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
+        ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
     catch(e){if(e.message!='login'){toast('Not saved: '+e.message,true);setTimeout(load,1800)}}
   },extra===0?0:450);
@@ -827,9 +983,20 @@ function bind(){
     S[s.dataset.seg]=b.dataset.v;s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x==b));save();
     if(s.dataset.seg=='list_view')render()});
   document.querySelectorAll('[data-screen]').forEach(cb=>cb.onchange=()=>{
-    const order=['clock','feargreed','indices','coins'];
-    const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);on.add('coins');
-    S.screens=order.filter(k=>on.has(k));save();render()});
+    const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);
+    saveScreens(screenOrder(),on)});
+  document.querySelectorAll('[data-sup],[data-sdown]').forEach(b=>b.onclick=()=>{
+    const o=screenOrder(),k=b.dataset.sup||b.dataset.sdown,i=o.indexOf(k),j=b.dataset.sup?i-1:i+1;
+    [o[i],o[j]]=[o[j],o[i]];S.screen_order=o;saveScreens(o,new Set(S.screens))});
+  if($('#feeds'))$('#feeds').onchange=e=>{S.news_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
+  if($('#nper'))$('#nper').onchange=e=>{S.news_per_cycle=+e.target.value;save()};
+  document.querySelectorAll('[data-lg]').forEach(cb=>cb.onchange=()=>{lg(cb.dataset.lg).on=cb.checked;save();render()});
+  document.querySelectorAll('[data-lgtop]').forEach(sel=>sel.onchange=()=>{lg(sel.dataset.lgtop).top=+sel.value;save()});
+  document.querySelectorAll('[data-unfav]').forEach(b=>b.onclick=()=>{const [k,id]=b.dataset.unfav.split('/');
+    const l=lg(k);l.favorites=l.favorites.filter(f=>f.id!=id);save();render()});
+  document.querySelectorAll('[data-teamq]').forEach(inp=>inp.oninput=()=>{clearTimeout(inp._t);
+    const q=inp.value.trim(),box=$('#teams-'+inp.dataset.teamq);if(q.length<2){box.innerHTML='';return}
+    inp._t=setTimeout(()=>teamSearch(inp.dataset.teamq,q,box),350)});
   if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
   if($('#iview'))$('#iview').onchange=e=>{S.indices_view=e.target.checked?'both':'percent';save()};
   const findPlace=async()=>{

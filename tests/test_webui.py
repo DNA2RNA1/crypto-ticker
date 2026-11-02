@@ -31,7 +31,7 @@ def test_valid_save_writes_and_keeps_comments(app):
     ("refresh_rate", 30), ("refresh_rate", "hourly"), ("refresh_rate", 99999),
     ("symbols", ""), ("symbols", "btc,<script>"), ("symbols", "btc\nWEB_PIN="), ("symbols", ",".join(f"c{i}" for i in range(31))),
     ("symbols", "a" * 21), ("featured", "bad coin"),
-    ("screens", "clock,weather"),
+    ("screens", "clock,radar"),
     ("weather_lat", "91"), ("weather_lat", "nan"), ("weather_lon", "-181"), ("weather_lon", "1;2"),
     ("timezone", "Mars/Olympus"), ("timezone", "../../etc/passwd"), ("timezone", "UTC\nWEB_PIN=1"),
     ("indices_source", "bloomberg"),
@@ -170,3 +170,67 @@ def test_transition_choices(app):
         assert app.save({"transition": v})["TRANSITION"] == v.lower()
     with pytest.raises(ValueError):
         app.save({"transition": "fade"})
+
+
+# --- weather / news / sports settings ------------------------------------------------
+def test_new_screens_save_in_order(app):
+    saved = app.save({"screens": "sports,clock,news,weather"})
+    assert saved["SCREENS"] == "sports,clock,news,weather,coins"
+    s = app.settings()
+    assert s["screens"] == ["sports", "clock", "news", "weather", "coins"]
+    assert s["screen_names"][-1] == "coins" and {"weather", "news", "sports"} <= set(s["screen_names"])
+
+
+def test_news_settings(app):
+    s = app.settings()
+    assert len(s["news_feeds"]) == 3 and s["news_per_cycle"] == 3 and s["news_speed"] == "normal"
+    saved = app.save({"news_feeds": "https://a.example.com/rss\n\nhttps://b.example.com/feed.xml\nhttps://a.example.com/rss",
+                      "news_per_cycle": 5, "news_speed": "fast"})
+    assert saved["NEWS_FEEDS"] == "https://a.example.com/rss,https://b.example.com/feed.xml"
+    assert app.settings()["news_feeds"] == ["https://a.example.com/rss", "https://b.example.com/feed.xml"]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("news_feeds", ""), ("news_feeds", "ftp://x.example.com/rss"), ("news_feeds", "javascript:alert(1)"),
+    ("news_feeds", "https://x.example.com/<script>"), ("news_feeds", "\n".join(f"https://f{i}.example.com" for i in range(9))),
+    ("news_per_cycle", 0), ("news_per_cycle", 11), ("news_speed", "warp"),
+    ("sports_nfl", "maybe"), ("sports_nfl_top", "5"), ("sports_ncaaf_top", "8"),
+    ("sports_nba_favorites", "BOS"), ("sports_nba_favorites", "2:BOSTONCELTICS"), ("sports_nba_favorites", "x2:BOS"),
+    ("sports_nba_favorites", ",".join(f"{i}:T{i}" for i in range(21))),
+])
+def test_new_settings_validation(app, field, value):
+    before = open(app.env_path).read()
+    with pytest.raises(ValueError):
+        app.save({field: value})
+    assert open(app.env_path).read() == before
+
+
+def test_sports_settings(app):
+    sports = {lg["key"]: lg for lg in app.settings()["sports"]}
+    assert list(sports) == ["nfl", "ncaaf", "nba", "ncaam", "mlb", "nhl"]
+    assert sports["nfl"]["on"] and not sports["nhl"]["on"] and sports["ncaaf"]["top"] == 25
+    assert sports["ncaaf"]["top_choices"] == [0, 10, 25] and sports["nba"]["top_choices"] == [0, 4, 8, 12, 16]
+    saved = app.save({"sports_nhl": "on", "sports_nba_top": "12", "sports_nba_favorites": "2:bos, 7:DEN,2:BOS"})
+    assert saved == {"SPORTS_NHL": "on", "SPORTS_NBA_TOP": "12", "SPORTS_NBA_FAVORITES": "2:BOS,7:DEN"}
+    sports = {lg["key"]: lg for lg in app.settings()["sports"]}
+    assert sports["nhl"]["on"] and sports["nba"]["favorites"] == [{"id": "2", "abbr": "BOS"}, {"id": "7", "abbr": "DEN"}]
+
+
+def test_team_search_endpoint(app, server):
+    calls = []
+
+    def search(league, q):
+        calls.append((league, q))
+        if league == "bad":
+            raise ValueError("unknown league")
+        if q == "down":
+            raise ConnectionError("offline")
+        return [{"id": "2", "abbr": "BUF", "name": "Buffalo Bills", "color": "00338d"}]
+
+    app.team_search = search
+    auth = login(server)
+    status, body, _ = request(server, "GET", "/api/teams?league=nfl&q=bil", headers=auth)
+    assert status == 200 and body["teams"][0]["abbr"] == "BUF" and calls == [("nfl", "bil")]
+    assert request(server, "GET", "/api/teams?league=bad&q=x", headers=auth)[0] == 400
+    assert request(server, "GET", "/api/teams?league=nfl&q=down", headers=auth)[0] == 502
+    assert request(server, "GET", "/api/teams?league=nfl&q=bil")[0] == 401
