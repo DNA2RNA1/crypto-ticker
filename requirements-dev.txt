@@ -1,0 +1,4 @@
+# For development on a PC: tests, emulator, screenshots (not needed on the Pi)
+-r requirements.txt
+pytest>=8
+RGBMatrixEmulator>=0.20

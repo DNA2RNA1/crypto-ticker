@@ -1,14 +1,51 @@
 """Output backends: the real LED panel, the on-screen emulator, or a GIF file."""
 
+import os
 import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+EMULATOR_CONFIG = os.path.join(HERE, "emulator_config.json")
+EMULATOR_ADAPTERS = ("browser", "pygame", "terminal", "tkinter", "sixel", "turtle", "raw")
+
+
+def _emulator_modules(adapter=None, pixel_style=None):
+    """Import RGBMatrixEmulator using this repo's emulator_config.json (the library
+    otherwise reads and writes one in the current directory)."""
+    # Importing the package already builds a default config (and writes the file if it's
+    # missing), so import from this folder, where ours exists.
+    cwd = os.getcwd()
+    os.chdir(HERE)
+    try:
+        from RGBMatrixEmulator.internal.emulator_config import RGBMatrixEmulatorConfig
+        RGBMatrixEmulatorConfig.CONFIG_PATH = EMULATOR_CONFIG
+        from RGBMatrixEmulator import RGBMatrix, RGBMatrixOptions
+    finally:
+        os.chdir(cwd)
+
+    def options():
+        o = RGBMatrixOptions()
+        if adapter:
+            if adapter not in EMULATOR_ADAPTERS:
+                raise ValueError(f"unknown emulator adapter {adapter!r}; use one of {EMULATOR_ADAPTERS}")
+            from RGBMatrixEmulator.internal.adapter_loader import AdapterLoader
+            o.display_adapter = AdapterLoader(adapter).load(fallback=False)
+            if o.display_adapter is None:
+                raise RuntimeError(f"emulator adapter {adapter!r} could not be loaded")
+        if pixel_style:
+            from RGBMatrixEmulator.internal.pixel_style import PixelStyle
+            o.pixel_style = PixelStyle.fetch(pixel_style.upper())
+        return o
+
+    return RGBMatrix, options
 
 
 class MatrixDisplay:
     """Drives the panel through hzeller's rpi-rgb-led-matrix (or its emulator)."""
 
-    def __init__(self, cfg, emulate=False):
+    def __init__(self, cfg, emulate=False, adapter=None, pixel_style=None):
+        self.emulated = emulate
         if emulate:
-            from RGBMatrixEmulator import RGBMatrix, RGBMatrixOptions
+            RGBMatrix, RGBMatrixOptions = _emulator_modules(adapter, pixel_style)
         else:
             from rgbmatrix import RGBMatrix, RGBMatrixOptions
         o = RGBMatrixOptions()
@@ -45,6 +82,24 @@ class MatrixDisplay:
     def set_brightness(self, value):
         if self.matrix.brightness != value:
             self.matrix.brightness = value
+
+    def screenshot(self, path):
+        """Save what the emulator is showing as a PNG, LED-style (emulator only)."""
+        if not self.emulated:
+            raise RuntimeError("screenshots need --emulate")
+        import numpy as np
+        from PIL import Image
+        adapter = self.canvas.display_adapter
+        if hasattr(adapter, "frames") and adapter.frames:   # raw adapter: exact last frame
+            pixels = adapter.frames[adapter.frame - 1]
+        else:  # other adapters: re-render the canvas buffer the same way the emulator does
+            pixels = self.canvas.options.screen.render(self.canvas._Canvas__pixels)
+            pixels = (pixels * (self.canvas.brightness / 100.0)).astype(np.uint8)
+        image = adapter._get_masked_image(pixels)
+        if not isinstance(image, Image.Image):
+            image = Image.fromarray(np.asarray(image, dtype=np.uint8))
+        image.save(path)
+        return path
 
     def close(self):
         self.matrix.Clear()

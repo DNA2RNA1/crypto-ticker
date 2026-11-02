@@ -22,8 +22,30 @@ CURRENCY_SIGNS = {"usd": "$", "eur": "€", "gbp": "£", "jpy": "¥", "cad": "$"
 
 
 def load_fonts():
-    return {name: BDFFont(os.path.join(FONT_DIR, f"{name}.bdf"))
-            for name in ("4x6", "5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B", "9x18B")}
+    fonts = {name: BDFFont(os.path.join(FONT_DIR, f"{name}.bdf"))
+             for name in ("4x6", "5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B", "9x18B")}
+    # 5x8 draws "." as a small plus centered on the baseline and "," with a tail below
+    # it; on LEDs both look like "+" hanging under the line ("3.3%"). Redraw them to sit
+    # on the baseline (row 7 of 8 is the baseline row; row 8 is the descender).
+    f = fonts["5x8"]
+    f.override(".", [".....", ".....", ".....", ".....", ".....", ".##..", ".##..", "....."])
+    f.override(",", [".....", ".....", ".....", ".....", ".##..", ".##..", ".#...", "....."])
+    # The larger fonts have the same problem (a plus-shaped "." in 6x10, 7x13, 6x13B and
+    # 7x13B; commas hanging below the line in all of them): "$0.003410", "$109,235".
+    for name, dot in (("6x10", 2), ("6x12", 2), ("7x13", 2), ("6x13B", 2), ("7x13B", 2), ("9x18B", 3)):
+        baseline_punctuation(fonts[name], dot)
+    return fonts
+
+
+def baseline_punctuation(font, dot):
+    """Redraw "." as a dot x dot square and "," as that square plus a 1-pixel tail,
+    both ending on the baseline row like the digits (nothing in the descender)."""
+    adv = font._glyph(".")[5]
+    x = max(0, (adv - dot) // 2)
+    sq = "." * x + "#" * dot + "." * (adv - x - dot)
+    tail = "." * x + "#" + "." * (adv - x - 1)
+    font.override(".", [sq] * dot, yoff=0)
+    font.override(",", [sq] * dot + [tail], yoff=0)
 
 
 def trend_color(change):
@@ -61,8 +83,8 @@ def price_candidates(price, currency):
 
     full4, short4 = fmt(4)
     full3, short3 = fmt(3)
-    if short4:
-        return [short4, full4, short3]
+    if short4:  # short3 can be None when rounding removes a zero (0.00009999 -> 0.000100)
+        return [c for c in (short4, full4, short3) if c]
     return [full4, full3]
 
 
@@ -160,8 +182,18 @@ class Renderer:
             layout = ("classic", "chart")[self._count % 2]
         self._count += 1
         img = self._chart_screen(asset) if layout == "chart" else self._classic_screen(asset)
-        if stale:  # prices couldn't be refreshed: small red marker bottom-right
-            ImageDraw.Draw(img).rectangle((self.w - 2, self.h - 2, self.w - 1, self.h - 1), fill=DOWN)
+        return self.stale_mark(img) if stale else img
+
+    def stale_mark(self, img):
+        """Prices couldn't be refreshed: a small red marker in the bottom-right corner
+        means "this is the last good price, not a live one"."""
+        w, h = self.w, self.h
+        px = img.load()
+        # a black ring keeps the dot visible on top of a (red) chart, but never erases text
+        for x, y in [(w - 3, h - 3), (w - 2, h - 3), (w - 1, h - 3), (w - 3, h - 2), (w - 3, h - 1)]:
+            if px[x, y] not in (PRICE, SYMBOL):
+                px[x, y] = (0, 0, 0)
+        ImageDraw.Draw(img).rectangle((w - 2, h - 2, w - 1, h - 1), fill=DOWN)
         return img
 
     def _chart_screen(self, asset):
@@ -235,7 +267,7 @@ class Renderer:
             font.draw(img, (self.w - font.width(text)) // 2, self.h - 2, text, PRICE)
         return img
 
-    def featured(self, asset):
+    def featured(self, asset, stale=False):
         """Splash for a favorite coin: big picture top-left, symbol and 24h
         change to its right, price along the bottom. Shown before the coin's
         regular price screen."""
@@ -262,7 +294,7 @@ class Renderer:
         sym_font.draw(img, x, 11, asset["symbol"], SYMBOL)
         f["5x8"].draw(img, x, 20, change_text(change), trend_color(change))
         pfont.draw(img, (self.w - pfont.width(ptext)) // 2, self.h - 1, ptext, PRICE)
-        return img
+        return self.stale_mark(img) if stale else img
 
     # --- extra screens (drawn on a 64x32 base, centered on bigger panels) ----
     def _base(self):
@@ -498,7 +530,7 @@ class Renderer:
         num = f"{mag:,.2f}" if mag < 10 else f"{mag:,.1f}" if mag < 100 else f"{mag:,.0f}"
         return f"{'+' if value >= 0 else '-'}{unit}{num}"
 
-    def indices(self, rows, tag="7D", mode="pct"):
+    def indices(self, rows, tag="7D", mode="pct", stale=False):
         """Market page: one band per index with label, 24h change and a chart."""
         img = self._base()
         f = self.fonts
@@ -522,7 +554,111 @@ class Renderer:
         if tag and n <= 2:
             tw = f["4x6"].width(tag)
             f["4x6"].draw(img, 63 - tw, 31, tag, (110, 110, 110))
-        return self._place(img)
+        img = self._place(img)
+        return self.stale_mark(img) if stale else img
+
+    # --- list view: several coins per page ----------------------------------
+    LIST_ROWS = (5, 4)
+
+    @staticmethod
+    def compact_prices(price, currency):
+        """Shorter price strings for list rows, most precise first."""
+        sign = CURRENCY_SIGNS.get(currency, "")
+        full = list(price_candidates(price, currency))
+        out = full + [p[len(sign):] for p in full if sign]           # $4,012 then 4,012
+        for unit, div in (("M", 1e6), ("K", 1e3)):
+            if round(price) >= div:  # 999.99 displays as 1,000, so it gets 1.0K too
+                v = price / div
+                short = f"{v:.1f}{unit}" if v < 10 else f"{v:.0f}{unit}"
+                for t in (f"{v:.3g}{unit}", short):                   # $109K, 4.01K, 4.0K
+                    out += [sign + t, t]
+                break
+        if price < 1:                                                   # .8123
+            out += [p[len(sign):].replace("0.", ".", 1) for p in full]
+            if 0 < price < 0.0001:                                      # .0₄11 (2 digits)
+                frac = f"{price:.{-math.floor(math.log10(price)) + 1}f}".split(".")[1]
+                zeros = len(frac) - len(frac.lstrip("0"))
+                sub = f".0{str(zeros).translate(SUBSCRIPT)}"
+                out += [sub + frac.lstrip("0")[:2], sub + frac.lstrip("0")[:1]]  # last resort
+        seen = []
+        return [p for p in out if not (p in seen or seen.append(p))]
+
+    @staticmethod
+    def _drawable(font, text):
+        return all(ord(c) in font.glyphs for c in text)
+
+    @staticmethod
+    def _arrow(img, x, baseline, up, color):
+        """5x3 triangle for fonts without ▲/▼ glyphs (4x6). Returns its width + gap."""
+        px = img.load()
+        rows = [(2, 2), (1, 3), (0, 4)] if up else [(0, 4), (1, 3), (2, 2)]
+        for dy, (a, b) in enumerate(rows):
+            for dx in range(a, b + 1):
+                px[x + dx, baseline - 4 + dy] = color
+        return 6
+
+    @staticmethod
+    def list_changes(change):
+        """Always with the % sign; one decimal unless there's no room at all."""
+        if change is None:
+            return ["--"]
+        arrow = "▲" if change >= 0 else "▼"
+        a = abs(change)
+        return [f"{arrow}{a:.1f}%", f"{arrow}{a:.0f}%"] if a < 100 else [f"{arrow}{a:.0f}%"]
+
+    def list_page(self, assets, rows=5, stale=False):
+        """One page of up to ``rows`` coins.
+
+        rows=5: 4x6 font; symbol, then ▲/▼ + price colored by the 24h change.
+        rows=4: 5x8 font; symbol, price colored by the 24h change, and ▲/▼ % change.
+        A row that's too wide is shortened step by step (fewer digits, K/M, no
+        currency sign, shorter % change) until it fits the 64-pixel width.
+        """
+        rows = rows if rows in self.LIST_ROWS else 5
+        img = self._base()
+        font = self.fonts["4x6"] if rows == 5 else self.fonts["5x8"]
+        line = 32 // rows                       # 6 or 8 pixels per row
+        top = (32 - line * rows) // 2           # center the block vertically
+        gap = 3 if rows == 5 else 2
+        for i, a in enumerate(assets[:rows]):
+            baseline = top + i * line + font.ascent
+            change = a.get("change_24h")
+            color = trend_color(change)
+            sym = a["symbol"][:6]
+            sw = font.width(sym)
+            right = 61 if stale and i == rows - 1 else 64  # leave room for the stale dot
+            prices = [p for p in self.compact_prices(a["price"], self.currency) if self._drawable(font, p)]
+            prices = prices or [f"{a['price']:.3g}"]
+            if rows == 5:
+                aw = 6 if change is not None else 0
+                room = right - sw - gap - aw
+                text = next((p for p in prices if font.width(p) <= room), prices[-1])
+                font.draw(img, 0, baseline, sym, SYMBOL)
+                x = right - font.width(text)
+                font.draw(img, x, baseline, text, color)
+                if aw:
+                    self._arrow(img, x - aw, baseline, change >= 0, color)
+            else:
+                # keep the % change whole; shorten the price first (4,012 -> 4.0K),
+                # then the change's decimal, and only then a long symbol
+                fit = None
+                for symbol in (sym, sym[:4], sym[:3]):
+                    sw = font.width(symbol)
+                    for ctext in self.list_changes(change):
+                        fit = next(((p, ctext) for p in prices
+                                    if sw + gap + font.width(p) + gap + font.width(ctext) <= right), None)
+                        if fit:
+                            break
+                    if fit:
+                        sym = symbol
+                        break
+                ptext, ctext = fit or (min(prices, key=font.width), self.list_changes(change)[-1])
+                cw = font.width(ctext)
+                font.draw(img, 0, baseline, sym, SYMBOL)
+                font.draw(img, right - cw - gap - font.width(ptext), baseline, ptext, color)
+                font.draw(img, right - cw, baseline, ctext, color)
+        img = self._place(img)
+        return self.stale_mark(img) if stale else img
 
     def message(self, title, detail="", color=SYMBOL):
         img = self.blank()

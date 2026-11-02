@@ -1,23 +1,53 @@
 // Crypto Ticker widget for Scriptable (iPhone home screen, lock screen, StandBy)
 // Companion to the Raspberry Pi LED ticker: same chart look, same price rules.
+// It fetches everything itself, so it works away from home (the Pi isn't needed).
 //
 // SETUP
 // 1. Install "Scriptable" from the App Store, tap +, paste this whole file, name it "Crypto Ticker".
-// 2. Add a Scriptable widget (small for StandBy), long-press it -> Edit Widget:
+// 2. Add a Scriptable widget, long-press it -> Edit Widget:
 //      Script:    Crypto Ticker
-//      Parameter: the coin, e.g.  btc   or  ada   or  night:midnight-3
-//    A medium widget can take up to 3 coins:  btc,ada,snek
-// 3. For StandBy: add small Scriptable widgets to StandBy's widget stacks, one coin each.
-//    Stack several and swipe to switch coins.
+//      Parameter: one of the forms below
+//    Tapping a widget opens the coin on CoinGecko, or the article for a headline.
 //
-// "sym:coingecko-id" pins an exact coin (the id is in the coin's CoinGecko URL).
-// Plain tickers below are already pinned for convenience.
+// PARAMETER
+//   coins:<sym,sym,...>   prices for a coin list
+//       coins:btc                     one coin
+//       coins:btc,ada,snek            several (medium widget shows up to 3)
+//       coins:night:midnight-3        "sym:coingecko-id" pins an exact coin (id is in its CoinGecko URL)
+//   news:<RSS or Atom URL>  the latest headline from a feed
+//       news:https://www.coindesk.com/arc/outboundfeeds/rss/
+//       news:https://feeds.bbci.co.uk/news/technology/rss.xml
+//   btc,ada               the old plain form still works (same as coins:btc,ada)
+//   (empty)               DEFAULT_COINS below
+//
+// WHERE EACH WIDGET SIZE GOES
+//   Home screen small / StandBy:  one coin, big price over a 7-day chart (first coin of the list)
+//   Home screen medium:           up to 3 coins with mini charts
+//   Lock screen inline (above the clock):
+//       coins:btc,eth,sol    -> one coin per refresh, rotating through the list
+//       news:<url>           -> the latest headline
+//   Lock screen circular:
+//       coins:btc            -> symbol, ▲/▼ and a ring gauge of the 24h % change
+//                               (full ring = GAUGE_FULL_SCALE %). Uses the first coin.
+//       news:<url>           -> source initials and the headline's age
+//   Lock screen rectangular:
+//       coins:btc            -> symbol, 24h change, price and a sparkline
+//       coins:btc,eth        -> two coins, one per row
+//       news:<url>           -> source and age, then a 2-3 line headline
+//   StandBy: add small widgets to StandBy's stacks, one coin each, and swipe to switch.
+//
+// Lock-screen widgets are monochrome, so direction is shown with ▲/▼, never color alone.
+// If a fetch fails (no signal, rate limit), the last good data is shown and marked:
+// "offline" on the home screen, "Offline" on the lock screen, and "OLD" in the circular
+// widget. Words, not ⚠︎: at lock-screen size a warning triangle looks like the ▲ arrow.
+// iOS decides when widgets refresh (usually every 15-30 minutes).
 
 // ----- settings you can change -----
 const DEFAULT_COINS = "btc"
 const CURRENCY = "usd"
 const API_KEY = ""               // optional free CoinGecko Demo key
 const REFRESH_MINUTES = 15       // a request; iOS decides the real timing
+const GAUGE_FULL_SCALE = 10      // circular widget: a 10% move fills the whole ring
 const KNOWN = {                  // ticker -> exact CoinGecko id
   btc: "bitcoin", eth: "ethereum", ada: "cardano", link: "chainlink",
   hbar: "hedera-hashgraph", pepe: "pepe", doge: "dogecoin", snek: "snek",
@@ -29,14 +59,35 @@ const HEX = { up: "#1FD07A", down: "#FF4D3D", flat: "#9AA0A6", white: "#FFFFFF" 
 const UP = new Color(HEX.up), DOWN = new Color(HEX.down), FLAT = new Color(HEX.flat)
 const WHITE = Color.white(), BG = new Color("#0B0D10")
 const SIGNS = { usd: "$", eur: "€", gbp: "£", jpy: "¥", cad: "$", aud: "$" }
+const STALE = "⚠︎"
 const fm = FileManager.local()
 const dir = fm.joinPath(fm.cachesDirectory(), "crypto-ticker")
 if (!fm.fileExists(dir)) fm.createDirectory(dir, true)
 
+// ---------- parameter ----------
+// "coins:btc,ada" | "news:https://..." | "btc,ada" (old form) | "" (DEFAULT_COINS)
+function parseParam(param) {
+  const p = (param || "").trim()
+  const m = p.match(/^(coins|news)\s*:\s*(.*)$/i)
+  if (m && m[1].toLowerCase() === "news") {
+    const url = m[2].trim()
+    if (!/^https?:\/\/\S+$/i.test(url)) throw new Error("news: needs a feed URL starting with https://")
+    return { mode: "news", url }
+  }
+  return { mode: "coins", coins: parseCoins(m ? m[2] : p) }
+}
+
 // ---------- data ----------
-function parseCoins(param) {
-  return (param || DEFAULT_COINS).split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
+function parseCoins(list) {
+  const coins = (list || DEFAULT_COINS).split(",").map(s => s.trim().toLowerCase()).filter(Boolean)
     .map(e => { const [sym, id] = e.split(":"); return { sym, id: id || KNOWN[sym] || null } })
+    .filter(c => /^[a-z0-9.\-]{1,20}$/.test(c.sym))
+  if (!coins.length) throw new Error("no coins in the parameter")
+  return coins
+}
+
+function readCache(key) {
+  try { return fm.fileExists(key) ? JSON.parse(fm.readString(key)) : null } catch (e) { return null }
 }
 
 async function fetchMarkets(coins) {
@@ -54,8 +105,8 @@ async function fetchMarkets(coins) {
     rows.push(...data)
   }
   return coins.map(c => {
-    const r = rows.find(r => c.id ? r.id === c.id : r.symbol.toLowerCase() === c.sym)
-    return r && {
+    const r = rows.find(r => r && (c.id ? r.id === c.id : String(r.symbol).toLowerCase() === c.sym))
+    return r && typeof r.current_price === "number" && {
       sym: c.sym.toUpperCase(), id: r.id, name: r.name, image: r.image,
       price: r.current_price, change: r.price_change_percentage_24h,
       spark: (r.sparkline_in_7d?.price || []).filter(p => p != null),
@@ -71,12 +122,73 @@ async function getData(coins) {
     fm.writeString(key, JSON.stringify({ at: Date.now(), assets }))
     return { assets, at: new Date(), stale: false }
   } catch (e) {
-    if (fm.fileExists(key)) {
-      const c = JSON.parse(fm.readString(key))
-      return { assets: c.assets, at: new Date(c.at), stale: true }
-    }
+    const c = readCache(key)
+    if (c && c.assets?.length) return { assets: c.assets, at: new Date(c.at), stale: true }
     throw e
   }
+}
+
+// ---------- news (RSS 2.0 and Atom) ----------
+function hashKey(s) { let h = 0; for (const ch of s) h = (h * 31 + ch.codePointAt(0)) | 0; return (h >>> 0).toString(16) }
+const escXml = t => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+const cleanText = t => String(t || "").replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim()
+
+function parseFeed(xml, url) {
+  // CDATA sections become plain escaped text so every parser sees them as characters
+  xml = xml.replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, (_, t) => escXml(t))
+  const items = []
+  let feedTitle = "", item = null
+  const texts = []  // one text buffer per open element; nested tags (<b> in a title) flow up
+  const parser = new XMLParser(xml)
+  parser.didStartElement = (name, attrs) => {
+    const n = name.toLowerCase().replace(/^.*:/, "")
+    texts.push("")
+    if (n === "item" || n === "entry") item = { title: "", link: "", date: "" }
+    if (item && n === "link" && attrs && attrs.href && (!attrs.rel || attrs.rel === "alternate")) item.link = attrs.href
+  }
+  parser.foundCharacters = s => { if (texts.length) texts[texts.length - 1] += s }
+  parser.didEndElement = name => {
+    const n = name.toLowerCase().replace(/^.*:/, "")
+    const raw = texts.pop() || ""
+    if (texts.length && !["item", "entry", "channel", "feed"].includes(n)) texts[texts.length - 1] += raw
+    const t = cleanText(raw)
+    if (item) {
+      if (n === "title") item.title = t
+      else if (n === "link" && t) item.link = t
+      else if (["pubdate", "published", "updated", "date"].includes(n) && !item.date) item.date = t
+      else if (n === "item" || n === "entry") { if (item.title) items.push(item); item = null }
+    } else if (n === "title" && !feedTitle) feedTitle = t
+  }
+  if (!parser.parse()) throw new Error("couldn't read the feed")
+  if (!items.length) throw new Error("the feed has no headlines")
+  for (const it of items) { const d = new Date(it.date); it.at = isNaN(d) ? null : d.getTime() }
+  const dated = items.filter(i => i.at)
+  const top = dated.length ? dated.sort((a, b) => b.at - a.at)[0] : items[0]
+  let host = ""
+  try { host = url.match(/^https?:\/\/([^/:?#]+)/i)[1].replace(/^(www|feeds?|rss)\./, "") } catch (e) {}
+  return { title: top.title, link: /^https?:\/\//i.test(top.link) ? top.link : url,
+           at: top.at, source: (feedTitle || host).slice(0, 40) }
+}
+
+async function getNews(url) {
+  const key = fm.joinPath(dir, "news-" + hashKey(url) + ".json")
+  try {
+    const req = new Request(url)
+    req.timeoutInterval = 15
+    const story = parseFeed(await req.loadString(), url)
+    fm.writeString(key, JSON.stringify({ fetched: Date.now(), story }))
+    return { story, stale: false }
+  } catch (e) {
+    const c = readCache(key)
+    if (c && c.story?.title) return { story: c.story, stale: true }
+    throw e
+  }
+}
+
+function ago(ms) {
+  if (!ms) return ""
+  const m = Math.max(0, Math.round((Date.now() - ms) / 60000))
+  return m < 1 ? "now" : m < 60 ? `${m}m` : m < 48 * 60 ? `${Math.round(m / 60)}h` : `${Math.round(m / 1440)}d`
 }
 
 async function icon(asset) {
@@ -196,24 +308,145 @@ async function listWidget(assets, stale) {  // medium widget with 2-3 coins
   return w
 }
 
-function lockWidget(a, family) {  // lock screen
+// ---------- lock screen (monochrome: ▲/▼ carry the direction) ----------
+const arrow = x => x == null ? "" : x >= 0 ? "▲" : "▼"
+
+function nextIndex(name, n) {  // inline widget: a different coin each refresh
+  const path = fm.joinPath(dir, "rotate-" + hashKey(name) + ".txt")
+  let i = 0
+  try { if (fm.fileExists(path)) i = (parseInt(fm.readString(path), 10) + 1) || 0 } catch (e) {}
+  i = i % n
+  fm.writeString(path, String(i))
+  return i
+}
+
+function coinUrl(a) { return "https://www.coingecko.com/en/coins/" + a.id }
+
+function inlineCoin(assets, stale, key) {
+  const a = assets[nextIndex(key, assets.length)]
   const w = new ListWidget()
-  if (family === "accessoryInline") {
-    w.addText(`${a.sym} ${fmtPrice(a.price)} ${fmtChange(a.change)}`)
-    return w
-  }
-  const top = w.addStack()
-  const s = top.addText(a.sym); s.font = Font.heavySystemFont(14)
-  top.addSpacer()
-  const c = top.addText(fmtChange(a.change)); c.font = Font.boldSystemFont(12)
-  const p = w.addText(fmtPrice(a.price)); p.font = Font.boldRoundedSystemFont(20); p.minimumScaleFactor = 0.6
-  const img = w.addImage(chartImage(a.spark, 150, 18, 1, HEX.white, { lineWidth: 1.5 }))
-  img.imageSize = new Size(150, 18)
+  w.addText(`${stale ? "Offline · " : ""}${a.sym} ${fmtPrice(a.price)} ${fmtChange(a.change)}`)
+  w.url = coinUrl(a)
   return w
 }
 
-function errorWidget(msg) {
-  const w = new ListWidget(); w.backgroundColor = BG
+// Ring gauge drawn as an image: faint full track, bright arc for |24h change|,
+// clockwise from 12 o'clock when up, counter-clockwise when down.
+function gaugeImage(a, stale) {
+  const S = 120, c = S / 2, r = 52, lw = 9
+  const ctx = new DrawContext()
+  ctx.size = new Size(S, S); ctx.opaque = false; ctx.respectScreenScale = true
+  const arc = (from, to, color) => {
+    const steps = Math.max(2, Math.ceil(Math.abs(to - from) / 0.05))
+    const p = new Path()
+    for (let i = 0; i <= steps; i++) {
+      const t = from + (to - from) * i / steps
+      const pt = new Point(c + r * Math.sin(t), c - r * Math.cos(t))
+      i ? p.addLine(pt) : p.move(pt)
+    }
+    ctx.addPath(p); ctx.setStrokeColor(color); ctx.setLineWidth(lw); ctx.strokePath()
+  }
+  arc(0, 2 * Math.PI, new Color("#FFFFFF", 0.25))
+  if (a.change != null) {
+    const frac = Math.min(1, Math.abs(a.change) / GAUGE_FULL_SCALE)
+    if (frac > 0.005) arc(0, (a.change >= 0 ? 1 : -1) * frac * 2 * Math.PI, WHITE)
+  }
+  ctx.setTextColor(WHITE); ctx.setTextAlignedCenter()
+  const sym = a.sym.slice(0, 5)
+  ctx.setFont(Font.heavySystemFont(sym.length > 3 ? 20 : 26))
+  ctx.drawTextInRect(sym, new Rect(14, 34, S - 28, 32))
+  ctx.setFont(Font.boldSystemFont(17))
+  const ch = a.change == null ? "--" : `${arrow(a.change)}${Math.abs(a.change).toFixed(Math.abs(a.change) < 10 ? 1 : 0)}%`
+  ctx.drawTextInRect(ch, new Rect(14, 66, S - 28, 22))
+  // a word, not ⚠︎: at this size a warning triangle reads like the ▲ "up" arrow
+  if (stale) { ctx.setFont(Font.heavySystemFont(13)); ctx.drawTextInRect("OLD", new Rect(c - 20, 17, 40, 16)) }
+  return ctx.getImage()
+}
+
+function circularCoin(a, stale) {
+  const w = new ListWidget()
+  w.addAccessoryWidgetBackground = true
+  w.setPadding(0, 0, 0, 0)
+  // drawn at 120 pt for crisp lines; shown at the circular widget's size (about 72-76 pt)
+  const img = w.addImage(gaugeImage(a, stale)); img.imageSize = new Size(72, 72); img.centerAlignImage()
+  w.url = coinUrl(a)
+  return w
+}
+
+function rectangularCoins(assets, stale, at) {
+  const w = new ListWidget()
+  if (assets.length === 1) {  // one coin: symbol, change, price, sparkline
+    const a = assets[0]
+    const top = w.addStack()
+    const s = top.addText(a.sym + (stale ? " · offline" : "")); s.font = Font.heavySystemFont(14); s.lineLimit = 1
+    top.addSpacer()
+    const c = top.addText(fmtChange(a.change)); c.font = Font.boldSystemFont(12)
+    const p = w.addText(fmtPrice(a.price)); p.font = Font.boldRoundedSystemFont(20); p.minimumScaleFactor = 0.6
+    const img = w.addImage(chartImage(a.spark, 150, 18, 1, HEX.white, { lineWidth: 1.5 }))
+    img.imageSize = new Size(150, 18)
+    w.url = coinUrl(a)
+    return w
+  }
+  for (const a of assets.slice(0, 2)) {  // two coins, one per row
+    const row = w.addStack(); row.centerAlignContent()
+    const s = row.addText(a.sym); s.font = Font.heavySystemFont(14); s.lineLimit = 1
+    row.addSpacer(4)
+    const p = row.addText(fmtPrice(a.price)); p.font = Font.boldRoundedSystemFont(14)
+    p.minimumScaleFactor = 0.6; p.lineLimit = 1
+    row.addSpacer()
+    const c = row.addText(fmtChange(a.change)); c.font = Font.boldSystemFont(12); c.lineLimit = 1
+  }
+  if (stale) {
+    const t = w.addText(`Offline · ${ago(at && at.getTime()) || "earlier"}`)
+    t.font = Font.systemFont(10)
+  }
+  w.url = coinUrl(assets[0])
+  return w
+}
+
+// ---------- news widgets ----------
+function newsCaption(story, stale) {
+  return [stale ? "Offline" : "", story.source, ago(story.at)].filter(Boolean).join(" · ")
+}
+
+function newsWidget(story, stale, family) {
+  const w = new ListWidget()
+  w.url = story.link
+  if (family === "accessoryInline") {
+    w.addText(`${stale ? "Offline · " : ""}${story.title}`)
+    return w
+  }
+  if (family === "accessoryCircular") {
+    w.addAccessoryWidgetBackground = true
+    const initials = story.source.split(/[\s.\-]+/).filter(Boolean).map(x => x[0]).join("").slice(0, 3).toUpperCase()
+    const a = w.addText(initials || "NEWS"); a.font = Font.heavySystemFont(16); a.centerAlignText()
+    const b = w.addText(stale ? "OLD" : (ago(story.at) || "—")); b.font = Font.boldSystemFont(12); b.centerAlignText()
+    return w
+  }
+  if (family === "accessoryRectangular") {
+    const cap = w.addText(newsCaption(story, stale)); cap.font = Font.semiboldSystemFont(11); cap.lineLimit = 1
+    const t = w.addText(story.title); t.font = Font.boldSystemFont(13); t.lineLimit = 2; t.minimumScaleFactor = 0.8
+    return w
+  }
+  // home screen: dark card in the same style as the price widgets
+  w.backgroundColor = BG
+  w.setPadding(12, 14, 12, 14)
+  const cap = w.addText(newsCaption(story, stale).toUpperCase()); cap.font = Font.semiboldSystemFont(10)
+  cap.textColor = stale ? FLAT : new Color(HEX.up); cap.lineLimit = 1
+  w.addSpacer(6)
+  const t = w.addText(story.title); t.font = Font.boldSystemFont(family === "small" ? 15 : 17)
+  t.textColor = WHITE; t.lineLimit = family === "small" ? 5 : 4; t.minimumScaleFactor = 0.75
+  w.addSpacer()
+  return w
+}
+
+function errorWidget(msg, family) {
+  const w = new ListWidget()
+  if (family && family.startsWith("accessory")) {
+    w.addText(family === "accessoryCircular" ? STALE : `${STALE} ${msg}`)
+    return w
+  }
+  w.backgroundColor = BG
   const t = w.addText("Crypto Ticker"); t.font = Font.heavySystemFont(14); t.textColor = WHITE
   w.addSpacer(4)
   const m = w.addText(msg); m.font = Font.systemFont(11); m.textColor = FLAT
@@ -222,21 +455,31 @@ function errorWidget(msg) {
 
 // ---------- main ----------
 const family = config.widgetFamily || "small"
-const coins = parseCoins(args.widgetParameter)
 let widget
 try {
-  const { assets, stale } = await getData(coins)
-  if (family.startsWith("accessory")) widget = lockWidget(assets[0], family)
-  else if (family !== "small" && assets.length > 1) widget = await listWidget(assets, stale)
-  else widget = await bigWidget(assets[0], stale, family)
+  const spec = parseParam(args.widgetParameter)
+  if (spec.mode === "news") {
+    const { story, stale } = await getNews(spec.url)
+    widget = newsWidget(story, stale, family)
+  } else {
+    const { assets, stale, at } = await getData(spec.coins)
+    if (family === "accessoryInline") widget = inlineCoin(assets, stale, args.widgetParameter || DEFAULT_COINS)
+    else if (family === "accessoryCircular") widget = circularCoin(assets[0], stale)
+    else if (family === "accessoryRectangular") widget = rectangularCoins(assets, stale, at)
+    else if (family !== "small" && assets.length > 1) widget = await listWidget(assets, stale)
+    else widget = await bigWidget(assets[0], stale, family)
+  }
 } catch (e) {
-  widget = errorWidget("No price data. " + (e.message || e))
+  const msg = String(e.message || e)
+  widget = errorWidget(/feed|news|coins in/.test(msg) ? msg : "No data. " + msg, family)
 }
 widget.refreshAfterDate = new Date(Date.now() + REFRESH_MINUTES * 60 * 1000)
 
 if (config.runsInWidget) {
   Script.setWidget(widget)
-} else {
-  await widget.presentSmall()   // tap ▶ in Scriptable to preview
+} else {  // tap ▶ in Scriptable to preview
+  const fam = { accessoryCircular: "presentAccessoryCircular", accessoryRectangular: "presentAccessoryRectangular",
+                accessoryInline: "presentAccessoryInline", medium: "presentMedium", large: "presentLarge" }[family]
+  await (fam && widget[fam] ? widget[fam]() : widget.presentSmall())
 }
 Script.complete()

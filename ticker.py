@@ -3,12 +3,15 @@
 
 Run on the Pi:        sudo ./venv/bin/python ticker.py
 Try it on a PC:       python ticker.py --emulate      (needs RGBMatrixEmulator)
+  offline, made-up:   python ticker.py --emulate --sample
 Settings come from environment variables or settings.env (see settings.env.example).
 """
 
 import argparse
 import logging
+import math
 import os
+import signal
 import threading
 import time
 from dataclasses import dataclass, field
@@ -20,14 +23,19 @@ from zoneinfo import ZoneInfo
 
 from feeds import FearGreed, Indices, Weather, parse_indices
 from session import session_change
+from cache import RequestCache
 from icons import IconStore
-from prices import CoinGecko, PriceError
+from logsetup import setup_logging
+from prices import CoinGecko, DataError, NetworkError, PriceError, RateLimitError
 from render import Renderer
+from retry import backoff_delay
 from usage import Usage
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
 SCREEN_NAMES = ("clock", "feargreed", "indices", "coins")
+TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
 CG_INDICES = [("spx", "sp500-xstock", "S&P"), ("ndq", "nasdaq-xstock", "NAS")]
 log = logging.getLogger("ticker")
@@ -50,13 +58,37 @@ def load_env_file(path, override=False):
                 os.environ.setdefault(key.strip(), value)
 
 
-def env(name, default, cast=str):
-    raw = os.environ.get(name, "")
+def env(name, default, cast=str, lo=None, hi=None, choices=None):
+    """Read a setting. A bad value (typo in settings.env) logs a warning and falls back
+    to the default instead of stopping the ticker; numbers are clamped to [lo, hi]."""
+    raw = os.environ.get(name, "").strip()
     if raw == "":
         return default
     if cast is bool:
-        return raw.lower() in ("1", "true", "yes", "on")
-    return cast(raw)
+        if raw.lower() in ("1", "true", "yes", "on"):
+            return True
+        if raw.lower() in ("0", "false", "no", "off"):
+            return False
+        log.warning("ignoring %s=%r (use true or false); using %r", name, raw, default)
+        return default
+    try:
+        value = cast(raw)
+    except ValueError:
+        log.warning("ignoring %s=%r (not a valid %s); using %r", name, raw, cast.__name__, default)
+        return default
+    if isinstance(value, float) and not math.isfinite(value):
+        log.warning("ignoring %s=%r; using %r", name, raw, default)
+        return default
+    if choices is not None and value not in choices:
+        log.warning("ignoring %s=%r (choose one of %s); using %r", name, raw, ", ".join(choices), default)
+        return default
+    if lo is not None and value < lo:
+        log.warning("%s=%r is below %s; using %s", name, raw, lo, lo)
+        value = lo
+    if hi is not None and value > hi:
+        log.warning("%s=%r is above %s; using %s", name, raw, hi, hi)
+        value = hi
+    return value
 
 
 @dataclass
@@ -68,12 +100,16 @@ class Config:
     refresh_rate: int = 0          # seconds; 0 = auto (fit the monthly budget)
     monthly_budget: int = 10000
     sleep: float = 5
-    transition: str = "slide"
+    transition: str = "scroll"     # scroll (up), slide (left) or none
     layout: str = "classic"
     featured: list = field(default_factory=list)
+    focus: bool = False            # only starred (FEATURED) coins in the coin rotation
+    list_view: int = 0             # 0 = one coin per screen; 5 or 4 = coins per list page
+    list_page_seconds: float = 6
     screens: list = field(default_factory=lambda: list(SCREEN_NAMES))
     indices_source: str = "coingecko"
     indices: str = ""
+    indices_view: str = "percent"  # percent, or both (% then the $ / point change)
     timezone: str = ""
     weather_lat: float = 26.3017   # Edinburg, TX
     weather_lon: float = -98.1633
@@ -103,33 +139,41 @@ class Config:
         c.api_key = env("COINGECKO_API_KEY", "")
         c.api_pro = env("COINGECKO_PRO", False, bool)
         rr = env("REFRESH_RATE", "auto").strip().lower()
-        c.refresh_rate = 0 if rr in ("", "auto", "0") else max(60, int(rr))
-        c.monthly_budget = env("MONTHLY_CALL_BUDGET", c.monthly_budget, int)
-        c.sleep = env("SLEEP", c.sleep, float)
-        c.transition = env("TRANSITION", c.transition).lower()
-        c.layout = env("LAYOUT", c.layout).lower()
+        if rr in ("", "auto", "0"):
+            c.refresh_rate = 0
+        else:
+            c.refresh_rate = env("REFRESH_RATE", 0, int, lo=60, hi=86400)
+        c.monthly_budget = env("MONTHLY_CALL_BUDGET", c.monthly_budget, int, lo=100)
+        c.sleep = env("SLEEP", c.sleep, float, lo=1, hi=300)
+        c.transition = env("TRANSITION", c.transition, str.lower, choices=TRANSITIONS)
+        c.layout = env("LAYOUT", c.layout, str.lower, choices=Renderer.LAYOUTS)
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
+        c.focus = env("FOCUS", False, bool)
+        lv = env("LIST_VIEW", "off", str.lower, choices=("off", "5", "4"))
+        c.list_view = 0 if lv == "off" else int(lv)
+        c.list_page_seconds = env("LIST_PAGE_SECONDS", c.list_page_seconds, float, lo=2, hi=60)
         screens = [s.strip().lower() for s in env("SCREENS", ",".join(SCREEN_NAMES)).split(",")]
         c.screens = [s for s in screens if s in SCREEN_NAMES] or ["coins"]
-        c.indices_source = env("INDICES_SOURCE", c.indices_source).lower()
+        c.indices_source = env("INDICES_SOURCE", c.indices_source, str.lower, choices=("coingecko", "yahoo"))
         c.indices = env("INDICES", "")
+        c.indices_view = env("INDICES_VIEW", c.indices_view, str.lower, choices=("percent", "both"))
         c.timezone = env("TIMEZONE", "")
-        c.weather_lat = env("WEATHER_LAT", c.weather_lat, float)
-        c.weather_lon = env("WEATHER_LON", c.weather_lon, float)
+        c.weather_lat = env("WEATHER_LAT", c.weather_lat, float, lo=-90.0, hi=90.0)
+        c.weather_lon = env("WEATHER_LON", c.weather_lon, float, lo=-180.0, hi=180.0)
         c.temp_unit = "C" if env("TEMP_UNIT", "F").upper().startswith("C") else "F"
         c.weather_place = env("WEATHER_PLACE", c.weather_place)
-        c.brightness = env("BRIGHTNESS", c.brightness, int)
+        c.brightness = env("BRIGHTNESS", c.brightness, int, lo=1, hi=100)
         c.dim_hours = env("DIM_HOURS", "")
-        c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int)
+        c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int, lo=1, hi=100)
         c.download_icons = env("DOWNLOAD_ICONS", True, bool)
-        c.rows = env("LED_ROWS", c.rows, int)
-        c.cols = env("LED_COLS", c.cols, int)
-        c.chain = env("LED_CHAIN", c.chain, int)
-        c.parallel = env("LED_PARALLEL", c.parallel, int)
+        c.rows = env("LED_ROWS", c.rows, int, lo=8, hi=128)
+        c.cols = env("LED_COLS", c.cols, int, lo=16, hi=256)
+        c.chain = env("LED_CHAIN", c.chain, int, lo=1, hi=8)
+        c.parallel = env("LED_PARALLEL", c.parallel, int, lo=1, hi=3)
         c.gpio_mapping = env("LED_GPIO_MAPPING", c.gpio_mapping)
-        c.gpio_slowdown = env("LED_SLOWDOWN_GPIO", c.gpio_slowdown, int)
-        c.pwm_bits = env("LED_PWM_BITS", c.pwm_bits, int)
-        c.pwm_lsb_nanoseconds = env("LED_PWM_LSB_NANOSECONDS", c.pwm_lsb_nanoseconds, int)
+        c.gpio_slowdown = env("LED_SLOWDOWN_GPIO", c.gpio_slowdown, int, lo=0, hi=5)
+        c.pwm_bits = env("LED_PWM_BITS", c.pwm_bits, int, lo=1, hi=11)
+        c.pwm_lsb_nanoseconds = env("LED_PWM_LSB_NANOSECONDS", c.pwm_lsb_nanoseconds, int, lo=50, hi=3000)
         c.rgb_sequence = env("LED_RGB_SEQUENCE", c.rgb_sequence)
         c.panel_type = env("LED_PANEL_TYPE", "")
         c.no_hardware_pulse = env("LED_NO_HARDWARE_PULSE", False, bool)
@@ -144,11 +188,33 @@ def get_tz(name):
         return None
 
 
+def transition_frames(old, new, vertical=False, frames=14):
+    """The in-between frames of a scroll (old moves up, new rolls in from the bottom)
+    or slide (old moves left, new comes in from the right). Ease-out: fast, then settling."""
+    size = old.height if vertical else old.width
+    out = []
+    for i in range(1, frames):
+        t = 1 - (1 - i / frames) ** 3  # ease-out cubic
+        d = round(size * t)
+        frame = Image.new("RGB", old.size)
+        if vertical:
+            frame.paste(old, (0, -d))
+            frame.paste(new, (0, size - d))
+        else:
+            frame.paste(old, (-d, 0))
+            frame.paste(new, (size - d, 0))
+        out.append(frame)
+    return out
+
+
 def in_dim_window(spec, now=None):
     """spec like '22-7' (10pm to 7am). Empty spec means never dim."""
     if not spec or "-" not in spec:
         return False
-    start, end = (int(p) % 24 for p in spec.split("-", 1))
+    try:
+        start, end = (int(p) % 24 for p in spec.split("-", 1))
+    except ValueError:
+        return False
     hour = (now or datetime.now()).hour
     return start <= hour < end if start < end else (hour >= start or hour < end)
 
@@ -167,6 +233,7 @@ class Ticker:
         if hasattr(display, "wake"):
             display.wake = self.wake
         self.usage = Usage(cfg.monthly_budget)
+        self.request_cache = RequestCache(REQUEST_CACHE)
         self.api = self._make_api(cfg)
         self.icons = IconStore(download=cfg.download_icons)
         self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons,
@@ -179,9 +246,16 @@ class Ticker:
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
         self.tz = get_tz(cfg.timezone)
-        self.stale = False
+        self.stale = False          # True while showing the last good prices, not fresh ones
+        self.stale_since = None     # when those last good prices were fetched
+        self.failures = 0           # consecutive failed refreshes (drives the backoff)
+        self.last_success = None
+        self.last_error_at = None
+        self.started_at = time.time()
+        self.last_error = None
         self.next_fetch = 0.0
         self.current = None
+        self._fetching = None       # background fetch thread, if one is running
 
     def _cg_indices(self, cfg):
         return "indices" in cfg.screens and cfg.indices_source == "coingecko"
@@ -191,7 +265,7 @@ class Ticker:
         if self._cg_indices(cfg):  # rides along in the same request: no extra calls
             symbols += [f"{sym}:{cid}" for sym, cid, _ in CG_INDICES]
         return CoinGecko(symbols, cfg.currency, cfg.api_key, cfg.api_pro,
-                         on_call=self.usage.count_call)
+                         on_call=self.usage.count_call, cache=self.request_cache)
 
     def now(self):
         return datetime.now(self.tz)
@@ -200,36 +274,119 @@ class Ticker:
         """Seconds between price refreshes (fixed, or auto from the budget)."""
         return self.cfg.refresh_rate or self.usage.auto_interval()
 
-    def refresh(self, now=None):
+    def refresh(self, now=None, wait=False):
+        """Start a price fetch in the background if one is due. The display keeps
+        rotating while it runs, so a slow network never freezes the panel.
+        wait=True blocks until it finishes (used by tests and preview.py)."""
         now = now or time.time()
-        if now < self.next_fetch:
-            return
+        t = self._fetching
+        if t is None and now >= self.next_fetch:
+            api = self.api
+            self.next_fetch = now + self.interval()  # provisional; set again when done
+            t = self._fetching = threading.Thread(target=self._fetch, args=(api,),
+                                                  daemon=True, name="prices")
+            t.start()
+        if wait and t is not None:
+            t.join()
+
+    def _fetch(self, api):
         try:
-            fetched = self.api.fetch()
-            index_ids = {cid for _, cid, _ in CG_INDICES} if self._cg_indices(self.cfg) else set()
-            labels = {cid: label for _, cid, label in CG_INDICES}
-            self.assets = [a for a in fetched if a["id"] not in index_ids]
-            self.index_rows = []
-            for a in fetched:
-                if a["id"] in index_ids:
-                    change, is_open, chart, dollars = session_change(
-                        a["price"], a["sparkline"], a.get("updated"))
-                    self.index_rows.append({
-                        "label": labels[a["id"]], "spark": chart or a["sparkline"], "open": is_open,
-                        "abs": dollars, "unit": "$",  # per tokenized fund share, in USD
-                        # fall back to the rolling 24h figure only if history is missing
-                        "change": change if change is not None else (a["change_24h"] or 0.0)})
-            self.stale = False
-            self.next_fetch = now + self.interval()
-            log.info("prices: %s", ", ".join(f"{a['symbol']} {a['price']:g}" for a in self.assets))
+            fetched = api.fetch()
         except PriceError as exc:
-            log.error("price fetch failed: %s", exc)
-            self.stale = bool(self.assets)
-            self.next_fetch = now + min(60, self.interval())
-            if not self.assets:
-                reason = "RATE LIMIT" if "429" in str(exc) else "NO NETWORK?"
-                self.show(self.renderer.message("NO DATA", reason, color=(230, 40, 30)),
-                          hold=min(30, self.interval()))
+            self._fetch_failed(api, exc)
+        except Exception as exc:  # a bug or surprise must not kill the ticker
+            log.exception("unexpected error fetching prices")
+            self._fetch_failed(api, PriceError(f"unexpected error: {exc}"))
+        else:
+            self._fetch_ok(api, fetched)
+        finally:
+            self._fetching = None
+
+    def _split(self, fetched):
+        """Separate tokenized index funds from the coins."""
+        index_ids = {cid for _, cid, _ in CG_INDICES} if self._cg_indices(self.cfg) else set()
+        labels = {cid: label for _, cid, label in CG_INDICES}
+        assets = [a for a in fetched if a["id"] not in index_ids]
+        index_rows = []
+        for a in fetched:
+            if a["id"] in index_ids:
+                change, is_open, chart, dollars = session_change(
+                    a["price"], a["sparkline"], a.get("updated"))
+                index_rows.append({
+                    "label": labels[a["id"]], "spark": chart or a["sparkline"], "open": is_open,
+                    "abs": dollars, "unit": "$",  # per tokenized fund share, in USD
+                    # fall back to the rolling 24h figure only if history is missing
+                    "change": change if change is not None else (a["change_24h"] or 0.0)})
+        return assets, index_rows
+
+    def _fetch_ok(self, api, fetched):
+        if api is not self.api:  # settings changed mid-fetch; the new list is fetched next
+            return
+        self.assets, self.index_rows = self._split(fetched)
+        if self.stale:
+            log.info("prices are live again after %d failed refresh(es)", self.failures)
+        self.stale = False
+        self.stale_since = None
+        self.failures = 0
+        self.last_error = None
+        self.last_success = time.time()
+        self.next_fetch = self.last_success + self.interval()
+        log.info("prices: %s", ", ".join(f"{a['symbol']} {a['price']:g}" for a in self.assets))
+
+    def retry_delay(self, exc):
+        """Seconds to wait after the latest failure: exponential backoff, and at least
+        the server's Retry-After for a 429."""
+        if isinstance(exc, RateLimitError):
+            delay = backoff_delay(self.failures, base=120, cap=1800)
+            if exc.retry_after:
+                delay = max(delay, min(exc.retry_after, 3600))
+            return max(60.0, delay)
+        # network trouble: 30s, 60s, 2 min, 4 min, ... up to 10 min (or the normal interval)
+        return backoff_delay(self.failures, base=30, cap=max(600, self.interval()))
+
+    def _fetch_failed(self, api, exc):
+        if api is not self.api:
+            return
+        self.failures += 1
+        self.last_error = exc
+        self.last_error_at = time.time()
+        delay = self.retry_delay(exc)
+        self.next_fetch = time.time() + delay
+        if not self.assets:  # cold start offline: fall back to the cached last good prices
+            cached, fetched_at = api.last_good()
+            if cached:
+                self.assets, self.index_rows = self._split(cached)
+                self.stale_since = fetched_at
+                log.warning("showing cached prices from %s",
+                            datetime.fromtimestamp(fetched_at).strftime("%Y-%m-%d %H:%M"))
+        if self.assets:
+            self.stale = True
+            if self.stale_since is None:
+                self.stale_since = self.last_success or time.time()
+        log.error("price fetch failed (%d in a row): %s; next try in %ds%s", self.failures, exc,
+                  delay, "; showing last good prices as stale" if self.assets else "")
+
+    def status(self):
+        """For the phone page's Status section."""
+        return {
+            "last_success": self.last_success,
+            "stale": self.stale,
+            "failures": self.failures,
+            "last_error": str(self.last_error) if self.last_error else None,
+            "last_error_at": self.last_error_at,
+            "started_at": self.started_at,
+            "coins": len(self.assets),
+        }
+
+    def error_reason(self):
+        exc = self.last_error
+        if isinstance(exc, RateLimitError):
+            return "RATE LIMIT"
+        if isinstance(exc, NetworkError):
+            return "NO NETWORK?"
+        if isinstance(exc, DataError):
+            return "BAD DATA"
+        return "API ERROR"
 
     def request_reload(self):
         """Called from the settings page after it saves settings.env."""
@@ -259,7 +416,8 @@ class Ticker:
         if new.indices != old.indices:
             self.yahoo = Indices(parse_indices(new.indices))
         self.cfg = new
-        self.next_fetch = min(self.next_fetch, time.time() + self.interval())
+        if not self.failures:  # never cut short a backoff (e.g. after HTTP 429)
+            self.next_fetch = min(self.next_fetch, time.time() + self.interval())
         self.renderer.layout = new.layout if new.layout in Renderer.LAYOUTS else "classic"
         self.renderer.currency = new.currency
         self.icons.forget()  # pick up any newly uploaded icons
@@ -275,21 +433,21 @@ class Ticker:
         self.display.set_brightness(self.cfg.dim_brightness if dim else self.cfg.brightness)
 
     def show(self, image, hold, slide=True):
-        if slide and self.current is not None and self.cfg.transition == "slide":
-            self.slide(self.current, image)
+        """Show a screen, animating from the previous one unless ``slide`` is False
+        (used when a screen changes in place, like the indices % / $ flip)."""
+        if slide and self.current is not None and self.cfg.transition in ("scroll", "slide"):
+            self.transition(self.current, image, vertical=self.cfg.transition == "scroll")
         self.display.show(image, hold)
         self.current = image
 
-    def slide(self, old, new, frames=14, duration=0.45):
-        w = self.display.width
-        for i in range(1, frames):
-            t = i / frames
-            t = 1 - (1 - t) ** 3  # ease-out
-            dx = round(w * t)
-            frame = Image.new("RGB", old.size)
-            frame.paste(old, (-dx, 0))
-            frame.paste(new, (w - dx, 0))
+    def transition(self, old, new, vertical=False, frames=14, duration=0.45):
+        """Move the old screen out and the new one in over ``duration`` seconds with an
+        ease-out curve: up and out the top (scroll) or left and out the side (slide)."""
+        for frame in transition_frames(old, new, vertical, frames):
             self.display.show(frame, duration / frames)
+
+    def slide(self, old, new, frames=14, duration=0.45):
+        self.transition(old, new, vertical=False, frames=frames, duration=duration)
 
     def loading(self):
         for tick in range(4):
@@ -302,6 +460,16 @@ class Ticker:
         self.usage.tick()
         self.refresh()
         self.apply_brightness()
+        if not self.assets:
+            if self._fetching is not None and self.last_error is None:
+                self.loading()  # first fetch still running
+                return
+            if self.last_error is not None:
+                wait = max(5.0, min(30.0, self.next_fetch - time.time()))
+                self.show(self.renderer.message("NO DATA", self.error_reason(), color=(230, 40, 30)),
+                          hold=wait)
+                if self.reload_pending:
+                    return
         shown = 0
         for screen in self.screens():
             image, hold, *opts = screen()
@@ -338,16 +506,50 @@ class Ticker:
                         rows.insert(1, {"label": "DOW", "change": dow[0]["change"],
                                         "abs": dow[0]["points"], "unit": "",
                                         "spark": dow[0]["intraday"]})
-                if rows:  # % first, then flip in place to the $ / point change
-                    half = max(2.0, sleep / 2)
-                    out.append(lambda rows=rows: (self.renderer.indices(rows, tag=None), half))
-                    if any(r.get("abs") is not None for r in rows):
+                if rows:
+                    stale = self.stale and self.cfg.indices_source == "coingecko"
+                    flip = self.cfg.indices_view == "both" and any(r.get("abs") is not None for r in rows)
+                    hold = max(2.0, sleep / 2) if flip else sleep
+                    out.append(lambda rows=rows: (self.renderer.indices(rows, tag=None, stale=stale), hold))
+                    if flip:  # % first, then flip in place to the $ / point change
                         out.append(lambda rows=rows: (
-                            self.renderer.indices(rows, tag=None, mode="abs"), half, False))
+                            self.renderer.indices(rows, tag=None, mode="abs", stale=stale), hold, False))
             elif name == "coins":
-                for asset in list(self.assets):
-                    if asset["symbol"].lower() in self.cfg.featured:
-                        out.append(lambda a=asset: (self.renderer.featured(a), max(2.0, sleep * 0.6)))
+                out += self.coin_screens()
+        return out
+
+    def coins_in_rotation(self):
+        """(coins to show, starred coins). Focus narrows the rotation to starred coins;
+        with Focus on but nothing starred, everything shows (the phone page says so)."""
+        coins = list(self.assets)
+        starred = [a for a in coins if a["symbol"].lower() in self.cfg.featured]
+        if self.cfg.focus and starred:
+            coins = starred
+        return coins, starred
+
+    def coin_screens(self):
+        sleep = self.cfg.sleep
+        coins, starred = self.coins_in_rotation()
+        starred_ids = {a["id"] for a in starred}
+        out = []
+
+        def big(asset):  # starred coins keep their big screens in every mode
+            out.append(lambda a=asset: (self.renderer.featured(a, stale=self.stale), max(2.0, sleep * 0.6)))
+            out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
+
+        if self.cfg.list_view:
+            n = self.cfg.list_view
+            for asset in coins:
+                if asset["id"] in starred_ids:
+                    big(asset)
+            for i in range(0, len(coins), n):
+                out.append(lambda page=coins[i:i + n]: (
+                    self.renderer.list_page(page, rows=n, stale=self.stale), self.cfg.list_page_seconds))
+        else:
+            for asset in coins:
+                if asset["id"] in starred_ids:
+                    big(asset)
+                else:
                     out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
         return out
 
@@ -358,35 +560,112 @@ class Ticker:
             self.step()
 
 
+def test_pattern(display, renderer, seconds=2.0):
+    """Wiring check: solid red, green, blue, white, then a border with corner markers
+    and the panel size. Wrong colors -> LED_RGB_SEQUENCE; missing rows/halves ->
+    ribbon cable or LED_ROWS/LED_COLS/LED_CHAIN; flicker -> LED_SLOWDOWN_GPIO."""
+    from PIL import ImageDraw
+    w, h = display.width, display.height
+    for name, color in (("RED", (255, 0, 0)), ("GREEN", (0, 255, 0)), ("BLUE", (0, 0, 255)),
+                        ("WHITE", (255, 255, 255))):
+        log.info("test pattern: all %s", name)
+        display.show(Image.new("RGB", (w, h), color), seconds)
+    img = renderer.message(f"{w}x{h}", "WIRING OK?")
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, 0, w - 1, h - 1), outline=(255, 255, 255))
+    for (x, y), c in zip(((0, 0), (w - 3, 0), (0, h - 3), (w - 3, h - 3)),
+                         ((255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 0))):
+        d.rectangle((x, y, x + 2, y + 2), fill=c)  # red TL, green TR, blue BL, yellow BR
+    log.info("test pattern: border + corners (red top-left, green top-right, blue bottom-left, yellow bottom-right)")
+    display.show(img, seconds * 3)
+
+
+def self_check():
+    """Import everything the ticker needs and parse the settings, without touching the
+    panel or the network. The updater runs this on new code before restarting."""
+    import importlib
+    for name in ("display", "feeds", "icons", "prices", "render", "session", "usage", "webui",
+                 "cache", "retry", "logsetup", "sample", "updater", "launcher"):
+        importlib.import_module(name)
+    cfg = Config.from_env()
+    Renderer(cfg.cols * cfg.chain, cfg.rows * cfg.parallel).message("OK")
+    print("ticker self-check ok")
+    return 0
+
+
+def _mark_update_healthy_later(delay=60):
+    """After a minute of running, tell the launcher the latest update is good."""
+    def mark():
+        try:
+            import launcher
+            if launcher.mark_healthy(HERE):
+                log.info("update confirmed: running fine after %ds", delay)
+        except Exception as exc:
+            log.warning("could not record update health: %s", exc)
+    t = threading.Timer(delay, mark)
+    t.daemon = True
+    t.start()
+
+
+def _stop(signum, frame):
+    raise SystemExit(0)  # unwinds to the finally below, which blanks the panel
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--emulate", action="store_true",
                         help="use RGBMatrixEmulator instead of the real panel")
+    parser.add_argument("--emulator-adapter", default=None,
+                        help="emulator output: browser (default, http://localhost:8888), pygame, "
+                             "terminal, tkinter, sixel or raw")
+    parser.add_argument("--sample", action="store_true",
+                        help="show made-up prices and feed data (no network needed)")
+    parser.add_argument("--check", action="store_true",
+                        help="load settings and every module, then exit (used by the updater)")
+    parser.add_argument("--test-pattern", action="store_true",
+                        help="show a wiring test pattern on the panel and exit")
     parser.add_argument("--env", default=os.path.join(HERE, "settings.env"))
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     load_env_file(args.env)
+    if args.check:
+        return self_check()
+    setup_logging()
     cfg = Config.from_env()
+    signal.signal(signal.SIGTERM, _stop)  # systemctl stop -> clean shutdown
 
     from display import MatrixDisplay
-    display = MatrixDisplay(cfg, emulate=args.emulate)
+    display = MatrixDisplay(cfg, emulate=args.emulate, adapter=args.emulator_adapter)
+    if args.test_pattern:
+        try:
+            test_pattern(display, Renderer(display.width, display.height))
+        finally:
+            display.close()
+        return
     ticker = Ticker(cfg, display, env_path=args.env)
+    if args.sample:
+        from sample import apply_sample
+        apply_sample(ticker)
     if env("WEB_ENABLED", True, bool):
         import webui
         try:
-            webui.start(webui.WebApp(args.env, ticker, search=ticker.search),
-                        port=env("WEB_PORT", 8080, int))
+            from updater import Updater
+            webui.start(webui.WebApp(args.env, ticker, search=ticker.search, updater=Updater()),
+                        port=env("WEB_PORT", 8080, int, lo=1, hi=65535))
         except OSError as exc:
             log.error("settings page could not start: %s", exc)
+    log.info("ticker started (%s, %dx%d)", "emulator" if args.emulate else "LED panel",
+             display.width, display.height)
+    _mark_update_healthy_later()
     try:
         ticker.run()
     except KeyboardInterrupt:
         pass
     finally:
+        ticker.request_cache.flush(force=True)
         display.close()
+        log.info("ticker stopped")
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

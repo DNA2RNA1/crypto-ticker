@@ -30,22 +30,26 @@ COIN_META = os.path.join(CACHE, "coins.json")
 
 EDITABLE = {  # key -> validator returning the string to store
     "SYMBOLS": lambda v: _symbols(v),
-    "LAYOUT": lambda v: _choice(v, ("classic", "chart", "mix")),
-    "TRANSITION": lambda v: _choice(v, ("slide", "none")),
+    "LAYOUT": lambda v: _choice(v.strip().lower(), ("classic", "chart", "mix")),
+    "TRANSITION": lambda v: _choice(v.strip().lower(), ("scroll", "slide", "none")),
     "BRIGHTNESS": lambda v: _int(v, 5, 100),
     "SLEEP": lambda v: _int(v, 2, 60),
     "DIM_HOURS": lambda v: _dim(v),
     "DIM_BRIGHTNESS": lambda v: _int(v, 1, 100),
-    "CURRENCY": lambda v: _choice(v.lower(), ("usd", "eur", "gbp", "cad", "aud", "jpy")),
-    "REFRESH_RATE": lambda v: "auto" if str(v).lower() in ("auto", "0", "") else _int(v, 60, 3600),
+    "CURRENCY": lambda v: _choice(v.strip().lower(), ("usd", "eur", "gbp", "cad", "aud", "jpy")),
+    "REFRESH_RATE": lambda v: _refresh(v),
     "FEATURED": lambda v: _featured(v),
     "SCREENS": lambda v: _screens(v),
     "WEATHER_LAT": lambda v: _float(v, -90, 90),
     "WEATHER_LON": lambda v: _float(v, -180, 180),
     "WEATHER_PLACE": lambda v: _text(v, 60),
-    "TEMP_UNIT": lambda v: _choice(v.upper(), ("F", "C")),
+    "TEMP_UNIT": lambda v: _choice(v.strip().upper(), ("F", "C")),
     "TIMEZONE": lambda v: _tz(v),
-    "INDICES_SOURCE": lambda v: _choice(v, ("coingecko", "yahoo")),
+    "INDICES_SOURCE": lambda v: _choice(v.strip().lower(), ("coingecko", "yahoo")),
+    "INDICES_VIEW": lambda v: _choice(v.strip().lower(), ("percent", "both")),
+    "FOCUS": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "LIST_VIEW": lambda v: _choice(v.strip().lower(), ("off", "5", "4")),
+    "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
 }
 
 MAX_FAILS = 5
@@ -53,7 +57,24 @@ LOCKOUT_SECONDS = 300
 
 
 # --- validation --------------------------------------------------------------
+# Every value from the phone goes through one of these before it touches settings.env.
+# Each returns the exact string to store, or raises ValueError with a short message
+# that the page shows to the user. Nothing is written unless every field passes.
+COIN_RE = re.compile(r"[a-z0-9.\-]{1,20}(:[a-z0-9][a-z0-9_.\-]{0,99})?")
+SYMBOL_RE = re.compile(r"[a-z0-9.\-]{1,20}")
+LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "BRIGHTNESS": "Brightness",
+          "SLEEP": "Time per coin", "DIM_HOURS": "Dim hours", "DIM_BRIGHTNESS": "Night brightness",
+          "CURRENCY": "Currency", "REFRESH_RATE": "Refresh rate", "FEATURED": "Featured coins",
+          "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
+          "WEATHER_PLACE": "Place name", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
+          "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "FOCUS": "Focus", "LIST_VIEW": "List view",
+          "LIST_PAGE_SECONDS": "Seconds per page"}
+
+
 def _int(v, lo, hi):
+    v = str(v).strip()
+    if not re.fullmatch(r"-?\d{1,6}", v):
+        raise ValueError("must be a whole number")
     n = int(v)
     if not lo <= n <= hi:
         raise ValueError(f"must be {lo}-{hi}")
@@ -62,20 +83,25 @@ def _int(v, lo, hi):
 
 def _choice(v, options):
     if v not in options:
-        raise ValueError(f"must be one of {options}")
+        raise ValueError(f"must be one of {', '.join(options)}")
     return v
 
 
 def _dim(v):
     if v in ("", None):
         return ""
-    m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", v)
+    m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", v.strip())
     if not m or int(m[1]) > 23 or int(m[2]) > 23:
         raise ValueError("use start-end hours, e.g. 22-7")
-    return v
+    if int(m[1]) == int(m[2]):
+        raise ValueError("start and end hours must differ")
+    return f"{int(m[1])}-{int(m[2])}"
 
 
 def _float(v, lo, hi):
+    v = str(v).strip()
+    if not re.fullmatch(r"-?\d{1,3}(\.\d{1,10})?", v):
+        raise ValueError("must be a number")
     n = float(v)
     if not lo <= n <= hi:
         raise ValueError(f"must be {lo} to {hi}")
@@ -83,47 +109,93 @@ def _float(v, lo, hi):
 
 
 def _text(v, maxlen):
-    v = re.sub(r"[^\w ,.'()-]", "", str(v), flags=re.UNICODE).strip()
-    return v[:maxlen]
+    v = re.sub(r"\s", " ", str(v))
+    v = re.sub(r"[^\w ,.'()-]", "", v, flags=re.UNICODE)
+    return re.sub(r"\s+", " ", v).strip()[:maxlen]
 
 
 def _tz(v):
-    if v in ("", None):
+    v = (v or "").strip()
+    if not v:
         return ""
+    if len(v) > 64 or not re.fullmatch(r"[A-Za-z0-9_+\-]+(/[A-Za-z0-9_+\-]+)*", v):
+        raise ValueError("unknown time zone")
     from zoneinfo import ZoneInfo
-    ZoneInfo(v)  # raises if unknown
+    try:
+        ZoneInfo(v)
+    except Exception:  # ZoneInfoNotFoundError is a KeyError, not a ValueError
+        raise ValueError(f"unknown time zone {v!r}") from None
     return v
 
 
 def _screens(v):
     allowed = ("clock", "feargreed", "indices", "coins")
-    names = [x.strip() for x in v.split(",") if x.strip()]
-    bad = [x for x in names if x not in allowed]
-    if bad:
-        raise ValueError(f"unknown screen: {bad[0]}")
+    names = []
+    for x in (n.strip().lower() for n in v.split(",")):
+        if not x:
+            continue
+        if x not in allowed:
+            raise ValueError(f"unknown screen: {x[:20]}")
+        if x not in names:
+            names.append(x)
     if "coins" not in names:
         names.append("coins")
     return ",".join(names)
 
 
 def _featured(v):
-    syms = [e.strip().lower() for e in v.split(",") if e.strip()]
-    for e in syms:
-        if not re.fullmatch(r"[a-z0-9.\-]+", e):
-            raise ValueError(f"bad featured coin: {e}")
+    syms = []
+    for e in (x.strip().lower() for x in v.split(",")):
+        if not e:
+            continue
+        if not SYMBOL_RE.fullmatch(e):
+            raise ValueError(f"bad featured coin: {e[:20]}")
+        if e not in syms:
+            syms.append(e)
+    if len(syms) > 30:
+        raise ValueError("30 coins max")
     return ",".join(syms)
 
 
 def _symbols(v):
-    entries = [e.strip().lower() for e in v.split(",") if e.strip()]
+    entries = []
+    for e in (x.strip().lower() for x in v.split(",")):
+        if not e:
+            continue
+        if not COIN_RE.fullmatch(e):
+            raise ValueError(f"bad coin entry: {e[:40]}")
+        if e not in entries:
+            entries.append(e)
     if not entries:
         raise ValueError("add at least one coin")
     if len(entries) > 30:
         raise ValueError("30 coins max")
-    for e in entries:
-        if not re.fullmatch(r"[a-z0-9.\-]+(:[a-z0-9.\-]+)?", e):
-            raise ValueError(f"bad coin entry: {e}")
     return ",".join(entries)
+
+
+def _refresh(v):
+    v = str(v).strip().lower()
+    if v in ("auto", "0", ""):
+        return "auto"
+    return _int(v, 60, 3600)
+
+
+def _coins_meta(items):
+    """Names/icons of coins picked in search (display only). Bad entries are dropped."""
+    if not isinstance(items, list):
+        raise ValueError("bad coin details")
+    out = []
+    for c in items[:50]:
+        if not isinstance(c, dict) or not isinstance(c.get("id"), str):
+            continue
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_.\-]{0,99}", c["id"]):
+            continue
+        thumb = c.get("thumb") or c.get("image") or ""
+        if not (isinstance(thumb, str) and thumb.startswith("https://") and len(thumb) < 500):
+            thumb = ""
+        out.append({"id": c["id"], "name": _text(c.get("name") or "", 60),
+                    "symbol": _text(c.get("symbol") or "", 20), "thumb": thumb})
+    return out
 
 
 # --- settings.env read/write ---------------------------------------------------
@@ -141,6 +213,9 @@ def read_settings(path):
 
 def write_settings(path, updates):
     """Update KEY=value lines in place (keeping comments); append new keys."""
+    for key, value in updates.items():  # last line of defence against injecting lines
+        if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key) or re.search(r"[\r\n\x00]", str(value)):
+            raise ValueError(f"refusing to write {key!r}")
     lines = []
     if os.path.exists(path):
         with open(path) as fh:
@@ -169,9 +244,10 @@ def write_settings(path, updates):
 
 # --- app state ---------------------------------------------------------------
 class WebApp:
-    def __init__(self, env_path, ticker=None, search=None):
+    def __init__(self, env_path, ticker=None, search=None, updater=None):
         self.env_path = env_path
         self.ticker = ticker
+        self.updater = updater
         self.search_fn = search  # callable(query) -> list of coins
         self.fails = {}  # ip -> (count, locked_until)
         os.makedirs(CACHE, exist_ok=True)
@@ -200,7 +276,10 @@ class WebApp:
         count, until = self.fails.get(ip, (0, 0))
         if time.time() < until:
             return False, f"Too many tries. Wait {int(until - time.time())}s."
-        if hmac.compare_digest(str(pin), self.pin()):
+        if not isinstance(pin, (str, int)) or len(str(pin)) > 64:
+            pin = ""
+        expected = self.pin()
+        if expected and hmac.compare_digest(str(pin).encode(), expected.encode()):
             self.fails.pop(ip, None)
             return True, ""
         count += 1
@@ -218,6 +297,8 @@ class WebApp:
 
     def remember_coins(self, coins):
         meta = self._meta()
+        if len(meta) > 500:  # keep the file small
+            meta = {}
         for c in coins:
             if c.get("id"):
                 meta[c["id"]] = {"name": c.get("name"), "symbol": c.get("symbol"),
@@ -227,12 +308,25 @@ class WebApp:
 
     def settings(self):
         s = read_settings(self.env_path)
+
+        def clean(key, default):
+            """The stored value if it passes the same check as a save, else the default,
+            so one bad hand edit in settings.env can't make every later save fail."""
+            raw = s.get(key, "")
+            if raw == "":
+                return default
+            try:
+                return EDITABLE[key](raw)
+            except ValueError:
+                log.warning("settings.env has an invalid %s=%r; the page shows %r", key, raw, default)
+                return default
+
         meta = self._meta()
         live = {a["symbol"].lower(): a for a in (self.ticker.assets if self.ticker else [])}
         coins = []
         for entry in (s.get("SYMBOLS") or "btc,eth").split(","):
             entry = entry.strip().lower()
-            if not entry:
+            if not COIN_RE.fullmatch(entry):
                 continue
             sym, _, cid = entry.partition(":")
             a = live.get(sym, {})
@@ -246,35 +340,54 @@ class WebApp:
                           "price": a.get("price")})
         return {
             "coins": coins,
-            "layout": s.get("LAYOUT", "classic"),
-            "transition": s.get("TRANSITION", "slide"),
-            "brightness": int(s.get("BRIGHTNESS") or 70),
-            "sleep": int(float(s.get("SLEEP") or 5)),
-            "dim_hours": s.get("DIM_HOURS", ""),
-            "dim_brightness": int(s.get("DIM_BRIGHTNESS") or 15),
-            "currency": s.get("CURRENCY", "usd"),
-            "refresh_rate": (s.get("REFRESH_RATE") or "auto").lower(),
+            "layout": clean("LAYOUT", "classic"),
+            "transition": clean("TRANSITION", "scroll"),
+            "brightness": int(clean("BRIGHTNESS", "70")),
+            "sleep": int(clean("SLEEP", "5")),
+            "dim_hours": clean("DIM_HOURS", ""),
+            "dim_brightness": int(clean("DIM_BRIGHTNESS", "15")),
+            "currency": clean("CURRENCY", "usd"),
+            "refresh_rate": clean("REFRESH_RATE", "auto"),
             "usage": (self.ticker.usage.summary(self.ticker.interval()) if self.ticker else None),
             "pin_set": bool(s.get("WEB_PIN")),
-            "featured": [x for x in (s.get("FEATURED") or "").split(",") if x],
-            "screens": (s.get("SCREENS") or "clock,feargreed,indices,coins").split(","),
-            "indices_source": s.get("INDICES_SOURCE") or "coingecko",
-            "weather_place": s.get("WEATHER_PLACE") or ("Edinburg, Texas, US" if not s.get("WEATHER_LAT") else ""),
-            "weather_lat": s.get("WEATHER_LAT") or "26.3017",
-            "weather_lon": s.get("WEATHER_LON") or "-98.1633",
-            "temp_unit": (s.get("TEMP_UNIT") or "F").upper(),
-            "timezone": s.get("TIMEZONE") or "",
+            "featured": [x for x in clean("FEATURED", "").split(",") if x],
+            "screens": clean("SCREENS", "clock,feargreed,indices,coins").split(","),
+            "indices_source": clean("INDICES_SOURCE", "coingecko"),
+            "indices_view": clean("INDICES_VIEW", "percent"),
+            "weather_place": clean("WEATHER_PLACE", "") or ("Edinburg, Texas, US" if not s.get("WEATHER_LAT") else ""),
+            "weather_lat": clean("WEATHER_LAT", "26.3017"),
+            "weather_lon": clean("WEATHER_LON", "-98.1633"),
+            "temp_unit": clean("TEMP_UNIT", "F"),
+            "timezone": clean("TIMEZONE", ""),
+            "focus": clean("FOCUS", "off"),
+            "list_view": clean("LIST_VIEW", "off"),
+            "list_page_seconds": int(clean("LIST_PAGE_SECONDS", "6")),
+        }
+
+    def status(self):
+        """Status section: price freshness, uptime, Wi-Fi, last error, software version."""
+        import sysinfo
+        return {
+            "now": time.time(),
+            "ticker": self.ticker.status() if self.ticker else None,
+            "system_uptime": sysinfo.system_uptime(),
+            "wifi": sysinfo.wifi(),
+            "update": self.updater.status() if self.updater else None,
         }
 
     def save_icon(self, symbol, data):
         """Store an uploaded picture as icons/<symbol>.png (it overrides the default)."""
-        if not re.fullmatch(r"[a-z0-9.\-]+", symbol):
+        if not SYMBOL_RE.fullmatch(symbol):
             raise ValueError("bad coin")
         if not data or len(data) > MAX_UPLOAD:
             raise ValueError("picture missing or too large")
         try:
             img = Image.open(io.BytesIO(data))
+            if img.width * img.height > 40_000_000:  # ~40 MP; a Pi Zero has 512 MB of RAM
+                raise ValueError("that picture is too big")
             img.load()
+        except ValueError:
+            raise
         except Exception:
             raise ValueError("that file isn't a picture I can read")
         img = img.convert("RGBA")
@@ -286,19 +399,35 @@ class WebApp:
 
     def reset_icon(self, symbol):
         path = os.path.join(ICON_DIR, f"{symbol}.png")
-        if re.fullmatch(r"[a-z0-9.\-]+", symbol) and os.path.exists(path):
+        if SYMBOL_RE.fullmatch(symbol) and os.path.exists(path):
             os.remove(path)
         if self.ticker:
             self.ticker.request_reload()
 
     def save(self, data):
+        """Validate every field first; write settings.env only if all of them pass."""
+        if not isinstance(data, dict):
+            raise ValueError("expected a JSON object")
         updates = {}
         for key, check in EDITABLE.items():
-            if key.lower() in data:
-                updates[key] = check(str(data[key.lower()]))
-        if "coins_meta" in data:
-            self.remember_coins(data["coins_meta"])
+            if key.lower() not in data:
+                continue
+            raw = data[key.lower()]
+            if isinstance(raw, bool) or not isinstance(raw, (str, int, float)):
+                raise ValueError(f"{LABELS[key]}: wrong type")
+            if len(str(raw)) > 2000:
+                raise ValueError(f"{LABELS[key]}: too long")
+            try:
+                updates[key] = check(str(raw))
+            except ValueError as exc:
+                raise ValueError(f"{LABELS[key]}: {exc}") from None
+        if "featured" in data and "SYMBOLS" in updates:  # featured coins must be on the list
+            listed = {e.partition(":")[0] for e in updates["SYMBOLS"].split(",")}
+            updates["FEATURED"] = ",".join(f for f in updates.get("FEATURED", "").split(",") if f in listed)
+        meta = _coins_meta(data["coins_meta"]) if "coins_meta" in data else []
         write_settings(self.env_path, updates)
+        if meta:
+            self.remember_coins(meta)
         if self.ticker:
             self.ticker.request_reload()
         return updates
@@ -340,12 +469,25 @@ def make_handler(app):
             self.end_headers()
             self.wfile.write(body)
 
+        def _length(self, limit):
+            """Content-Length as an int, or raise ValueError/OverflowError."""
+            raw = self.headers.get("Content-Length") or "0"
+            if not raw.isdigit():
+                raise ValueError("bad Content-Length")
+            n = int(raw)
+            if n > limit:
+                raise OverflowError("request too large")
+            return n
+
         def _body(self):
-            n = min(int(self.headers.get("Content-Length") or 0), 65536)
+            n = self._length(65536)
             try:
-                return json.loads(self.rfile.read(n) or b"{}")
-            except ValueError:
-                return {}
+                data = json.loads(self.rfile.read(n) or b"{}")
+            except (ValueError, UnicodeDecodeError):
+                raise ValueError("request isn't valid JSON") from None
+            if not isinstance(data, dict):
+                raise ValueError("expected a JSON object")
+            return data
 
         def _authed(self):
             return app.authed(self.headers.get("Cookie"))
@@ -366,8 +508,10 @@ def make_handler(app):
                 return self._send(401, {"error": "login required"})
             if url.path == "/api/settings":
                 return self._send(200, app.settings())
+            if url.path == "/api/status":
+                return self._send(200, app.status())
             if url.path == "/api/geocode":
-                q = parse_qs(url.query).get("q", [""])[0].strip()
+                q = parse_qs(url.query).get("q", [""])[0].strip()[:64]
                 if len(q) < 3:
                     return self._send(200, {"places": []})
                 try:
@@ -377,7 +521,7 @@ def make_handler(app):
                     log.warning("geocode failed: %s", exc)
                     return self._send(502, {"error": "Location lookup failed. Check the Pi's internet."})
             if url.path == "/api/search":
-                q = parse_qs(url.query).get("q", [""])[0].strip()
+                q = parse_qs(url.query).get("q", [""])[0].strip()[:64]
                 if len(q) < 2:
                     return self._send(200, {"coins": []})
                 try:
@@ -389,8 +533,14 @@ def make_handler(app):
 
         def do_POST(self):
             url = urlparse(self.path)
+            try:
+                body = self._body() if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback") else None
+            except OverflowError as exc:
+                return self._send(413, {"error": str(exc)})
+            except ValueError as exc:
+                return self._send(400, {"error": str(exc)})
             if url.path == "/api/login":
-                ok, msg = app.login(self.client_address[0], self._body().get("pin", ""))
+                ok, msg = app.login(self.client_address[0], body.get("pin", ""))
                 if not ok:
                     return self._send(403, {"error": msg})
                 cookie = f"tk={app.token()}; Path=/; Max-Age=31536000; HttpOnly; SameSite=Strict"
@@ -401,18 +551,31 @@ def make_handler(app):
                 sym = parse_qs(url.query).get("sym", [""])[0].lower()
                 try:
                     if url.path == "/api/icon":
-                        n = int(self.headers.get("Content-Length") or 0)
-                        if n > MAX_UPLOAD:
-                            raise ValueError("picture too large")
+                        try:
+                            n = self._length(MAX_UPLOAD)
+                        except OverflowError:
+                            return self._send(413, {"error": "picture too large"})
                         app.save_icon(sym, self.rfile.read(n))
                     else:
                         app.reset_icon(sym)
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
                 return self._send(200, {"ok": True})
+            if url.path in ("/api/update", "/api/rollback"):
+                if not app.updater:
+                    return self._send(404, {"error": "updates aren't available here"})
+                from updater import UpdateError
+                try:
+                    if url.path == "/api/update":
+                        app.updater.start_update()
+                    else:
+                        app.updater.start_rollback()
+                except UpdateError as exc:
+                    return self._send(409, {"error": str(exc)})
+                return self._send(202, {"ok": True})
             if url.path == "/api/settings":
                 try:
-                    saved = app.save(self._body())
+                    saved = app.save(body)
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
                 return self._send(200, {"ok": True, "saved": saved})
@@ -509,12 +672,18 @@ function coinRow(c,i,n){
   <button class="btn del" data-del="${i}" aria-label="Remove">✕</button></div>`;
 }
 function seg(key,opts){return `<div class="seg" data-seg="${key}">${opts.map(([v,l])=>`<button data-v="${v}" class="${S[key]==v?'on':''}">${l}</button>`).join('')}</div>`}
+function focusHint(){const h=$('#focushint');if(!h)return;
+  const syms=S.coins.map(c=>c.entry.split(':')[0]);
+  h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
 function hourSel(id,val){return `<select id="${id}">${[...Array(24).keys()].map(h=>`<option value="${h}" ${h==val?'selected':''}>${(h%12||12)+(h<12?' am':' pm')}</option>`).join('')}</select>`}
 function render(){
   const dim=S.dim_hours?S.dim_hours.split('-').map(Number):null;
   app.innerHTML=`<h1>Ticker</h1>
   <h2>Coins</h2><div class="card" id="coins">${S.coins.map((c,i)=>coinRow(c,i,S.coins.length)).join('')}</div>
   <p class="hint">★ = featured: gets a big-picture screen before its price. Tap a coin's picture to use your own.</p>
+  <div class="card"><div class="row"><div class="grow">Focus<div class="name" style="white-space:normal">Show only ★ coins. Clock, Fear &amp; Greed and indices keep running.</div></div>
+   <label class="switch"><input type="checkbox" id="focus" ${S.focus=='on'?'checked':''}><span></span></label></div></div>
+  <p class="hint err" id="focushint" hidden>Focus is on but no coins are starred, so all coins are shown. Tap ★ on a coin.</p>
   <input type="file" id="file" accept="image/*" hidden>
   <h2>Add a coin</h2><input id="q" type="search" placeholder="Search name or ticker, e.g. cardano" autocomplete="off" autocorrect="off" autocapitalize="off">
   <div class="card" id="results" style="margin-top:8px"></div>
@@ -522,7 +691,11 @@ function render(){
    ${[['clock','Clock'],['feargreed','Fear &amp; Greed index'],['indices','Market indices']].map(([k,l])=>
      `<div class="row"><div class="grow">${l}</div><label class="switch"><input type="checkbox" data-screen="${k}" ${S.screens.includes(k)?'checked':''}><span></span></label></div>`).join('')}
    ${S.screens.includes('indices')?`<div class="row"><div class="grow">Indices from<div class="name" style="white-space:normal">${S.indices_source=='yahoo'?'Real index values incl. the Dow. Unofficial source; may stop working.':'Tokenized S&amp;P 500 and Nasdaq funds. No extra CoinGecko calls.'}</div></div>
-     <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>`:''}
+     <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>
+   <div class="row"><div class="grow">Also show $ / point change<div class="name" style="white-space:normal">${S.indices_source=='yahoo'
+     ?'Flips from % to the change in index points halfway through.'
+     :'Flips from % to the $ change halfway through. S&amp;P and Nasdaq are tokenized-fund prices ($ per share, not index points); switch the source to Yahoo for real points. The Dow is always points.'}</div></div>
+     <label class="switch"><input type="checkbox" id="iview" ${S.indices_view=='both'?'checked':''}><span></span></label></div>`:''}
   </div>
   <p class="hint">Shown in this order at the start of each cycle, then your coins.</p>
   <h2>Weather on the clock</h2><div class="card">
@@ -540,7 +713,13 @@ function render(){
    <div class="row" style="border-top:0;padding-top:0"><input type="range" id="bright" min="5" max="100" value="${S.brightness}"></div>
    <div class="row"><div class="grow">Seconds per coin</div><div class="val" id="sv">${S.sleep}s</div></div>
    <div class="row" style="border-top:0;padding-top:0"><input type="range" id="sleep" min="2" max="30" value="${S.sleep}"></div>
-   <div class="row"><div class="grow">Slide between coins</div><label class="switch"><input type="checkbox" id="slide" ${S.transition=='slide'?'checked':''}><span></span></label></div>
+   <div class="row"><div class="grow">List view<div class="name" style="white-space:normal">Several coins per screen. Starred coins still get their big screens.</div></div>
+    <label class="switch"><input type="checkbox" id="listview" ${S.list_view!='off'?'checked':''}><span></span></label></div>
+   ${S.list_view!='off'?`<div class="row" style="border-top:0;padding-top:0">${seg('list_view',[['4','4 coins + %'],['5','5 coins']])}</div>
+   <div class="row"><div class="grow">Seconds per page</div><div class="val" id="lpv">${S.list_page_seconds}s</div></div>
+   <div class="row" style="border-top:0;padding-top:0"><input type="range" id="lpage" min="2" max="30" value="${S.list_page_seconds}"></div>`:''}
+   <div class="row"><div class="grow">Transition<div class="name" style="white-space:normal">How one screen changes to the next.</div></div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('transition',[['scroll','Scroll'],['slide','Slide'],['none','None']])}</div>
   </div>
   <h2>Night dimming</h2><div class="card">
    <div class="row"><div class="grow">Dim at night</div><label class="switch"><input type="checkbox" id="dim" ${dim?'checked':''}><span></span></label></div>
@@ -553,17 +732,77 @@ function render(){
    <div class="row"><div class="grow">Refresh prices every</div><select id="rr">${[['auto','Auto'],['60','1 min'],['120','2 min'],['180','3 min'],['300','5 min'],['600','10 min'],['900','15 min'],['1800','30 min']].map(([v,l])=>`<option value="${v}" ${String(S.refresh_rate)==v?'selected':''}>${l}</option>`).join('')}</select></div>
    ${usageRow()}
   </div>
-  <p class="hint">Changes show on the ticker within a few seconds.${S.pin_set?'':' <span class="err">No PIN set: anyone on your Wi-Fi can change this. Add WEB_PIN to settings.env.</span>'}</p>`;
+  <p class="hint">Changes show on the ticker within a few seconds.${S.pin_set?'':' <span class="err">No PIN set: anyone on your Wi-Fi can change this. Add WEB_PIN to settings.env.</span>'}</p>
+  <h2>Status</h2><div class="card" id="status"><div class="row"><div class="grow name">Loading…</div></div></div>
+  <h2>Software</h2><div class="card" id="software"></div><div id="swhint"></div>`;
   bind();
+  loadStatus();
+}
+// ----- status + software update -----
+let statusTimer=null;
+const dur=s=>{s=Math.max(0,Math.round(s));const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return d?`${d} d ${h} h`:h?`${h} h ${m} min`:m?`${m} min`:`${s} s`};
+const ago=(t,now)=>t?(now-t<45?'just now':dur(now-t)+' ago'):'never';
+function statusRows(st){
+  const t=st.ticker,now=st.now,rows=[];
+  const row=(l,v,cls='')=>`<div class="row"><div class="grow">${l}</div><div class="val ${cls}" style="min-width:0;text-align:right">${v}</div></div>`;
+  if(t){
+    rows.push(row('Last price update', t.last_success?esc(ago(t.last_success,now)):'not yet', t.stale||!t.last_success&&t.last_error?'err':''));
+    if(t.stale)rows.push(`<div class="row" style="border-top:0;padding-top:0"><div class="grow name err" style="white-space:normal">Showing the last good prices (red dot on the panel).</div></div>`);
+    rows.push(row('Ticker running for',esc(dur(now-t.started_at))));
+  }
+  if(st.system_uptime!=null)rows.push(row('Pi up for',esc(dur(st.system_uptime))));
+  const w=st.wifi;
+  rows.push(row('Wi-Fi signal',w?esc(`${w.label[0].toUpperCase()+w.label.slice(1)}${w.dbm!=null?' · '+w.dbm+' dBm':' · '+w.quality+'%'}`):'not available',w&&w.label=='weak'?'err':''));
+  if(t){
+    rows.push(row('Last error',t.last_error?esc(ago(t.last_error_at,now)):'none',t.last_error&&t.stale?'err':''));
+    if(t.last_error)rows.push(`<div class="row" style="border-top:0;padding-top:0"><div class="grow name" style="white-space:normal;word-break:break-word">${esc(t.last_error.slice(0,200))}</div></div>`);
+  }
+  return rows.join('');
+}
+function softwareRows(u){
+  if(!u)return '<div class="row"><div class="grow name">Updates aren\'t available here.</div></div>';
+  const v=u.version, busy=u.state=='running'||u.state=='pending';
+  const btn=(id,label,cls='')=>`<button class="btn ${cls}" id="${id}" style="width:auto;padding:0 14px" ${busy?'disabled':''}>${label}</button>`;
+  const msgCls=['failed','rollback_failed'].includes(u.state)||u.needs_key?'err':'';
+  return `<div class="row"><div class="grow">Version<div class="name">${esc(v.commit)} · ${esc(v.date)} · ${esc(v.subject)}</div></div></div>
+   <div class="row" style="gap:8px"><div class="grow name ${msgCls}" style="white-space:normal">${esc(busy&&!u.message?'Working…':u.message||'')}</div>
+   ${u.can_rollback?btn('rollback','Roll back','del'):''}${btn('update',busy?'Updating…':'Update')}</div>`;
+}
+function swHint(u){
+  if(!u||!u.needs_key)return '';
+  return u.deploy_key?`<p class="hint">Add this public key to the GitHub repo under <b>Settings → Deploy keys</b> (read-only), then tap Update again:</p>
+   <div class="card"><div class="row"><div class="grow name" style="white-space:normal;word-break:break-all;font-family:ui-monospace,monospace;user-select:all">${esc(u.deploy_key)}</div></div></div>`
+   :`<p class="hint">No deploy key on the Pi yet. Over SSH run <b>./install.sh --deploy-key</b>; it prints the key to add on GitHub (see the README).</p>`;
+}
+async function loadStatus(){
+  clearTimeout(statusTimer);
+  let st;
+  try{st=await api('/api/status')}catch(e){statusTimer=setTimeout(loadStatus,5000);return}  // restarting
+  if(!$('#status'))return;
+  $('#status').innerHTML=statusRows(st);
+  $('#software').innerHTML=softwareRows(st.update);
+  $('#swhint').innerHTML=swHint(st.update);
+  if($('#update'))$('#update').onclick=async()=>{
+    if(!confirm('Update the ticker from GitHub? It restarts, and goes back to this version by itself if the update fails to start.'))return;
+    try{await api('/api/update',{});toast('Updating…')}catch(e){if(e.message!='login')toast(e.message,true)}
+    loadStatus()};
+  if($('#rollback'))$('#rollback').onclick=async()=>{
+    if(!confirm('Go back to the previous version ('+st.update.previous+')? The ticker restarts.'))return;
+    try{await api('/api/rollback',{});toast('Rolling back…')}catch(e){if(e.message!='login')toast(e.message,true)}
+    loadStatus()};
+  const busy=st.update&&['running','pending'].includes(st.update.state);
+  statusTimer=setTimeout(loadStatus,busy?3000:30000);
 }
 function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
-      screens:S.screens.join(','),indices_source:S.indices_source,temp_unit:S.temp_unit,
+      screens:S.screens.join(','),indices_source:S.indices_source,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
-      sleep:S.sleep,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
-    try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}catch(e){if(e.message!='login')toast(e.message,true)}
+      sleep:S.sleep,focus:S.focus,list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
+    try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
+    catch(e){if(e.message!='login'){toast('Not saved: '+e.message,true);setTimeout(load,1800)}}
   },extra===0?0:450);
 }
 function bind(){
@@ -575,7 +814,7 @@ function bind(){
     if(b.dataset.pic!==undefined){pickIcon(L[+b.dataset.pic]);return}
     if(b.dataset.star!==undefined){const sym=L[+b.dataset.star].entry.split(':')[0];S.featured=S.featured||[];
       S.featured=S.featured.includes(sym)?S.featured.filter(x=>x!=sym):[...S.featured,sym];
-      b.classList.toggle('on');save(0);return}
+      b.classList.toggle('on');focusHint();save(0);return}
     if(b.dataset.del!==undefined){if(L.length<2)return toast('Keep at least one coin',true);L.splice(+b.dataset.del,1)}
     else if(b.dataset.up!==undefined){const i=+b.dataset.up;[L[i-1],L[i]]=[L[i],L[i-1]]}
     else if(b.dataset.down!==undefined){const i=+b.dataset.down;[L[i+1],L[i]]=[L[i],L[i+1]]}
@@ -585,12 +824,14 @@ function bind(){
     if(q.length<2){$('#results').innerHTML='';return}
     searchTimer=setTimeout(()=>search(q),350)};
   document.querySelectorAll('[data-seg]').forEach(s=>s.onclick=e=>{const b=e.target.closest('button');if(!b)return;
-    S[s.dataset.seg]=b.dataset.v;s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x==b));save()});
+    S[s.dataset.seg]=b.dataset.v;s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x==b));save();
+    if(s.dataset.seg=='list_view')render()});
   document.querySelectorAll('[data-screen]').forEach(cb=>cb.onchange=()=>{
     const order=['clock','feargreed','indices','coins'];
     const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);on.add('coins');
     S.screens=order.filter(k=>on.has(k));save();render()});
   if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
+  if($('#iview'))$('#iview').onchange=e=>{S.indices_view=e.target.checked?'both':'percent';save()};
   const findPlace=async()=>{
     const q=$('#zip').value.trim();if(q.length<3)return toast('Enter a ZIP code or city',true);
     const box=$('#places');box.innerHTML='<div class="row"><div class="grow name">Looking up…</div></div>';
@@ -606,7 +847,10 @@ function bind(){
   $('#zipgo').onclick=findPlace;$('#zip').onkeydown=e=>{if(e.key=='Enter')findPlace()};
   $('#bright').oninput=e=>{S.brightness=+e.target.value;$('#bv').textContent=S.brightness+'%';save()};
   $('#sleep').oninput=e=>{S.sleep=+e.target.value;$('#sv').textContent=S.sleep+'s';save()};
-  $('#slide').onchange=e=>{S.transition=e.target.checked?'slide':'none';save()};
+  $('#listview').onchange=e=>{S.list_view=e.target.checked?'4':'off';save();render()};
+  $('#focus').onchange=e=>{S.focus=e.target.checked?'on':'off';focusHint();save()};
+  if($('#lpage'))$('#lpage').oninput=e=>{S.list_page_seconds=+e.target.value;$('#lpv').textContent=S.list_page_seconds+'s';save()};
+  focusHint();
   $('#dim').onchange=e=>{S.dim_hours=e.target.checked?'22-7':'';render();save()};
   if($('#dfrom')){const f=()=>{S.dim_hours=$('#dfrom').value+'-'+$('#dto').value;save()};$('#dfrom').onchange=f;$('#dto').onchange=f;
     $('#dbright').oninput=e=>{S.dim_brightness=+e.target.value;$('#dbv').textContent=S.dim_brightness+'%';save()}}
@@ -659,9 +903,10 @@ async function search(q){
       <div class="grow"><div class="sym">${esc(c.symbol)}</div><div class="name">${esc(c.name)}</div></div>
       <div class="rank">${c.market_cap_rank?'#'+c.market_cap_rank:''}</div><div class="add">＋</div></div>`).join('');
     box.onclick=e=>{const r=e.target.closest('[data-i]');if(!r)return;const c=coins[+r.dataset.i];
-      const entry=c.symbol.toLowerCase()+':'+c.id;
+      const sym=c.symbol.toLowerCase().replace(/[^a-z0-9.\-]/g,'').slice(0,20)||'coin';
+      const entry=sym+':'+c.id;
       if(S.coins.some(x=>x.entry==entry||x.entry.split(':')[1]==c.id))return toast('Already on the list');
-      S.coins.push({entry,symbol:c.symbol,name:c.name,image:c.thumb});pendingMeta.push(c);
+      S.coins.push({entry,symbol:sym.toUpperCase(),name:c.name,image:c.thumb});pendingMeta.push(c);
       $('#coins').innerHTML=S.coins.map((x,i)=>coinRow(x,i,S.coins.length)).join('');
       box.innerHTML='';$('#q').value='';toast('Added '+c.symbol);save(0)};
   }catch(e){if(e.message!='login')box.innerHTML=`<div class="row"><div class="grow err">${esc(e.message)}</div></div>`}
