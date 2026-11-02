@@ -10,8 +10,9 @@ for current Raspberry Pi OS. The hardware is the same; the software is rewritten
 
 Each coin screen shows the coin's icon, ticker, 24h change with ▲/▼, a 7-day chart and the
 price (auto-sized: `$109,235`, `$4,012.37`, `$0.0₄1123`). Each cycle can also show a **clock**
-with the weather, the crypto **Fear & Greed index**, and a **market indices** page. Screens scroll
-up into each other (or slide sideways, or switch instantly). Everything can be changed from your phone.
+with the weather, the crypto **Fear & Greed index**, and a **market indices** page, and optionally a
+**weather** screen, scrolling **news headlines** and **sports scores**. Screens scroll up into each
+other (or slide sideways, or switch instantly). Everything can be changed from your phone.
 
 ![Scroll transition](docs/preview-scroll.gif)
 
@@ -21,20 +22,25 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 |--|--|--|--|--|--|
 | ![](docs/screenshots/07-coin-classic.png) | ![](docs/screenshots/06-featured.png) | ![](docs/screenshots/10d-list-view-4.png) | ![](docs/screenshots/10c-list-view-5.png) | ![](docs/screenshots/10-coin-stale.png) | ![](docs/screenshots/11-no-data-offline.png) |
 
+| Weather | News | Sports: live | Sports: college | Sports: final | Sports: upcoming |
+|--|--|--|--|--|--|
+| ![](docs/screenshots/13-weather.png) | ![](docs/screenshots/14-news.png) | ![](docs/screenshots/15-sports-live.png) | ![](docs/screenshots/16-sports-college-ranked.png) | ![](docs/screenshots/17-sports-final.png) | ![](docs/screenshots/18-sports-upcoming.png) |
+
 ## Contents
 
 1. [Hardware](#hardware)
 2. [Wiring check](#wiring-check)
 3. [Install](#install)
 4. [Configuration](#configuration)
-5. [Phone settings page](#phone-settings-page)
-6. [Updating (and rolling back)](#updating-and-rolling-back)
-7. [iPhone widget](#iphone-widget)
-8. [Running without hardware (emulator)](#running-without-hardware-emulator)
-9. [How failures are handled](#how-failures-are-handled)
-10. [Troubleshooting](#troubleshooting)
-11. [Development](#development)
-12. [Screenshots](#screenshots)
+5. [Weather, news and sports screens](#weather-news-and-sports-screens)
+6. [Phone settings page](#phone-settings-page)
+7. [Updating (and rolling back)](#updating-and-rolling-back)
+8. [iPhone widget](#iphone-widget)
+9. [Running without hardware (emulator)](#running-without-hardware-emulator)
+10. [How failures are handled](#how-failures-are-handled)
+11. [Troubleshooting](#troubleshooting)
+12. [Development](#development)
+13. [Screenshots](#screenshots)
 
 ## Hardware
 
@@ -136,8 +142,14 @@ value is logged as a warning and the default is used.
 | `FOCUS` | `off` | `on` = coin rotation shows only starred coins (clock, Fear & Greed and indices keep running). With nothing starred, all coins show |
 | `LIST_VIEW` | `off` | `off`, `4` (pages of 4: price + % change; the phone page's switch turns this on) or `5` (pages of 5 coins: ▲/▼ + price). Starred coins keep their big screens |
 | `LIST_PAGE_SECONDS` | `6` | Seconds per list page (2–60) |
-| `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle (coins always last) |
+| `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle, in order (coins always last). Also `weather`, `news`, `sports` (off by default) |
 | `INDICES_SOURCE` | `coingecko` | `coingecko` (tokenized funds, no extra calls) or `yahoo` (real index values; unofficial) |
+| `NEWS_FEEDS` | three crypto/business feeds | RSS or Atom URLs, comma separated (one per line on the phone page), up to 8 |
+| `NEWS_PER_CYCLE` | `3` | Headlines shown each cycle (1–10); the next cycle continues where this one stopped |
+| `NEWS_SPEED` | `normal` | Headline scroll speed: `slow` (20), `normal` (30) or `fast` (45 pixels/s) |
+| `SPORTS_<LEAGUE>` | `on` (`off` for NHL) | `SPORTS_NFL`, `SPORTS_NCAAF`, `SPORTS_NBA`, `SPORTS_NCAAM`, `SPORTS_MLB`, `SPORTS_NHL`: `on`/`off` |
+| `SPORTS_<LEAGUE>_TOP` | `25` college, `8` pro | Follow the AP Top `10`/`25` (college) or the top `4`/`8`/`12`/`16` by record (pro); `0` = off |
+| `SPORTS_<LEAGUE>_FAVORITES` | (none) | Favorite teams as ESPN `id:ABBR` pairs, e.g. `2:BUF`; easiest to pick on the phone page |
 | `INDICES_VIEW` | `percent` | `percent`, or `both` to flip to the $ / point change halfway through. With `coingecko`, S&P and Nasdaq are fund prices ($ per share), not index points |
 | `TIMEZONE` | Pi's setting | Clock and night-dimming time zone, e.g. `Europe/London` |
 | `WEATHER_PLACE` / `WEATHER_LAT` / `WEATHER_LON` / `TEMP_UNIT` | example values | Weather on the clock; easiest to set by ZIP code or city on the phone page |
@@ -158,6 +170,50 @@ value is logged as a warning and the default is used.
 **Custom icons:** tap a coin's picture on the phone page and choose a photo, or copy a PNG to
 `icons/<symbol>.png`. Your pictures stay on the Pi (they're not committed to git).
 
+## Weather, news and sports screens
+
+Turn them on in the phone page's **Screens** list and move them with ↑/↓. Each one comes in and
+goes out with your Transition setting, and each is skipped (never an error screen) when it has
+nothing to show.
+
+**Weather** uses the same Open-Meteo data and location as the clock (set by ZIP code or city on the
+phone page) and the °F/°C setting: a big current temperature, a condition icon, today's high
+(orange) and low (blue), and a line of the next 12 hours' temperatures along the bottom.
+
+**News** shows one headline at a time, scrolling right to left in a big bold font, with the source
+in a small colored tag and the headline's age. Feeds are checked every 15 minutes in the background;
+each feed keeps its last good headlines, so a broken feed or no Wi-Fi never empties the screen.
+HTML, entities and characters the LED font can't draw are cleaned up.
+
+![News scroll](docs/preview-news.gif)
+
+Scrolling moves one pixel per frame, and the position follows the clock, so a late frame never
+slows the text down. Building a frame is a copy plus a crop-and-paste of a pre-rendered strip:
+`python tools/bench_scroll.py` measures it (about 0.02 ms per frame on a desktop CPU against a
+22 ms budget at the fast speed). Run it on the Pi (`sudo ./venv/bin/python tools/bench_scroll.py --panel`)
+to see real numbers there.
+
+**Sports** shows NFL, college football, NBA, men's college basketball and MLB (NHL is in the list,
+off by default). For each sport the ticker follows the **top teams** (the AP Top 25 for college,
+the best records for pro leagues; adjustable) and your **favorites** (search and tap on the phone
+page). A game is shown if either team is followed:
+
+1. live games: score, period or inning, and clock (red)
+2. finals from the last 24 hours (grey)
+3. the next game for each favorite: day and time (yellow), with records
+
+Teams show as abbreviations with a team-color bar, `#7` for a ranking and ★ for a favorite. A line
+that doesn't fit scrolls like a headline. Sports out of season are skipped and hidden on the phone
+page. Data is ESPN's public scoreboard, rankings and standings JSON (unofficial; no key), fetched
+every 60 seconds while a followed game is live and every 15 minutes otherwise. Each sport keeps its
+last good data; if ESPN fails or changes its format, that sport is skipped. Live scores older than
+3 minutes get the red stale dot.
+
+![Sports](docs/preview-sports.gif)
+
+Adding a league is one line in the `LEAGUES` table in `sports.py` (ESPN path, name, whether it has
+AP rankings, season months, default on/off, default top teams, tag color).
+
 ## Phone settings page
 
 1. On your phone (same Wi-Fi), open `http://<hostname>.local:8080`. `install.sh` prints the address.
@@ -166,7 +222,8 @@ value is logged as a warning and the default is used.
 
 You can search and add coins (with rank and icon, so you pick the real one), reorder, star (★),
 turn on **Focus** and **List view**, change layout, transition (Scroll / Slide / None), brightness, time per coin, night dimming,
-screens, weather location, currency and refresh rate. Changes show on the panel within seconds.
+screens (on/off and order), news feeds and speed, sports and favorite teams, weather location,
+currency and refresh rate. Changes show on the panel within seconds.
 
 Every value is checked on the Pi before it's saved (ranges, allowed choices, coin-id format,
 time zones, coordinates), and nothing is written unless all fields pass; the page shows which
@@ -314,6 +371,9 @@ writes `docs/preview-scroll.gif`, the scroll transition made by the real `Ticker
 | "The update didn't start … restored automatically" | The new version crashed at startup; you're back on the old one. `journalctl -u crypto-ticker -b` shows why |
 | Wrong time on the clock | Set `TIMEZONE` (or the location on the phone page); check `timedatectl` |
 | SD card filling up | `du -sh logs cache`; lower `LOG_MAX_KB` / `LOG_BACKUPS` |
+| Weather screen never shows | It needs weather data: check the location on the phone page and the log for "Weather fetch failed" |
+| News screen never shows | No feed has worked yet: open a feed URL in a browser to check it, and look for "news feed … failed" in the log |
+| Sports screen never shows | No followed game in the last 24 h or upcoming, the sport is out of season, or ESPN failed ("sports … failed" in the log). Add a favorite to always see its next game |
 | Focus on but every coin shows | No coin is starred; tap ★ on the phone page (the page shows a hint) |
 
 ## Development
@@ -326,7 +386,8 @@ node --test tests/widget/widget.test.mjs   # iPhone widget tests (also run by py
 
 The tests mock CoinGecko responses: normal data, timeouts, HTTP 429, HTTP 5xx, malformed JSON,
 Wi-Fi loss, cold start offline, plus settings-page validation, Focus/List view, log rotation and
-the emulator. The widget tests run the Scriptable script against a small stand-in for
+the emulator. Weather, news and sports have their own mocked-data tests (normal, empty, malformed,
+offline; for sports also live/final/upcoming for every league), plus scroll timing and transitions. The widget tests run the Scriptable script against a small stand-in for
 Scriptable's API (`tests/widget/scriptable_stub.mjs`), not the real app.
 
 | File | Role |
@@ -337,10 +398,11 @@ Scriptable's API (`tests/widget/scriptable_stub.mjs`), not the real app.
 | `render.py` | Draws every screen as a Pillow image |
 | `display.py` | Real panel, emulator (with screenshots) or GIF recorder |
 | `webui.py` | Phone settings page with input validation |
+| `news.py`, `sports.py`, `scroller.py` | News feeds, ESPN scores and the league table, scrolling text |
 | `feeds.py`, `session.py`, `usage.py`, `icons.py`, `bdf.py` | Weather/F&G/indices, market sessions, API budget, icons, fonts |
 | `install.sh`, `crypto-ticker.service` | Install and auto-start |
 | `launcher.py`, `updater.py`, `sysinfo.py` | Service entry point + update safety net, Update/Roll back, Wi-Fi and uptime |
-| `tools/` | Demo settings server and Playwright screenshot scripts |
+| `tools/` | Demo settings server, Playwright screenshot scripts, scroll frame-time benchmark |
 | `screenshots.py`, `preview.py`, `sample.py` | Emulator screenshots, GIF preview, sample data |
 | `iphone/CryptoTicker.js` | Scriptable widget |
 
@@ -348,6 +410,7 @@ Price data from [CoinGecko](https://www.coingecko.com/en/api). Icons from CoinGe
 [spothq/cryptocurrency-icons](https://github.com/spothq/cryptocurrency-icons) as a fallback.
 LED driver: [hzeller/rpi-rgb-led-matrix](https://github.com/hzeller/rpi-rgb-led-matrix).
 Emulator: [RGBMatrixEmulator](https://github.com/ty-porter/RGBMatrixEmulator).
+Weather from [Open-Meteo](https://open-meteo.com/). Scores from ESPN's public site API (unofficial).
 
 ## Screenshots
 
@@ -358,8 +421,9 @@ Scriptable and is drawn as HTML (fonts, spacing and icons differ from iOS).
 
 | | |
 |--|--|
-| Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `12-…`) |
-| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-list-view`, `-indices`, `-status-update`, `-deploy-key` |
+| Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `19-…`) |
+| Animations | `../preview-scroll.gif`, `../preview-news.gif`, `../preview-sports.gif` |
+| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-screens`, `-news`, `-sports`, `-list-view`, `-indices`, `-status-update`, `-deploy-key` |
 | iPhone widget | `widget-contact-sheet.png`, `widget-coins-*.png`, `widget-news-*.png` |
 
 ![Every panel screen](docs/screenshots/panel-contact-sheet.png)

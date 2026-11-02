@@ -43,7 +43,18 @@ def apply_sample(ticker):
     ticker.yahoo_dow.data = [{"label": "DOW", "change": 0.18, "points": 81.4, "intraday": up}]
     ticker.fear_greed.data = {"value": 70, "label": "Greed", "yesterday": 65,
                               "history": [60, 58, 62, 66, 64, 63, 65, 70]}
-    ticker.weather.data = sample_weather()
+    ticker.weather.data = sample_weather(code=0, is_day=False)  # the clock screenshots are at night
+
+
+SAMPLE_NEWS = [  # made-up headlines and sources, for previews only
+    {"title": "Bitcoin Holds Above $109K as Spot ETF Inflows Reach a Three-Week High", "source": "CRYPTO WIRE"},
+    {"title": "Stocks Edge Higher as Tech Rallies Ahead of Earnings", "source": "MARKETS"},
+    {"title": "Stablecoin Supply Hits a New Record", "source": "CHAIN DAILY"},
+]
+
+
+def sample_news(now_ts, ages=(25 * 60, 2 * 3600, 5 * 3600)):
+    return [dict(item, at=now_ts - age, link=None) for item, age in zip(SAMPLE_NEWS, ages)]
 
 
 def sample_weather(code=2, is_day=True):
