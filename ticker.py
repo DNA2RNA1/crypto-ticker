@@ -32,6 +32,7 @@ from render import Renderer
 from retry import backoff_delay
 from news import DEFAULT_FEEDS, News
 from scroller import SPEEDS, Scroller
+from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -117,6 +118,7 @@ class Config:
     news_feeds: list = field(default_factory=lambda: list(DEFAULT_FEEDS))
     news_per_cycle: int = 3
     news_speed: str = "normal"     # slow, normal, fast (see scroller.SPEEDS)
+    sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
     timezone: str = ""
     weather_lat: float = 26.3017   # Edinburg, TX
     weather_lon: float = -98.1633
@@ -168,6 +170,7 @@ class Config:
         c.news_feeds = [u for u in feeds if u.lower().startswith(("http://", "https://"))][:8] or list(DEFAULT_FEEDS)
         c.news_per_cycle = env("NEWS_PER_CYCLE", c.news_per_cycle, int, lo=1, hi=10)
         c.news_speed = env("NEWS_SPEED", c.news_speed, str.lower, choices=tuple(SPEEDS))
+        c.sports = follow_from_env(os.environ)
         c.timezone = env("TIMEZONE", "")
         c.weather_lat = env("WEATHER_LAT", c.weather_lat, float, lo=-90.0, hi=90.0)
         c.weather_lon = env("WEATHER_LON", c.weather_lon, float, lo=-180.0, hi=180.0)
@@ -257,6 +260,7 @@ class Ticker:
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
         self.news = News(cfg.news_feeds)
+        self.sports = Sports(cfg.sports)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
         self.stale_since = None     # when those last good prices were fetched
@@ -426,6 +430,9 @@ class Ticker:
                 (old.weather_lat, old.weather_lon, old.temp_unit):
             self.weather = Weather(new.weather_lat, new.weather_lon,
                                    "celsius" if new.temp_unit == "C" else "fahrenheit")
+        if new.sports != old.sports:
+            self.sports.follow = new.sports
+            self.sports.next_fetch = 0  # fetch with the new teams right away
         if new.news_feeds != old.news_feeds:
             self.news = News(new.news_feeds)
         if new.indices != old.indices:
@@ -584,6 +591,14 @@ class Ticker:
                     speed = SPEEDS[self.cfg.news_speed]
                     for item in self.news.next_batch(self.cfg.news_per_cycle):
                         out.append(lambda item=item: self.renderer.news(item, speed))
+            elif name == "sports":
+                self.sports.update()     # background refresh: 60 s while live, else 15 min
+                now_ts = time.time()
+                for g in self.sports.games(now_ts):
+                    age = now_ts - g["fetched"]
+                    stale = age > (3 * LIVE_EVERY if g["state"] == "in" else 2 * IDLE_EVERY)
+                    out.append(lambda g=g, stale=stale: self.renderer.game(
+                        g, LEAGUE_BY_KEY[g["league"]], self.tz, time.time(), hold=sleep, stale=stale))
             elif name == "coins":
                 out += self.coin_screens()
         return out

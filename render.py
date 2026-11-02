@@ -573,6 +573,107 @@ class Renderer:
             self.stale_mark(bg)
         return Scroller(bg, [lane], speed=speed, min_hold=3.0)
 
+    # --- sports screen ---------------------------------------------------------
+    LIVE = (255, 60, 50)
+    UPCOMING = (255, 200, 0)
+    STAR = (255, 200, 0)
+
+    @staticmethod
+    def star(img, x, y, color=(255, 200, 0)):
+        """5x5 star (the BDF fonts have no ★) with its top-left at (x, y)."""
+        rows = ("..#..", "#####", ".###.", ".#.#.", "#...#")
+        px = img.load()
+        for dy, row in enumerate(rows):
+            for dx, ch in enumerate(row):
+                if ch == "#" and 0 <= x + dx < img.width and 0 <= y + dy < img.height:
+                    px[x + dx, y + dy] = color
+
+    @staticmethod
+    def game_status(game, tz=None, now_ts=None):
+        """(text, color) for the top line: live clock, FINAL, or the start day/time."""
+        from datetime import datetime
+        import time as _time
+        st = game["state"]
+        detail = (game.get("detail") or "").upper().replace(" - ", " ")
+        if st == "in":
+            return detail or "LIVE", Renderer.LIVE
+        if st == "post":
+            return (detail or "FINAL").replace("FINAL/", "F/"), DIM_TEXT
+        start = datetime.fromtimestamp(game["start"], tz)
+        now = datetime.fromtimestamp(now_ts or _time.time(), tz)
+        hm = start.strftime("%I:%M").lstrip("0") + ("A" if start.hour < 12 else "P")
+        days = (start.date() - now.date()).days
+        if days == 0:
+            return hm, Renderer.UPCOMING
+        if 0 < days < 7:
+            return f"{start.strftime('%a').upper()} {hm}", Renderer.UPCOMING
+        return f"{start.month}/{start.day} {hm}", Renderer.UPCOMING
+
+    def team_line(self, team, fav, game):
+        """One team as a strip: color block, #rank, abbreviation, star, and the score
+        (or the record before the game). Returns (left part, right part) images."""
+        from sports import team_color
+        f = self.fonts
+        big, small = f["6x10"], f["4x6"]
+        h = big.ascent + big.descent
+        base = big.ascent
+        rank = f"#{team['rank']}" if team.get("rank") else ""
+        w = 4 + (small.width(rank) + 1 if rank else 0) + big.width(team["abbr"]) + (6 if fav else 0)
+        left = Image.new("RGB", (w, h))
+        ImageDraw.Draw(left).rectangle((0, 0, 2, base - 1), fill=team_color(team))
+        x = 4
+        if rank:
+            small.draw(left, x, base, rank, DIM_TEXT)
+            x += small.width(rank) + 1
+        x = big.draw(left, x, base, team["abbr"], PRICE)
+        if fav:
+            self.star(left, x + 1, base - 7, self.STAR)
+        st = game["state"]
+        other = game["home"] if team is game["away"] else game["away"]
+        if st == "pre":
+            text, color, font = (team.get("record") or ""), DIM_TEXT, f["5x8"]
+        else:
+            s, o = team.get("score"), other.get("score")
+            text = "" if s is None else str(s)
+            leading = s is not None and o is not None and s >= o
+            color, font = (PRICE if leading else DIM_TEXT), big
+        right = Image.new("RGB", (max(1, font.width(text)), h))
+        if text:
+            font.draw(right, 0, base, text, color)
+        return left, right
+
+    def game(self, game, league, tz=None, now_ts=None, hold=5.0, stale=False):
+        """A game: league tag and status on top, then the away and home teams. Anything
+        that doesn't fit its line scrolls (the news scroller)."""
+        from scroller import SPEEDS, Lane, Scroller, text_strip
+        f = self.fonts
+        bg = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        tag_w = self.tag(bg, 0, top, league.name, league.color)
+        lanes = []
+        status, color = self.game_status(game, tz, now_ts)
+        sf = f["5x8"]
+        room = self.w - tag_w - 2
+        if sf.width(status) <= room:
+            sf.draw(bg, self.w - sf.width(status), top + 7, status, color)
+        else:
+            strip = text_strip(sf, status, color)
+            lanes.append(Lane(strip, (tag_w + 2, top, self.w - 1, top + strip.height - 1)))
+        for y, side in ((top + 9, "away"), (top + 21, "home")):
+            team = game[side]
+            left, right = self.team_line(team, game.get("fav", {}).get(side), game)
+            if left.width + 3 + right.width <= self.w:
+                bg.paste(left, (0, y))
+                bg.paste(right, (self.w - right.width, y))
+            else:  # too long for the panel: the whole line scrolls
+                strip = Image.new("RGB", (left.width + 6 + right.width, left.height))
+                strip.paste(left, (0, 0))
+                strip.paste(right, (left.width + 6, 0))
+                lanes.append(Lane(strip, (0, y, self.w - 1, y + strip.height - 1)))
+        if stale:
+            self.stale_mark(bg)
+        return Scroller(bg, lanes, speed=SPEEDS["normal"], min_hold=hold)
+
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),
                 (74, (120, 210, 60)), (100, (0, 210, 90))]
 
