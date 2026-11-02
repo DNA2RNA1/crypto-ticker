@@ -8,3 +8,8 @@ __pycache__/
 /icons/*.png
 /logs/
 /.launcher/
+# never commit Wi-Fi profiles, certificates or keys
+*.nmconnection
+*.pem
+*.crt
+*.key
