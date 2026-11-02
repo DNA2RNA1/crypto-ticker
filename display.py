@@ -69,6 +69,7 @@ class MatrixDisplay:
         self.width, self.height = self.matrix.width, self.matrix.height
 
     wake = None  # threading.Event; lets a settings change interrupt a long hold
+    realtime = True
 
     def show(self, image, hold=0.0):
         self.canvas.SetImage(image.convert("RGB"))
@@ -107,6 +108,7 @@ class MatrixDisplay:
 
 class GifDisplay:
     """Records frames instead of showing them; used by preview.py."""
+    realtime = False  # scrolling screens step one pixel per frame instead of following the clock
 
     def __init__(self, width, height, scale=8):
         self.width, self.height, self.scale = width, height, scale

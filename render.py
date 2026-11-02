@@ -535,6 +535,44 @@ class Renderer:
         first = round(y1 - 1 - (pts[0] - lo) / span * (y1 - 1 - y0))
         d.rectangle((x0, first - 1, x0 + 1, first), fill=PRICE)
 
+    # --- news screen -----------------------------------------------------------
+    def tag(self, img, x, y, text, color, font=None):
+        """Small colored label with dark text, e.g. a news source or league. Returns its width."""
+        font = font or self.fonts["4x6"]
+        w = font.width(text) + 3
+        ImageDraw.Draw(img).rectangle((x, y, x + w - 1, y + font.ascent + 1), fill=color)
+        font.draw(img, x + 2, y + font.ascent + 1, text, (0, 0, 0))
+        return w
+
+    @staticmethod
+    def age(ts, now_ts):
+        """"5M", "3H", "2D" for how old a headline is ('' if unknown)."""
+        if not ts:
+            return ""
+        m = max(0, int((now_ts - ts) // 60))
+        return "NOW" if m < 1 else f"{m}M" if m < 60 else f"{m // 60}H" if m < 48 * 60 else f"{m // 1440}D"
+
+    def news(self, item, speed=30, now_ts=None, stale=False):
+        """One headline: source tag and age on top, the headline scrolling right to left
+        below in a big bold font."""
+        import time as _time
+        from news import clean_text, tag_color
+        from scroller import Lane, Scroller, text_strip
+        f = self.fonts
+        bg = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        self.tag(bg, 0, top, item.get("source", "NEWS")[:12], tag_color(item.get("source", "NEWS")))
+        age = self.age(item.get("at"), now_ts or _time.time())
+        if age:
+            f["4x6"].draw(bg, self.w - f["4x6"].width(age), top + 6, age, DIM_TEXT)
+        font = f["7x13B"]
+        title = clean_text(item.get("title", ""), drawable=lambda ch: ord(ch) in font.glyphs)
+        strip = text_strip(font, title, PRICE)
+        lane = Lane(strip, (0, top + 14, self.w - 1, top + 14 + strip.height - 1))
+        if stale:
+            self.stale_mark(bg)
+        return Scroller(bg, [lane], speed=speed, min_hold=3.0)
+
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),
                 (74, (120, 210, 60)), (100, (0, 210, 90))]
 
