@@ -177,3 +177,62 @@ def test_network_error_message_reason():
     t = Ticker.__new__(Ticker)
     t.last_error = NetworkError("x")
     assert t.error_reason() == "NO NETWORK?"
+
+
+
+# --- transitions ---------------------------------------------------------------
+def _two_screens():
+    from PIL import Image
+    return Image.new("RGB", (64, 32), (255, 0, 0)), Image.new("RGB", (64, 32), (0, 0, 255))
+
+
+def test_scroll_moves_old_up_and_new_in_from_bottom():
+    from ticker import transition_frames
+    old, new = _two_screens()
+    frames = transition_frames(old, new, vertical=True)
+    assert len(frames) == 13
+    for f in frames:
+        col = [f.getpixel((10, y)) for y in range(32)]
+        split = col.index((0, 0, 255))              # new screen's top edge
+        assert all(c == (255, 0, 0) for c in col[:split])
+        assert all(c == (0, 0, 255) for c in col[split:])
+        assert all(f.getpixel((x, split)) == (0, 0, 255) for x in range(64))  # whole rows, no sideways move
+    tops = [[f.getpixel((10, y)) for y in range(32)].index((0, 0, 255)) for f in frames]
+    assert tops == sorted(tops, reverse=True) and 0 <= tops[-1] < tops[0] < 32
+    steps = [a - b for a, b in zip(tops, tops[1:])]
+    assert steps[0] > steps[-1]                     # ease-out: fast first, slow at the end
+
+
+def test_slide_still_moves_sideways():
+    from ticker import transition_frames
+    old, new = _two_screens()
+    f = transition_frames(old, new, vertical=False)[6]
+    row = [f.getpixel((x, 5)) for x in range(64)]
+    assert row[0] == (255, 0, 0) and row[-1] == (0, 0, 255)
+    assert f.getpixel((63, 0)) == f.getpixel((63, 31))
+
+
+@pytest.mark.parametrize("setting,frames", [("scroll", 13), ("slide", 13), ("none", 0)])
+def test_transition_setting_timing(http, setting, frames):
+    t = make_ticker(http)
+    t.cfg.transition = setting
+    holds = []
+    t.display.show = lambda img, hold=0: holds.append(hold)
+    a, b = _two_screens()
+    t.show(a, 1)
+    t.show(b, 1)
+    assert len(holds) == 2 + frames
+    assert sum(holds[1:-1]) == pytest.approx(0.45 * 13 / 14 if frames else 0)  # same timing as before
+    holds.clear()
+    t.show(a, 1, slide=False)                       # in-place change: never animated
+    assert holds == [1]
+
+
+def test_transition_default_and_old_values(monkeypatch):
+    assert Config.from_env().transition == "scroll"
+    monkeypatch.setenv("TRANSITION", "slide")       # existing settings files keep working
+    assert Config.from_env().transition == "slide"
+    monkeypatch.setenv("TRANSITION", "NONE")
+    assert Config.from_env().transition == "none"
+    monkeypatch.setenv("TRANSITION", "fade")
+    assert Config.from_env().transition == "scroll"

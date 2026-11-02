@@ -99,6 +99,36 @@ def main():
         print("wrote", os.path.relpath(path))
     sheet = contact_sheet(paths, os.path.join(args.out, "panel-contact-sheet.png"))
     print("wrote", os.path.relpath(sheet))
+    gif = transition_gif(os.path.join(HERE, "docs", "preview-scroll.gif"), args.rows, args.cols)
+    print("wrote", os.path.relpath(gif))
+
+
+def transition_gif(out, rows=32, cols=64, transition="scroll", hold=1.2):
+    """Animated GIF of the screen transition, made by the real Ticker.show() code."""
+    from display import GifDisplay
+    from sample import sample_assets
+    cfg = Config()
+    cfg.rows, cfg.cols = rows, cols
+    cfg.download_icons = False
+    cfg.transition = transition
+    cfg.weather_place = "Home"
+    gif = GifDisplay(cols, rows, scale=6)
+    t = Ticker(cfg, gif)
+    apply_sample(t)
+    r = t.renderer
+    coins = {a["symbol"]: a for a in sample_assets(["btc", "eth", "sol", "ada"])}
+    r.layout = "classic"
+    first = r.asset(coins["BTC"])
+    r.layout = "chart"
+    screens = [first, r.asset(coins["ETH"]), r.list_page(list(coins.values()), rows=4),
+               r.clock(FIXED_TIME, t.weather.data, "F", "Home")]
+    r.layout = "classic"
+    for img in screens:
+        t.show(img, hold)
+    t.show(first, 0.02)          # scroll back to the start so the loop is seamless
+    gif.frames.pop(), gif.durations.pop()
+    gif.save(out)
+    return out
 
 
 LABELS = {

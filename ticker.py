@@ -35,6 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
 SCREEN_NAMES = ("clock", "feargreed", "indices", "coins")
+TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
 CG_INDICES = [("spx", "sp500-xstock", "S&P"), ("ndq", "nasdaq-xstock", "NAS")]
 log = logging.getLogger("ticker")
@@ -99,7 +100,7 @@ class Config:
     refresh_rate: int = 0          # seconds; 0 = auto (fit the monthly budget)
     monthly_budget: int = 10000
     sleep: float = 5
-    transition: str = "slide"
+    transition: str = "scroll"     # scroll (up), slide (left) or none
     layout: str = "classic"
     featured: list = field(default_factory=list)
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
@@ -144,7 +145,7 @@ class Config:
             c.refresh_rate = env("REFRESH_RATE", 0, int, lo=60, hi=86400)
         c.monthly_budget = env("MONTHLY_CALL_BUDGET", c.monthly_budget, int, lo=100)
         c.sleep = env("SLEEP", c.sleep, float, lo=1, hi=300)
-        c.transition = env("TRANSITION", c.transition, str.lower, choices=("slide", "none"))
+        c.transition = env("TRANSITION", c.transition, str.lower, choices=TRANSITIONS)
         c.layout = env("LAYOUT", c.layout, str.lower, choices=Renderer.LAYOUTS)
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.focus = env("FOCUS", False, bool)
@@ -185,6 +186,25 @@ def get_tz(name):
     except Exception:
         log.warning("unknown TIMEZONE %r, using the Pi's clock setting", name)
         return None
+
+
+def transition_frames(old, new, vertical=False, frames=14):
+    """The in-between frames of a scroll (old moves up, new rolls in from the bottom)
+    or slide (old moves left, new comes in from the right). Ease-out: fast, then settling."""
+    size = old.height if vertical else old.width
+    out = []
+    for i in range(1, frames):
+        t = 1 - (1 - i / frames) ** 3  # ease-out cubic
+        d = round(size * t)
+        frame = Image.new("RGB", old.size)
+        if vertical:
+            frame.paste(old, (0, -d))
+            frame.paste(new, (0, size - d))
+        else:
+            frame.paste(old, (-d, 0))
+            frame.paste(new, (size - d, 0))
+        out.append(frame)
+    return out
 
 
 def in_dim_window(spec, now=None):
@@ -413,21 +433,21 @@ class Ticker:
         self.display.set_brightness(self.cfg.dim_brightness if dim else self.cfg.brightness)
 
     def show(self, image, hold, slide=True):
-        if slide and self.current is not None and self.cfg.transition == "slide":
-            self.slide(self.current, image)
+        """Show a screen, animating from the previous one unless ``slide`` is False
+        (used when a screen changes in place, like the indices % / $ flip)."""
+        if slide and self.current is not None and self.cfg.transition in ("scroll", "slide"):
+            self.transition(self.current, image, vertical=self.cfg.transition == "scroll")
         self.display.show(image, hold)
         self.current = image
 
-    def slide(self, old, new, frames=14, duration=0.45):
-        w = self.display.width
-        for i in range(1, frames):
-            t = i / frames
-            t = 1 - (1 - t) ** 3  # ease-out
-            dx = round(w * t)
-            frame = Image.new("RGB", old.size)
-            frame.paste(old, (-dx, 0))
-            frame.paste(new, (w - dx, 0))
+    def transition(self, old, new, vertical=False, frames=14, duration=0.45):
+        """Move the old screen out and the new one in over ``duration`` seconds with an
+        ease-out curve: up and out the top (scroll) or left and out the side (slide)."""
+        for frame in transition_frames(old, new, vertical, frames):
             self.display.show(frame, duration / frames)
+
+    def slide(self, old, new, frames=14, duration=0.45):
+        self.transition(old, new, vertical=False, frames=frames, duration=duration)
 
     def loading(self):
         for tick in range(4):

@@ -10,8 +10,10 @@ for current Raspberry Pi OS. The hardware is the same; the software is rewritten
 
 Each coin screen shows the coin's icon, ticker, 24h change with ▲/▼, a 7-day chart and the
 price (auto-sized: `$109,235`, `$4,012.37`, `$0.0₄1123`). Each cycle can also show a **clock**
-with the weather, the crypto **Fear & Greed index**, and a **market indices** page. Screens slide
-between each other. Everything can be changed from your phone.
+with the weather, the crypto **Fear & Greed index**, and a **market indices** page. Screens scroll
+up into each other (or slide sideways, or switch instantly). Everything can be changed from your phone.
+
+![Scroll transition](docs/preview-scroll.gif)
 
 More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/screenshots/):
 
@@ -128,7 +130,7 @@ value is logged as a warning and the default is used.
 | `REFRESH_RATE` | `auto` | `auto` (as fast as once a minute within the monthly budget) or seconds, min 60 |
 | `MONTHLY_CALL_BUDGET` | `10000` | CoinGecko calls per month (free Demo plan: 10,000) |
 | `SLEEP` | `5` | Seconds per coin screen |
-| `TRANSITION` | `slide` | `slide` or `none` |
+| `TRANSITION` | `scroll` | `scroll` (old screen moves up, new one rolls in from the bottom), `slide` (sideways) or `none`. Both animations take about 0.45 s |
 | `LAYOUT` | `classic` | `classic` (icon + mini chart), `chart` (full-screen chart), `mix` |
 | `FEATURED` | | Starred coins: get a big-picture screen before their price |
 | `FOCUS` | `off` | `on` = coin rotation shows only starred coins (clock, Fear & Greed and indices keep running). With nothing starred, all coins show |
@@ -163,7 +165,7 @@ value is logged as a warning and the default is used.
 3. In Safari: **Share → Add to Home Screen** for an app icon.
 
 You can search and add coins (with rank and icon, so you pick the real one), reorder, star (★),
-turn on **Focus** and **List view**, change layout, brightness, time per coin, night dimming,
+turn on **Focus** and **List view**, change layout, transition (Scroll / Slide / None), brightness, time per coin, night dimming,
 screens, weather location, currency and refresh rate. Changes show on the panel within seconds.
 
 Every value is checked on the Pi before it's saved (ranges, allowed choices, coin-id format,
@@ -270,7 +272,8 @@ node tools/settings_screenshots.mjs        # phone settings page at iPhone size 
 node tools/widget_screenshots.mjs          # iPhone widget variants (Playwright)
 ```
 
-Animated GIF preview: `python preview.py --sample` (writes `preview.gif`).
+Animated GIF preview: `python preview.py --sample` (writes `preview.gif`). `screenshots.py` also
+writes `docs/preview-scroll.gif`, the scroll transition made by the real `Ticker.show()` code.
 
 ## How failures are handled
 

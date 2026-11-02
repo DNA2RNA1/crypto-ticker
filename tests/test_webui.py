@@ -162,3 +162,11 @@ def test_indices_view_setting_on_page(app):
     assert app.settings()["indices_view"] == "both"
     with pytest.raises(ValueError):
         app.save({"indices_view": "points"})
+
+
+def test_transition_choices(app):
+    assert app.settings()["transition"] == "scroll"
+    for v in ("scroll", "slide", "none", "Scroll"):
+        assert app.save({"transition": v})["TRANSITION"] == v.lower()
+    with pytest.raises(ValueError):
+        app.save({"transition": "fade"})

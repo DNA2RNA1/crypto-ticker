@@ -31,7 +31,7 @@ COIN_META = os.path.join(CACHE, "coins.json")
 EDITABLE = {  # key -> validator returning the string to store
     "SYMBOLS": lambda v: _symbols(v),
     "LAYOUT": lambda v: _choice(v.strip().lower(), ("classic", "chart", "mix")),
-    "TRANSITION": lambda v: _choice(v.strip().lower(), ("slide", "none")),
+    "TRANSITION": lambda v: _choice(v.strip().lower(), ("scroll", "slide", "none")),
     "BRIGHTNESS": lambda v: _int(v, 5, 100),
     "SLEEP": lambda v: _int(v, 2, 60),
     "DIM_HOURS": lambda v: _dim(v),
@@ -341,7 +341,7 @@ class WebApp:
         return {
             "coins": coins,
             "layout": clean("LAYOUT", "classic"),
-            "transition": clean("TRANSITION", "slide"),
+            "transition": clean("TRANSITION", "scroll"),
             "brightness": int(clean("BRIGHTNESS", "70")),
             "sleep": int(clean("SLEEP", "5")),
             "dim_hours": clean("DIM_HOURS", ""),
@@ -718,7 +718,8 @@ function render(){
    ${S.list_view!='off'?`<div class="row" style="border-top:0;padding-top:0">${seg('list_view',[['4','4 coins + %'],['5','5 coins']])}</div>
    <div class="row"><div class="grow">Seconds per page</div><div class="val" id="lpv">${S.list_page_seconds}s</div></div>
    <div class="row" style="border-top:0;padding-top:0"><input type="range" id="lpage" min="2" max="30" value="${S.list_page_seconds}"></div>`:''}
-   <div class="row"><div class="grow">Slide between coins</div><label class="switch"><input type="checkbox" id="slide" ${S.transition=='slide'?'checked':''}><span></span></label></div>
+   <div class="row"><div class="grow">Transition<div class="name" style="white-space:normal">How one screen changes to the next.</div></div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('transition',[['scroll','Scroll'],['slide','Slide'],['none','None']])}</div>
   </div>
   <h2>Night dimming</h2><div class="card">
    <div class="row"><div class="grow">Dim at night</div><label class="switch"><input type="checkbox" id="dim" ${dim?'checked':''}><span></span></label></div>
@@ -846,7 +847,6 @@ function bind(){
   $('#zipgo').onclick=findPlace;$('#zip').onkeydown=e=>{if(e.key=='Enter')findPlace()};
   $('#bright').oninput=e=>{S.brightness=+e.target.value;$('#bv').textContent=S.brightness+'%';save()};
   $('#sleep').oninput=e=>{S.sleep=+e.target.value;$('#sv').textContent=S.sleep+'s';save()};
-  $('#slide').onchange=e=>{S.transition=e.target.checked?'slide':'none';save()};
   $('#listview').onchange=e=>{S.list_view=e.target.checked?'4':'off';save();render()};
   $('#focus').onchange=e=>{S.focus=e.target.checked?'on':'off';focusHint();save()};
   if($('#lpage'))$('#lpage').oninput=e=>{S.list_page_seconds=+e.target.value;$('#lpv').textContent=S.list_page_seconds+'s';save()};
