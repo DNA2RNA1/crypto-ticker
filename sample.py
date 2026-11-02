@@ -43,4 +43,10 @@ def apply_sample(ticker):
     ticker.yahoo_dow.data = [{"label": "DOW", "change": 0.18, "points": 81.4, "intraday": up}]
     ticker.fear_greed.data = {"value": 70, "label": "Greed", "yesterday": 65,
                               "history": [60, 58, 62, 66, 64, 63, 65, 70]}
-    ticker.weather.data = {"temp": 76.8, "code": 0, "is_day": False}
+    ticker.weather.data = sample_weather()
+
+
+def sample_weather(code=2, is_day=True):
+    """Made-up conditions: 76.8 now, a warm afternoon then cooling into the evening."""
+    hourly = [76.8, 79.1, 81.0, 82.4, 83.0, 82.1, 80.2, 77.5, 74.6, 72.0, 70.3, 69.1, 68.4]
+    return {"temp": 76.8, "code": code, "is_day": is_day, "high": 83.4, "low": 66.2, "hourly": hourly}

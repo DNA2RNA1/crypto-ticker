@@ -58,14 +58,55 @@ class Weather(Feed):
         self.lat, self.lon, self.unit = lat, lon, unit
 
     def fetch(self):
+        if self.lat is None or self.lon is None:
+            return None  # no location set: the clock shows no weather, the weather screen is skipped
         r = self.session.get(self.URL, params={
             "latitude": self.lat, "longitude": self.lon,
             "current": "temperature_2m,weather_code,is_day",
+            "hourly": "temperature_2m", "daily": "temperature_2m_max,temperature_2m_min",
+            "forecast_days": 2, "timezone": "auto",
             "temperature_unit": self.unit}, timeout=15)
         r.raise_for_status()
-        cur = r.json()["current"]
-        return {"temp": float(cur["temperature_2m"]), "code": int(cur.get("weather_code") or 0),
-                "is_day": bool(cur.get("is_day", 1))}
+        return parse_weather(r.json())
+
+
+def _finite(v):
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if f == f and abs(f) < 1000 else None
+
+
+def parse_weather(js):
+    """Open-Meteo forecast JSON -> {temp, code, is_day, high, low, hourly}.
+
+    temp/code/is_day are required (the clock uses them); high/low and the next-12-hours
+    list are optional extras for the weather screen and are None/[] if missing or odd.
+    Times are local (the request uses timezone=auto)."""
+    cur = js["current"]
+    temp = _finite(cur["temperature_2m"])
+    if temp is None:
+        raise ValueError("no current temperature")
+    out = {"temp": temp, "code": int(_finite(cur.get("weather_code")) or 0),
+           "is_day": bool(cur.get("is_day", 1)), "high": None, "low": None, "hourly": []}
+    try:
+        daily = js.get("daily") or {}
+        out["high"] = _finite((daily.get("temperature_2m_max") or [None])[0])
+        out["low"] = _finite((daily.get("temperature_2m_min") or [None])[0])
+    except (AttributeError, TypeError, IndexError):
+        pass
+    try:
+        hourly = js.get("hourly") or {}
+        times, temps = hourly.get("time") or [], hourly.get("temperature_2m") or []
+        now_hour = str(cur.get("time", ""))[:13]  # "2026-11-02T14"
+        start = next((i for i, t in enumerate(times) if str(t)[:13] >= now_hour), None)
+        if start is not None and now_hour:
+            pts = [_finite(v) for v in temps[start:start + 13]]  # now + the next 12 hours
+            out["hourly"] = [v for v in pts if v is not None] if None not in pts else []
+    except (AttributeError, TypeError):
+        pass
+    return out
 
 
 class FearGreed(Feed):

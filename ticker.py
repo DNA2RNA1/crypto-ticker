@@ -34,7 +34,8 @@ from usage import Usage
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
-SCREEN_NAMES = ("clock", "feargreed", "indices", "coins")
+SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "news", "sports", "coins")
+DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
 CG_INDICES = [("spx", "sp500-xstock", "S&P"), ("ndq", "nasdaq-xstock", "NAS")]
@@ -106,7 +107,7 @@ class Config:
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
     list_view: int = 0             # 0 = one coin per screen; 5 or 4 = coins per list page
     list_page_seconds: float = 6
-    screens: list = field(default_factory=lambda: list(SCREEN_NAMES))
+    screens: list = field(default_factory=lambda: list(DEFAULT_SCREENS))
     indices_source: str = "coingecko"
     indices: str = ""
     indices_view: str = "percent"  # percent, or both (% then the $ / point change)
@@ -152,7 +153,7 @@ class Config:
         lv = env("LIST_VIEW", "off", str.lower, choices=("off", "5", "4"))
         c.list_view = 0 if lv == "off" else int(lv)
         c.list_page_seconds = env("LIST_PAGE_SECONDS", c.list_page_seconds, float, lo=2, hi=60)
-        screens = [s.strip().lower() for s in env("SCREENS", ",".join(SCREEN_NAMES)).split(",")]
+        screens = [s.strip().lower() for s in env("SCREENS", ",".join(DEFAULT_SCREENS)).split(",")]
         c.screens = [s for s in screens if s in SCREEN_NAMES] or ["coins"]
         c.indices_source = env("INDICES_SOURCE", c.indices_source, str.lower, choices=("coingecko", "yahoo"))
         c.indices = env("INDICES", "")
@@ -490,6 +491,10 @@ class Ticker:
                 wx = self.weather.update()
                 out.append(lambda wx=wx: (self.renderer.clock(
                     self.now(), wx, self.cfg.temp_unit, self.cfg.weather_place), sleep))
+            elif name == "weather":
+                wx = self.weather.update()
+                if wx:  # no location or no data yet: skip the screen
+                    out.append(lambda wx=wx: (self.renderer.weather(wx, self.cfg.temp_unit, self.now()), sleep))
             elif name == "feargreed":
                 fg = self.fear_greed.update()
                 if fg:

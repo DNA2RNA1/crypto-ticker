@@ -463,6 +463,78 @@ class Renderer:
             font.draw(img, (64 - font.width(date)) // 2, 30, date, (255, 140, 0))
         return self._place(img)
 
+    # --- weather screen ------------------------------------------------------
+    HIGH = (255, 140, 40)
+    LOW = (80, 170, 255)
+
+    def weather(self, wx, unit="F", now=None):
+        """Big current temperature with a large condition icon, today's high/low, and a
+        line of the next 12 hours' temperatures along the bottom."""
+        from datetime import datetime
+        now = now or datetime.now()
+        img = self._base()
+        f = self.fonts
+        hi, lo = wx.get("high"), wx.get("low")
+        hl = [] if hi is None or lo is None else [f"{round(hi)}", f"{round(lo)}"]
+        right = 64 - (max(f["5x8"].width(t) for t in hl) + 2 if hl else 0)  # high/low column
+        temp = f"{round(wx['temp'])}°"
+        # biggest layout that fits: large icon first, then the clock-size icon;
+        # the small unit letter goes last
+        layout = None
+        for scale, x in ((2, 27), (1, 15)):
+            for font in (f["9x18B"], f["7x13B"], f["6x13B"]):
+                for unit_w in (f["5x8"].width(unit) + 1, 0):
+                    if x + font.width(temp) + unit_w <= right:
+                        layout = (scale, x, font, unit_w)
+                        break
+                if layout:
+                    break
+            if layout:
+                break
+        scale, x, font, unit_w = layout or (1, 15, f["6x13B"], 0)
+        icon = Image.new("RGB", (13, 10))
+        self.weather_icon(icon, 0, 0, wx, now)
+        if scale == 2:  # twice the clock's size, so it reads from across the room
+            img.paste(icon.resize((26, 20), Image.NEAREST), (0, 0))
+        else:
+            img.paste(icon, (0, 4))
+        font.draw(img, x, 16, temp, PRICE)
+        if unit_w:
+            f["5x8"].draw(img, x + font.width(temp), 9, unit, DIM_TEXT)
+        # today's high (orange) and low (blue), right column
+        for y, t, color in zip((7, 15), hl, (self.HIGH, self.LOW)):
+            f["5x8"].draw(img, 64 - f["5x8"].width(t), y, t, color)
+        # next 12 hours: a line chart under everything
+        pts = wx.get("hourly") or []
+        if len(pts) >= 2:
+            self._temp_line(img, pts, (1, 21, 62, 31))
+        return self._place(img)
+
+    def _temp_line(self, img, pts, box):
+        """Temperature line from now (left) to +12 h (right); the line is colored from the
+        low (blue) to the high (orange) of the range, with a white dot at 'now'."""
+        x0, y0, x1, y1 = box
+        lo, hi = min(pts), max(pts)
+        span = (hi - lo) or 1.0
+        px = img.load()
+        d = ImageDraw.Draw(img)
+        d.line((x0, y1, x1, y1), fill=(40, 40, 48))  # faint baseline
+        prev = None
+        n = len(pts) - 1
+        for i in range(x1 - x0 + 1):
+            pos = i / (x1 - x0) * n
+            k = min(int(pos), n - 1)
+            v = pts[k] + (pts[k + 1] - pts[k]) * (pos - k)
+            t = (v - lo) / span
+            y = round(y1 - 1 - t * (y1 - 1 - y0))
+            c = tuple(int(self.LOW[j] + (self.HIGH[j] - self.LOW[j]) * t) for j in range(3))
+            a, b = (y, y) if prev is None else (min(prev, y), max(prev, y))
+            for yy in range(a, b + 1):
+                px[x0 + i, yy] = c
+            prev = y
+        first = round(y1 - 1 - (pts[0] - lo) / span * (y1 - 1 - y0))
+        d.rectangle((x0, first - 1, x0 + 1, first), fill=PRICE)
+
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),
                 (74, (120, 210, 60)), (100, (0, 210, 90))]
 
