@@ -463,6 +463,217 @@ class Renderer:
             font.draw(img, (64 - font.width(date)) // 2, 30, date, (255, 140, 0))
         return self._place(img)
 
+    # --- weather screen ------------------------------------------------------
+    HIGH = (255, 140, 40)
+    LOW = (80, 170, 255)
+
+    def weather(self, wx, unit="F", now=None):
+        """Big current temperature with a large condition icon, today's high/low, and a
+        line of the next 12 hours' temperatures along the bottom."""
+        from datetime import datetime
+        now = now or datetime.now()
+        img = self._base()
+        f = self.fonts
+        hi, lo = wx.get("high"), wx.get("low")
+        hl = [] if hi is None or lo is None else [f"{round(hi)}", f"{round(lo)}"]
+        right = 64 - (max(f["5x8"].width(t) for t in hl) + 2 if hl else 0)  # high/low column
+        temp = f"{round(wx['temp'])}°"
+        # biggest layout that fits: large icon first, then the clock-size icon;
+        # the small unit letter goes last
+        layout = None
+        for scale, x in ((2, 27), (1, 15)):
+            for font in (f["9x18B"], f["7x13B"], f["6x13B"]):
+                for unit_w in (f["5x8"].width(unit) + 1, 0):
+                    if x + font.width(temp) + unit_w <= right:
+                        layout = (scale, x, font, unit_w)
+                        break
+                if layout:
+                    break
+            if layout:
+                break
+        scale, x, font, unit_w = layout or (1, 15, f["6x13B"], 0)
+        icon = Image.new("RGB", (13, 10))
+        self.weather_icon(icon, 0, 0, wx, now)
+        if scale == 2:  # twice the clock's size, so it reads from across the room
+            img.paste(icon.resize((26, 20), Image.NEAREST), (0, 0))
+        else:
+            img.paste(icon, (0, 4))
+        font.draw(img, x, 16, temp, PRICE)
+        if unit_w:
+            f["5x8"].draw(img, x + font.width(temp), 9, unit, DIM_TEXT)
+        # today's high (orange) and low (blue), right column
+        for y, t, color in zip((7, 15), hl, (self.HIGH, self.LOW)):
+            f["5x8"].draw(img, 64 - f["5x8"].width(t), y, t, color)
+        # next 12 hours: a line chart under everything
+        pts = wx.get("hourly") or []
+        if len(pts) >= 2:
+            self._temp_line(img, pts, (1, 21, 62, 31))
+        return self._place(img)
+
+    def _temp_line(self, img, pts, box):
+        """Temperature line from now (left) to +12 h (right); the line is colored from the
+        low (blue) to the high (orange) of the range, with a white dot at 'now'."""
+        x0, y0, x1, y1 = box
+        lo, hi = min(pts), max(pts)
+        span = (hi - lo) or 1.0
+        px = img.load()
+        d = ImageDraw.Draw(img)
+        d.line((x0, y1, x1, y1), fill=(40, 40, 48))  # faint baseline
+        prev = None
+        n = len(pts) - 1
+        for i in range(x1 - x0 + 1):
+            pos = i / (x1 - x0) * n
+            k = min(int(pos), n - 1)
+            v = pts[k] + (pts[k + 1] - pts[k]) * (pos - k)
+            t = (v - lo) / span
+            y = round(y1 - 1 - t * (y1 - 1 - y0))
+            c = tuple(int(self.LOW[j] + (self.HIGH[j] - self.LOW[j]) * t) for j in range(3))
+            a, b = (y, y) if prev is None else (min(prev, y), max(prev, y))
+            for yy in range(a, b + 1):
+                px[x0 + i, yy] = c
+            prev = y
+        first = round(y1 - 1 - (pts[0] - lo) / span * (y1 - 1 - y0))
+        d.rectangle((x0, first - 1, x0 + 1, first), fill=PRICE)
+
+    # --- news screen -----------------------------------------------------------
+    def tag(self, img, x, y, text, color, font=None):
+        """Small colored label with dark text, e.g. a news source or league. Returns its width."""
+        font = font or self.fonts["4x6"]
+        w = font.width(text) + 3
+        ImageDraw.Draw(img).rectangle((x, y, x + w - 1, y + font.ascent + 1), fill=color)
+        font.draw(img, x + 2, y + font.ascent + 1, text, (0, 0, 0))
+        return w
+
+    @staticmethod
+    def age(ts, now_ts):
+        """"5M", "3H", "2D" for how old a headline is ('' if unknown)."""
+        if not ts:
+            return ""
+        m = max(0, int((now_ts - ts) // 60))
+        return "NOW" if m < 1 else f"{m}M" if m < 60 else f"{m // 60}H" if m < 48 * 60 else f"{m // 1440}D"
+
+    def news(self, item, speed=30, now_ts=None, stale=False):
+        """One headline: source tag and age on top, the headline scrolling right to left
+        below in a big bold font."""
+        import time as _time
+        from news import clean_text, tag_color
+        from scroller import Lane, Scroller, text_strip
+        f = self.fonts
+        bg = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        self.tag(bg, 0, top, item.get("source", "NEWS")[:12], tag_color(item.get("source", "NEWS")))
+        age = self.age(item.get("at"), now_ts or _time.time())
+        if age:
+            f["4x6"].draw(bg, self.w - f["4x6"].width(age), top + 6, age, DIM_TEXT)
+        font = f["7x13B"]
+        title = clean_text(item.get("title", ""), drawable=lambda ch: ord(ch) in font.glyphs)
+        strip = text_strip(font, title, PRICE)
+        lane = Lane(strip, (0, top + 14, self.w - 1, top + 14 + strip.height - 1))
+        if stale:
+            self.stale_mark(bg)
+        return Scroller(bg, [lane], speed=speed, min_hold=3.0)
+
+    # --- sports screen ---------------------------------------------------------
+    LIVE = (255, 60, 50)
+    UPCOMING = (255, 200, 0)
+    STAR = (255, 200, 0)
+
+    @staticmethod
+    def star(img, x, y, color=(255, 200, 0)):
+        """5x5 star (the BDF fonts have no ★) with its top-left at (x, y)."""
+        rows = ("..#..", "#####", ".###.", ".#.#.", "#...#")
+        px = img.load()
+        for dy, row in enumerate(rows):
+            for dx, ch in enumerate(row):
+                if ch == "#" and 0 <= x + dx < img.width and 0 <= y + dy < img.height:
+                    px[x + dx, y + dy] = color
+
+    @staticmethod
+    def game_status(game, tz=None, now_ts=None):
+        """(text, color) for the top line: live clock, FINAL, or the start day/time."""
+        from datetime import datetime
+        import time as _time
+        st = game["state"]
+        detail = (game.get("detail") or "").upper().replace(" - ", " ")
+        if st == "in":
+            return detail or "LIVE", Renderer.LIVE
+        if st == "post":
+            return (detail or "FINAL").replace("FINAL/", "F/"), DIM_TEXT
+        start = datetime.fromtimestamp(game["start"], tz)
+        now = datetime.fromtimestamp(now_ts or _time.time(), tz)
+        hm = start.strftime("%I:%M").lstrip("0") + ("A" if start.hour < 12 else "P")
+        days = (start.date() - now.date()).days
+        if days == 0:
+            return hm, Renderer.UPCOMING
+        if 0 < days < 7:
+            return f"{start.strftime('%a').upper()} {hm}", Renderer.UPCOMING
+        return f"{start.month}/{start.day} {hm}", Renderer.UPCOMING
+
+    def team_line(self, team, fav, game):
+        """One team as a strip: color block, #rank, abbreviation, star, and the score
+        (or the record before the game). Returns (left part, right part) images."""
+        from sports import team_color
+        f = self.fonts
+        big, small = f["6x10"], f["4x6"]
+        h = big.ascent + big.descent
+        base = big.ascent
+        rank = f"#{team['rank']}" if team.get("rank") else ""
+        w = 4 + (small.width(rank) + 1 if rank else 0) + big.width(team["abbr"]) + (6 if fav else 0)
+        left = Image.new("RGB", (w, h))
+        ImageDraw.Draw(left).rectangle((0, 0, 2, base - 1), fill=team_color(team))
+        x = 4
+        if rank:
+            small.draw(left, x, base, rank, DIM_TEXT)
+            x += small.width(rank) + 1
+        x = big.draw(left, x, base, team["abbr"], PRICE)
+        if fav:
+            self.star(left, x + 1, base - 7, self.STAR)
+        st = game["state"]
+        other = game["home"] if team is game["away"] else game["away"]
+        if st == "pre":
+            text, color, font = (team.get("record") or ""), DIM_TEXT, f["5x8"]
+        else:
+            s, o = team.get("score"), other.get("score")
+            text = "" if s is None else str(s)
+            leading = s is not None and o is not None and s >= o
+            color, font = (PRICE if leading else DIM_TEXT), big
+        right = Image.new("RGB", (max(1, font.width(text)), h))
+        if text:
+            font.draw(right, 0, base, text, color)
+        return left, right
+
+    def game(self, game, league, tz=None, now_ts=None, hold=5.0, stale=False):
+        """A game: league tag and status on top, then the away and home teams. Anything
+        that doesn't fit its line scrolls (the news scroller)."""
+        from scroller import SPEEDS, Lane, Scroller, text_strip
+        f = self.fonts
+        bg = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        tag_w = self.tag(bg, 0, top, league.name, league.color)
+        lanes = []
+        status, color = self.game_status(game, tz, now_ts)
+        sf = f["5x8"]
+        room = self.w - tag_w - 2
+        if sf.width(status) <= room:
+            sf.draw(bg, self.w - sf.width(status), top + 7, status, color)
+        else:
+            strip = text_strip(sf, status, color)
+            lanes.append(Lane(strip, (tag_w + 2, top, self.w - 1, top + strip.height - 1)))
+        for y, side in ((top + 9, "away"), (top + 21, "home")):
+            team = game[side]
+            left, right = self.team_line(team, game.get("fav", {}).get(side), game)
+            if left.width + 3 + right.width <= self.w:
+                bg.paste(left, (0, y))
+                bg.paste(right, (self.w - right.width, y))
+            else:  # too long for the panel: the whole line scrolls
+                strip = Image.new("RGB", (left.width + 6 + right.width, left.height))
+                strip.paste(left, (0, 0))
+                strip.paste(right, (left.width + 6, 0))
+                lanes.append(Lane(strip, (0, y, self.w - 1, y + strip.height - 1)))
+        if stale:
+            self.stale_mark(bg)
+        return Scroller(bg, lanes, speed=SPEEDS["normal"], min_hold=hold)
+
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),
                 (74, (120, 210, 60)), (100, (0, 210, 90))]
 

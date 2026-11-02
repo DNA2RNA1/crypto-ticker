@@ -29,8 +29,19 @@ class DemoUsage:
         return {"calls": 4120, "budget": 10000, "month": "2026-11", "interval": interval}
 
 
+class DemoSports:
+    """Team search from the sample team table (no network)."""
+
+    def search_teams(self, key, query):
+        from sample import TEAMS
+        q = query.lower()
+        return [{"id": t[0], "abbr": t[1], "name": t[2], "color": t[3]} for t in TEAMS.get(key, [])
+                if q in t[2].lower() or q == t[1].lower()]
+
+
 class DemoTicker:
     def __init__(self):
+        self.sports = DemoSports()
         now = time.time()
         self.assets = sample_assets(SYMBOLS.split(","))
         self.usage = DemoUsage()
@@ -85,7 +96,8 @@ def main():
     with open(env, "w") as fh:
         fh.write(f"SYMBOLS={SYMBOLS}\nFEATURED=btc,snek\nFOCUS=on\nLIST_VIEW=4\nLIST_PAGE_SECONDS=6\n"
                  "LAYOUT=classic\nBRIGHTNESS=70\nSLEEP=5\nDIM_HOURS=22-7\nDIM_BRIGHTNESS=15\n"
-                 "SCREENS=clock,feargreed,indices,coins\nWEATHER_PLACE=Home\nWEATHER_LAT=40.0000\n"
+                 "SCREENS=clock,weather,news,sports,feargreed,indices,coins\nWEATHER_PLACE=Home\nWEATHER_LAT=40.0000\n"
+                 "SPORTS_NFL_FAVORITES=2:BUF\nSPORTS_NCAAF_FAVORITES=333:ALA,57:FLA\nSPORTS_NBA_TOP=8\n"
                  "WEATHER_LON=-75.0000\nTEMP_UNIT=F\nREFRESH_RATE=auto\nWEB_PIN=2468\n")
     sysinfo.wifi = lambda path=None: {"interface": "wlan0", "dbm": -58.0, "quality": 74, "label": "good"}
     sysinfo.system_uptime = lambda path=None: 6 * 86400 + 4 * 3600

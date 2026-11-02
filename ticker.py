@@ -9,6 +9,7 @@ Settings come from environment variables or settings.env (see settings.env.examp
 
 import argparse
 import logging
+from collections import deque
 import math
 import os
 import signal
@@ -29,12 +30,16 @@ from logsetup import setup_logging
 from prices import CoinGecko, DataError, NetworkError, PriceError, RateLimitError
 from render import Renderer
 from retry import backoff_delay
+from news import DEFAULT_FEEDS, News
+from scroller import SPEEDS, Scroller
+from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
-SCREEN_NAMES = ("clock", "feargreed", "indices", "coins")
+SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "news", "sports", "coins")
+DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
 CG_INDICES = [("spx", "sp500-xstock", "S&P"), ("ndq", "nasdaq-xstock", "NAS")]
@@ -106,10 +111,14 @@ class Config:
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
     list_view: int = 0             # 0 = one coin per screen; 5 or 4 = coins per list page
     list_page_seconds: float = 6
-    screens: list = field(default_factory=lambda: list(SCREEN_NAMES))
+    screens: list = field(default_factory=lambda: list(DEFAULT_SCREENS))
     indices_source: str = "coingecko"
     indices: str = ""
     indices_view: str = "percent"  # percent, or both (% then the $ / point change)
+    news_feeds: list = field(default_factory=lambda: list(DEFAULT_FEEDS))
+    news_per_cycle: int = 3
+    news_speed: str = "normal"     # slow, normal, fast (see scroller.SPEEDS)
+    sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
     timezone: str = ""
     weather_lat: float = 26.3017   # Edinburg, TX
     weather_lon: float = -98.1633
@@ -152,11 +161,16 @@ class Config:
         lv = env("LIST_VIEW", "off", str.lower, choices=("off", "5", "4"))
         c.list_view = 0 if lv == "off" else int(lv)
         c.list_page_seconds = env("LIST_PAGE_SECONDS", c.list_page_seconds, float, lo=2, hi=60)
-        screens = [s.strip().lower() for s in env("SCREENS", ",".join(SCREEN_NAMES)).split(",")]
+        screens = [s.strip().lower() for s in env("SCREENS", ",".join(DEFAULT_SCREENS)).split(",")]
         c.screens = [s for s in screens if s in SCREEN_NAMES] or ["coins"]
         c.indices_source = env("INDICES_SOURCE", c.indices_source, str.lower, choices=("coingecko", "yahoo"))
         c.indices = env("INDICES", "")
         c.indices_view = env("INDICES_VIEW", c.indices_view, str.lower, choices=("percent", "both"))
+        feeds = [u.strip() for u in env("NEWS_FEEDS", ",".join(DEFAULT_FEEDS)).split(",") if u.strip()]
+        c.news_feeds = [u for u in feeds if u.lower().startswith(("http://", "https://"))][:8] or list(DEFAULT_FEEDS)
+        c.news_per_cycle = env("NEWS_PER_CYCLE", c.news_per_cycle, int, lo=1, hi=10)
+        c.news_speed = env("NEWS_SPEED", c.news_speed, str.lower, choices=tuple(SPEEDS))
+        c.sports = follow_from_env(os.environ)
         c.timezone = env("TIMEZONE", "")
         c.weather_lat = env("WEATHER_LAT", c.weather_lat, float, lo=-90.0, hi=90.0)
         c.weather_lon = env("WEATHER_LON", c.weather_lon, float, lo=-180.0, hi=180.0)
@@ -245,6 +259,8 @@ class Ticker:
                                "celsius" if cfg.temp_unit == "C" else "fahrenheit")
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
+        self.news = News(cfg.news_feeds)
+        self.sports = Sports(cfg.sports)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
         self.stale_since = None     # when those last good prices were fetched
@@ -256,6 +272,7 @@ class Ticker:
         self.next_fetch = 0.0
         self.current = None
         self._fetching = None       # background fetch thread, if one is running
+        self.frame_times = deque(maxlen=2000)  # seconds to build + push each scroll frame
 
     def _cg_indices(self, cfg):
         return "indices" in cfg.screens and cfg.indices_source == "coingecko"
@@ -413,6 +430,11 @@ class Ticker:
                 (old.weather_lat, old.weather_lon, old.temp_unit):
             self.weather = Weather(new.weather_lat, new.weather_lon,
                                    "celsius" if new.temp_unit == "C" else "fahrenheit")
+        if new.sports != old.sports:
+            self.sports.follow = new.sports
+            self.sports.next_fetch = 0  # fetch with the new teams right away
+        if new.news_feeds != old.news_feeds:
+            self.news = News(new.news_feeds)
         if new.indices != old.indices:
             self.yahoo = Indices(parse_indices(new.indices))
         self.cfg = new
@@ -439,6 +461,46 @@ class Ticker:
             self.transition(self.current, image, vertical=self.cfg.transition == "scroll")
         self.display.show(image, hold)
         self.current = image
+
+    def play(self, anim):
+        """Show an animated (scrolling) screen. It comes in with the normal transition,
+        scrolls at a steady speed, and its last frame is where the next transition starts.
+
+        On a real panel the text position follows the clock (a late frame just moves a
+        little further). Displays without ``realtime`` (the GIF recorder, tests) get exact
+        one-pixel steps instead."""
+        first = anim.first_frame()
+        if not anim.scrolls:
+            self.show(first, anim.duration)
+            return
+        self.show(first, anim.scroll_start)              # transition in + read the start
+        realtime = getattr(self.display, "realtime", True)
+        step = anim.frame_interval
+        clock = time.monotonic
+        start = clock() - anim.scroll_start
+        px = 1                                           # pixel 0 is the first frame, already shown
+        t = anim.scroll_start + step
+        while t < anim.scroll_end and not self.reload_pending:
+            t0 = clock()
+            frame = anim.frame_at(t)
+            if realtime:
+                self.display.show(frame, 0)
+                self.frame_times.append(clock() - t0)
+                # sleep until the text is due to move by the next pixel
+                elapsed = clock() - start
+                nxt = anim.scroll_start + (int((elapsed - anim.scroll_start) / step) + 1) * step
+                wait = nxt - (clock() - start)
+                if wait > 0:
+                    time.sleep(wait)
+                t = clock() - start
+            else:
+                self.display.show(frame, step)
+                self.frame_times.append(clock() - t0)
+                px += 1
+                t = anim.scroll_start + px * step            # exact pixel steps, no drift
+        last = anim.last_frame()
+        self.display.show(last, max(0.0, anim.duration - anim.scroll_end))
+        self.current = last
 
     def transition(self, old, new, vertical=False, frames=14, duration=0.45):
         """Move the old screen out and the new one in over ``duration`` seconds with an
@@ -472,8 +534,14 @@ class Ticker:
                     return
         shown = 0
         for screen in self.screens():
-            image, hold, *opts = screen()
-            self.show(image, hold, slide=opts[0] if opts else True)
+            result = screen()
+            if result is None:          # nothing to show right now (e.g. no headlines)
+                continue
+            if isinstance(result, Scroller):
+                self.play(result)
+            else:
+                image, hold, *opts = result
+                self.show(image, hold, slide=opts[0] if opts else True)
             shown += 1
             if self.reload_pending:
                 return
@@ -490,6 +558,10 @@ class Ticker:
                 wx = self.weather.update()
                 out.append(lambda wx=wx: (self.renderer.clock(
                     self.now(), wx, self.cfg.temp_unit, self.cfg.weather_place), sleep))
+            elif name == "weather":
+                wx = self.weather.update()
+                if wx:  # no location or no data yet: skip the screen
+                    out.append(lambda wx=wx: (self.renderer.weather(wx, self.cfg.temp_unit, self.now()), sleep))
             elif name == "feargreed":
                 fg = self.fear_greed.update()
                 if fg:
@@ -514,6 +586,19 @@ class Ticker:
                     if flip:  # % first, then flip in place to the $ / point change
                         out.append(lambda rows=rows: (
                             self.renderer.indices(rows, tag=None, mode="abs", stale=stale), hold, False))
+            elif name == "news":
+                if self.news.update():  # last good headlines; refreshed in the background
+                    speed = SPEEDS[self.cfg.news_speed]
+                    for item in self.news.next_batch(self.cfg.news_per_cycle):
+                        out.append(lambda item=item: self.renderer.news(item, speed))
+            elif name == "sports":
+                self.sports.update()     # background refresh: 60 s while live, else 15 min
+                now_ts = time.time()
+                for g in self.sports.games(now_ts):
+                    age = now_ts - g["fetched"]
+                    stale = age > (3 * LIVE_EVERY if g["state"] == "in" else 2 * IDLE_EVERY)
+                    out.append(lambda g=g, stale=stale: self.renderer.game(
+                        g, LEAGUE_BY_KEY[g["league"]], self.tz, time.time(), hold=sleep, stale=stale))
             elif name == "coins":
                 out += self.coin_screens()
         return out

@@ -43,12 +43,24 @@ try {
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-top.png") })
     await pg.evaluate(() => [...document.querySelectorAll("h2")].find(h => h.textContent == "Display").scrollIntoView())
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-list-view.png") })
-    await pg.evaluate(() => [...document.querySelectorAll("h2")].find(h => h.textContent == "Screens").scrollIntoView())
+    const toHeading = t => pg.evaluate(t => [...document.querySelectorAll("h2")].find(h => h.textContent == t).scrollIntoView(), t)
+    await toHeading("Screens")
+    await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-screens.png") })
+    await pg.evaluate(() => document.querySelector("#iview").closest(".row").previousElementSibling.scrollIntoView())
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-indices.png") })
+    await toHeading("News headlines")
+    await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-news.png") })
+    await toHeading("Sports")
+    await pg.fill('[data-teamq="nfl"]', "chiefs")
+    await pg.waitForSelector("#teams-nfl [data-ti]")
+    await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-sports.png") })
+    await pg.fill('[data-teamq="nfl"]', "")
+    await pg.evaluate(() => { document.querySelector("#teams-nfl").innerHTML = "" })
     await pg.evaluate(() => document.querySelector("#status").previousElementSibling.scrollIntoView())
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-status-update.png") })
     shots.push("settings-page-iphone-full.png", "settings-page-iphone-top.png",
-               "settings-page-iphone-list-view.png", "settings-page-iphone-indices.png",
+               "settings-page-iphone-list-view.png", "settings-page-iphone-screens.png",
+               "settings-page-iphone-indices.png", "settings-page-iphone-news.png", "settings-page-iphone-sports.png",
                "settings-page-iphone-status-update.png")
     if (errors.length) throw new Error("page errors: " + errors.join("; "))
   } finally { srv.kill() }

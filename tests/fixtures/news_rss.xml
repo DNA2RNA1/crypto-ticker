@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:atom="http://www.w3.org/2005/Atom">
+<channel>
+  <title>CoinDesk: Bitcoin, Ethereum, XRP, Crypto News and Price Data</title>
+  <link>https://www.coindesk.com</link>
+  <atom:link href="https://www.coindesk.com/arc/outboundfeeds/rss/" rel="self" type="application/rss+xml"/>
+  <item>
+    <title><![CDATA[Bitcoin Climbs Past $109K as ETF Inflows Hit 3-Week High]]></title>
+    <link>https://news.example.com/markets/btc-109k</link>
+    <pubDate>Mon, 02 Nov 2026 14:05:00 +0000</pubDate>
+    <description><![CDATA[<p>Spot ETFs drew <b>$1.2B</b> this week.</p>]]></description>
+  </item>
+  <item>
+    <title>Ether &amp;amp; Solana Lead Altcoin Rebound &#8212; &#8220;Risk-On&#8221; Returns</title>
+    <link>https://news.example.com/markets/alts</link>
+    <pubDate>Mon, 02 Nov 2026 12:40:00 GMT</pubDate>
+  </item>
+  <item>
+    <title>   Stablecoin Supply   Reaches a New Record
+    </title>
+    <link>https://news.example.com/policy/stablecoins</link>
+    <pubDate>not a date</pubDate>
+  </item>
+  <item><title></title><link>https://news.example.com/empty</link></item>
+</channel>
+</rss>

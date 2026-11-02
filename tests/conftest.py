@@ -29,6 +29,10 @@ class FakeResponse:
         self.text = text if text is not None else json.dumps(data)
         self.headers = headers or {}
 
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
     def json(self):
         if self._data is None:
             return json.loads(self.text)  # raises ValueError for malformed bodies
