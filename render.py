@@ -30,7 +30,22 @@ def load_fonts():
     f = fonts["5x8"]
     f.override(".", [".....", ".....", ".....", ".....", ".....", ".##..", ".##..", "....."])
     f.override(",", [".....", ".....", ".....", ".....", ".##..", ".##..", ".#...", "....."])
+    # The larger fonts have the same problem (a plus-shaped "." in 6x10, 7x13, 6x13B and
+    # 7x13B; commas hanging below the line in all of them): "$0.003410", "$109,235".
+    for name, dot in (("6x10", 2), ("6x12", 2), ("7x13", 2), ("6x13B", 2), ("7x13B", 2), ("9x18B", 3)):
+        baseline_punctuation(fonts[name], dot)
     return fonts
+
+
+def baseline_punctuation(font, dot):
+    """Redraw "." as a dot x dot square and "," as that square plus a 1-pixel tail,
+    both ending on the baseline row like the digits (nothing in the descender)."""
+    adv = font._glyph(".")[5]
+    x = max(0, (adv - dot) // 2)
+    sq = "." * x + "#" * dot + "." * (adv - x - dot)
+    tail = "." * x + "#" + "." * (adv - x - 1)
+    font.override(".", [sq] * dot, yoff=0)
+    font.override(",", [sq] * dot + [tail], yoff=0)
 
 
 def trend_color(change):

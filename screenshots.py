@@ -103,7 +103,7 @@ def main():
 
 LABELS = {
     "01-loading": "Loading", "02-clock": "Clock + weather", "03-fear-greed": "Fear & Greed",
-    "04-indices-percent": "Indices (% change)", "05-indices-change": "Indices ($ / points)",
+    "04-indices-percent": "Indices (% change)", "05-indices-change": "Indices (points)",
     "06-featured": "Featured (starred) coin", "07-coin-classic": "Coin: classic layout",
     "08-coin-chart": "Coin: chart layout", "09-coin-tiny-price": "Coin: tiny price",
     "10-coin-stale": "Stale price (red dot)", "10b-coin-chart-stale": "Stale price, chart layout",

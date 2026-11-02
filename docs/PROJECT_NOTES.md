@@ -114,7 +114,8 @@ on) plug into the same rotation and transitions.
   No Dow token exists on CoinGecko, so the **Dow comes from Yahoo** (^DJI) in this mode; if Yahoo
   fails the page shows just S&P and Nasdaq. Charts show the current (or last) session.
 - **Indices page flips** from % change to the absolute change halfway through its time on screen:
-  CoinGecko rows show **$ per tokenized fund share** (e.g. +$3.24 on SPYX ≈ SPY), NOT index points;
+  CoinGecko rows are **the tokenized fund's move per share** (e.g. +3.24 on SPYX ≈ SPY), NOT index
+  points (the S&P's point move is ~10x that). Since 2026-11 they're shown without a "$", like points;
   Yahoo rows (Dow, or all in Yahoo mode) show **index points**.
 - **Indices, optional source Yahoo** (`INDICES_SOURCE=yahoo`): real index values incl. the Dow
   (^GSPC, ^DJI, ^IXIC), intraday chart. Unofficial and can throttle or break; failures just hide

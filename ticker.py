@@ -292,7 +292,9 @@ class Ticker:
                     a["price"], a["sparkline"], a.get("updated"))
                 index_rows.append({
                     "label": labels[a["id"]], "spark": chart or a["sparkline"], "open": is_open,
-                    "abs": dollars, "unit": "$",  # per tokenized fund share, in USD
+                    # move of the tokenized fund (USD per share), shown without a "$" like
+                    # the index rows; it's ~1/10 of the S&P's point move (see PROJECT_NOTES)
+                    "abs": dollars, "unit": "",
                     # fall back to the rolling 24h figure only if history is missing
                     "change": change if change is not None else (a["change_24h"] or 0.0)})
         return assets, index_rows

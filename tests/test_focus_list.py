@@ -183,3 +183,37 @@ def test_tiny_prices_render_everywhere(price):
     r.featured(a)
     for rows in (4, 5):
         r.list_page([a], rows=rows)
+
+
+@pytest.mark.parametrize("name", ["5x8", "6x10", "6x12", "7x13", "6x13B", "7x13B", "9x18B"])
+def test_punctuation_on_the_baseline_in_every_redrawn_font(name):
+    from PIL import Image
+
+    from render import load_fonts
+
+    font = load_fonts()[name]
+    size = font.ascent + font.descent + 4
+
+    def rows(text):
+        img = Image.new("1", (font.width(text), size), 0)
+        font.draw(img, 0, font.ascent + 2, text, 1)
+        return [y for y in range(size) if any(img.getpixel((x, y)) for x in range(img.width))]
+
+    bottom = max(rows("0123"))
+    for ch in ".,":
+        assert max(rows(ch)) == bottom, (name, ch)        # nothing hangs below the digits
+
+
+def test_index_change_screen_has_no_dollar_sign():
+    """Index moves are shown as points: "+3.24", "+81.4", not "+$3.24"."""
+    from ticker import Config, Ticker
+    from sample import apply_sample
+    from test_ticker import FakeDisplay
+
+    cfg = Config()
+    cfg.download_icons = False
+    t = Ticker(cfg, FakeDisplay())
+    apply_sample(t)
+    assert all(r["unit"] == "" for r in t.index_rows)
+    assert Renderer.abs_text(3.24, "") == "+3.24" and Renderer.abs_text(81.4, "") == "+81.4"
+    assert Renderer.abs_text(-2.31, "") == "-2.31"
