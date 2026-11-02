@@ -1,0 +1,22 @@
+{
+    "pixel_outline": 0,
+    "pixel_size": 10,
+    "pixel_style": "circle",
+    "pixel_glow": 6,
+    "display_adapter": "browser",
+    "allow_adapter_fallback": true,
+    "icon_path": null,
+    "emulator_title": "crypto-ticker",
+    "browser": {
+        "_comment": "For use with the browser adapter only.",
+        "port": 8888,
+        "target_fps": 24,
+        "fps_display": false,
+        "quality": 80,
+        "image_border": true,
+        "debug_text": false,
+        "image_format": "PNG",
+        "open_immediately": false
+    },
+    "log_level": "info"
+}

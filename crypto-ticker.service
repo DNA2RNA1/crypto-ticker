@@ -1,14 +1,22 @@
 [Unit]
 Description=Crypto price ticker on RGB LED matrix
-Wants=network-online.target
+Documentation=file://__DIR__/README.md
+# Start without waiting for Wi-Fi: the ticker shows cached prices (marked stale)
+# or a NO DATA screen until the network comes up, then recovers on its own.
+Wants=network-online.target time-sync.target
 After=network-online.target time-sync.target
+# Keep restarting forever (never give up after a burst of crashes)
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=__DIR__
 ExecStart=__DIR__/venv/bin/python __DIR__/ticker.py
+Environment=PYTHONUNBUFFERED=1
 Restart=always
 RestartSec=10
+# SIGTERM is handled: the panel is blanked and the price cache saved before exit
+TimeoutStopSec=15
 # The LED library needs root for precise GPIO timing.
 User=root
 
