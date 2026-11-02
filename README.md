@@ -130,7 +130,7 @@ value is logged as a warning and the default is used.
 | `REFRESH_RATE` | `auto` | `auto` (as fast as once a minute within the monthly budget) or seconds, min 60 |
 | `MONTHLY_CALL_BUDGET` | `10000` | CoinGecko calls per month (free Demo plan: 10,000) |
 | `SLEEP` | `5` | Seconds per coin screen |
-| `TRANSITION` | `scroll` | `scroll` (old screen moves up, new one rolls in from the bottom), `slide` (sideways) or `none`. Both animations take about 0.45 s |
+| `TRANSITION` | `scroll` | `scroll` (old screen moves up, new one rolls in from the bottom), `slide` (sideways) or `none`. Both animations take about 0.45 s and apply to every screen change, including List view pages |
 | `LAYOUT` | `classic` | `classic` (icon + mini chart), `chart` (full-screen chart), `mix` |
 | `FEATURED` | | Starred coins: get a big-picture screen before their price |
 | `FOCUS` | `off` | `on` = coin rotation shows only starred coins (clock, Fear & Greed and indices keep running). With nothing starred, all coins show |

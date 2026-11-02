@@ -245,3 +245,25 @@ def test_indices_view_setting(monkeypatch):
     assert Config.from_env().indices_view == "both"
     monkeypatch.setenv("INDICES_VIEW", "points")
     assert Config.from_env().indices_view == "percent"
+
+
+@pytest.mark.parametrize("rows", [5, 4])
+@pytest.mark.parametrize("transition,frames", [("scroll", 13), ("slide", 13), ("none", 0)])
+def test_list_pages_use_the_transition_setting(rows, transition, frames):
+    """Each list page rolls into the next with the chosen transition and the usual timing."""
+    from ticker import transition_frames
+
+    t = ticker(list_view=rows)                 # 7 coins -> 2 pages, nothing starred
+    t.cfg.transition = transition
+    t.cfg.list_page_seconds = 6
+    shown = []
+    t.display.show = lambda img, hold=0: shown.append((img.copy(), hold))
+    t.step()
+    pages = [i for i, (_, hold) in enumerate(shown) if hold == 6]
+    assert len(pages) == 2
+    between = shown[pages[0] + 1:pages[1]]     # frames between page 1 and page 2
+    assert len(between) == frames
+    assert sum(h for _, h in between) == pytest.approx(0.45 * frames / 14)
+    if frames:
+        expected = transition_frames(shown[pages[0]][0], shown[pages[1]][0], vertical=transition == "scroll")
+        assert all(a.tobytes() == b.tobytes() for (a, _), b in zip(between, expected))
