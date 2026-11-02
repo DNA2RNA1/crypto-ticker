@@ -68,8 +68,8 @@ def price_candidates(price, currency):
 
     full4, short4 = fmt(4)
     full3, short3 = fmt(3)
-    if short4:
-        return [short4, full4, short3]
+    if short4:  # short3 can be None when rounding removes a zero (0.00009999 -> 0.000100)
+        return [c for c in (short4, full4, short3) if c]
     return [full4, full3]
 
 
@@ -552,12 +552,19 @@ class Renderer:
         full = list(price_candidates(price, currency))
         out = full + [p[len(sign):] for p in full if sign]           # $4,012 then 4,012
         for unit, div in (("M", 1e6), ("K", 1e3)):
-            if price >= div:
-                v = f"{price / div:.3g}{unit}"
-                out += [sign + v, v]                                    # $109K then 109K
+            if round(price) >= div:  # 999.99 displays as 1,000, so it gets 1.0K too
+                v = price / div
+                short = f"{v:.1f}{unit}" if v < 10 else f"{v:.0f}{unit}"
+                for t in (f"{v:.3g}{unit}", short):                   # $109K, 4.01K, 4.0K
+                    out += [sign + t, t]
                 break
         if price < 1:                                                   # .8123
             out += [p[len(sign):].replace("0.", ".", 1) for p in full]
+            if 0 < price < 0.0001:                                      # .0₄11 (2 digits)
+                frac = f"{price:.{-math.floor(math.log10(price)) + 1}f}".split(".")[1]
+                zeros = len(frac) - len(frac.lstrip("0"))
+                sub = f".0{str(zeros).translate(SUBSCRIPT)}"
+                out += [sub + frac.lstrip("0")[:2], sub + frac.lstrip("0")[:1]]  # last resort
         seen = []
         return [p for p in out if not (p in seen or seen.append(p))]
 
@@ -577,11 +584,12 @@ class Renderer:
 
     @staticmethod
     def list_changes(change):
+        """Always with the % sign; one decimal unless there's no room at all."""
         if change is None:
             return ["--"]
         arrow = "▲" if change >= 0 else "▼"
         a = abs(change)
-        return [f"{arrow}{a:.1f}%", f"{arrow}{a:.1f}", f"{arrow}{a:.0f}%", f"{arrow}{a:.0f}"]
+        return [f"{arrow}{a:.1f}%", f"{arrow}{a:.0f}%"] if a < 100 else [f"{arrow}{a:.0f}%"]
 
     def list_page(self, assets, rows=5, stale=False):
         """One page of up to ``rows`` coins.
@@ -616,15 +624,20 @@ class Renderer:
                 if aw:
                     self._arrow(img, x - aw, baseline, change >= 0, color)
             else:
+                # keep the % change whole; shorten the price first (4,012 -> 4.0K),
+                # then the change's decimal, and only then a long symbol
                 fit = None
-                for ctext in self.list_changes(change):
-                    for ptext in prices:
-                        if sw + gap + font.width(ptext) + gap + font.width(ctext) <= right:
-                            fit = (ptext, ctext)
+                for symbol in (sym, sym[:4], sym[:3]):
+                    sw = font.width(symbol)
+                    for ctext in self.list_changes(change):
+                        fit = next(((p, ctext) for p in prices
+                                    if sw + gap + font.width(p) + gap + font.width(ctext) <= right), None)
+                        if fit:
                             break
                     if fit:
+                        sym = symbol
                         break
-                ptext, ctext = fit or (prices[-1], self.list_changes(change)[-1])
+                ptext, ctext = fit or (min(prices, key=font.width), self.list_changes(change)[-1])
                 cw = font.width(ctext)
                 font.draw(img, 0, baseline, sym, SYMBOL)
                 font.draw(img, right - cw - gap - font.width(ptext), baseline, ptext, color)

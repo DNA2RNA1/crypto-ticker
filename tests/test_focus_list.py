@@ -132,3 +132,54 @@ def test_5x8_punctuation_sits_on_the_baseline():
         digit_rows = [y for y in range(12) if any(digit.getpixel((x, y)) for x in range(5))]
         assert max(rows) == max(digit_rows), ch     # same bottom row as the digits
         assert len(rows) <= 3, ch                   # a dot / short comma, not a plus
+
+
+@pytest.mark.parametrize("currency", ["usd", "eur", "jpy"])
+def test_4_row_list_always_shows_percent_and_fits(currency):
+    r = Renderer(currency=currency)
+    font = r.fonts["5x8"]
+    drawn = []
+    real = font.draw
+
+    def spy(img, x, baseline, text, color):
+        drawn.append((x, baseline, text))
+        return real(img, x, baseline, text, color)
+
+    font.draw = spy
+    for price in (109234.56, 4012.37, 999.99, 212.44, 22.41, 0.8123, 0.00001123, 1234567.0):
+        for change in (-2.91, 12.345, -123.4, 0.0):
+            for sym in ("ETH", "PEPE", "LONGSYM"):
+                a = sample_assets(["btc"])[0] | {"symbol": sym, "price": price, "change_24h": change}
+                drawn.clear()
+                r.list_page([a], rows=4)
+                ctext = drawn[-1][2]
+                assert ctext.endswith("%"), (price, change, sym, drawn)
+                for x, _, text in drawn:                 # nothing overlaps or runs off the edge
+                    assert x >= 0 and x + font.width(text) <= 64, (price, change, sym, drawn)
+                xs = sorted((x, x + font.width(t)) for x, _, t in drawn)
+                assert all(a_end <= b_start for (_, a_end), (b_start, _) in zip(xs, xs[1:])), drawn
+
+
+def test_eth_example_uses_short_price_not_dropped_percent():
+    r = Renderer()
+    a = sample_assets(["eth"])[0] | {"price": 4012.37, "change_24h": -2.91}
+    font = r.fonts["5x8"]
+    drawn = []
+    real = font.draw
+    font.draw = lambda img, x, b, t, c: (drawn.append(t), real(img, x, b, t, c))[1]
+    r.list_page([a], rows=4)
+    assert drawn == ["ETH", "4.0K", "▼2.9%"]
+
+
+@pytest.mark.parametrize("price", [0.00009999, 0.000099999, 0.0000999, 0.00001123, 0.0000000123])
+def test_tiny_prices_render_everywhere(price):
+    from render import price_candidates
+    assert all(isinstance(c, str) for c in price_candidates(price, "usd"))
+    r = Renderer()
+    a = sample_assets(["pepe"])[0] | {"price": price}
+    for layout in ("classic", "chart"):
+        r.layout = layout
+        r.asset(a)
+    r.featured(a)
+    for rows in (4, 5):
+        r.list_page([a], rows=rows)
