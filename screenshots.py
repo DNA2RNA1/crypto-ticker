@@ -116,11 +116,13 @@ def transition_gif(out, rows=32, cols=64, transition="scroll", hold=1.2):
     t = Ticker(cfg, gif)
     apply_sample(t)
     r = t.renderer
-    coins = {a["symbol"]: a for a in sample_assets(["btc", "eth", "sol", "ada"])}
+    listed = sample_assets(["btc", "eth", "sol", "ada", "doge", "link", "hbar", "pepe"])
+    coins = {a["symbol"]: a for a in listed}
     r.layout = "classic"
     first = r.asset(coins["BTC"])
     r.layout = "chart"
-    screens = [first, r.asset(coins["ETH"]), r.list_page(list(coins.values()), rows=4),
+    screens = [first, r.asset(coins["ETH"]),
+               r.list_page(listed[:4], rows=4), r.list_page(listed[4:], rows=4),  # page 1 -> page 2
                r.clock(FIXED_TIME, t.weather.data, "F", "Home")]
     r.layout = "classic"
     for img in screens:
