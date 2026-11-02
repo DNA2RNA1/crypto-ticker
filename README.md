@@ -136,6 +136,7 @@ value is logged as a warning and the default is used.
 | `LIST_PAGE_SECONDS` | `6` | Seconds per list page (2–60) |
 | `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle (coins always last) |
 | `INDICES_SOURCE` | `coingecko` | `coingecko` (tokenized funds, no extra calls) or `yahoo` (real index values; unofficial) |
+| `INDICES_VIEW` | `percent` | `percent`, or `both` to flip to the $ / point change halfway through. With `coingecko`, S&P and Nasdaq are fund prices ($ per share), not index points |
 | `TIMEZONE` | Pi's setting | Clock and night-dimming time zone, e.g. `Europe/London` |
 | `WEATHER_PLACE` / `WEATHER_LAT` / `WEATHER_LON` / `TEMP_UNIT` | example values | Weather on the clock; easiest to set by ZIP code or city on the phone page |
 | `BRIGHTNESS` | `70` | 1–100 |
@@ -355,7 +356,7 @@ Scriptable and is drawn as HTML (fonts, spacing and icons differ from iOS).
 | | |
 |--|--|
 | Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `12-…`) |
-| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-list-view`, `-status-update`, `-deploy-key` |
+| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-list-view`, `-indices`, `-status-update`, `-deploy-key` |
 | iPhone widget | `widget-contact-sheet.png`, `widget-coins-*.png`, `widget-news-*.png` |
 
 ![Every panel screen](docs/screenshots/panel-contact-sheet.png)

@@ -46,6 +46,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "TEMP_UNIT": lambda v: _choice(v.strip().upper(), ("F", "C")),
     "TIMEZONE": lambda v: _tz(v),
     "INDICES_SOURCE": lambda v: _choice(v.strip().lower(), ("coingecko", "yahoo")),
+    "INDICES_VIEW": lambda v: _choice(v.strip().lower(), ("percent", "both")),
     "FOCUS": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "LIST_VIEW": lambda v: _choice(v.strip().lower(), ("off", "5", "4")),
     "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
@@ -66,7 +67,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "CURRENCY": "Currency", "REFRESH_RATE": "Refresh rate", "FEATURED": "Featured coins",
           "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
           "WEATHER_PLACE": "Place name", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
-          "INDICES_SOURCE": "Indices source", "FOCUS": "Focus", "LIST_VIEW": "List view",
+          "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "FOCUS": "Focus", "LIST_VIEW": "List view",
           "LIST_PAGE_SECONDS": "Seconds per page"}
 
 
@@ -352,6 +353,7 @@ class WebApp:
             "featured": [x for x in clean("FEATURED", "").split(",") if x],
             "screens": clean("SCREENS", "clock,feargreed,indices,coins").split(","),
             "indices_source": clean("INDICES_SOURCE", "coingecko"),
+            "indices_view": clean("INDICES_VIEW", "percent"),
             "weather_place": clean("WEATHER_PLACE", "") or ("Edinburg, Texas, US" if not s.get("WEATHER_LAT") else ""),
             "weather_lat": clean("WEATHER_LAT", "26.3017"),
             "weather_lon": clean("WEATHER_LON", "-98.1633"),
@@ -689,7 +691,11 @@ function render(){
    ${[['clock','Clock'],['feargreed','Fear &amp; Greed index'],['indices','Market indices']].map(([k,l])=>
      `<div class="row"><div class="grow">${l}</div><label class="switch"><input type="checkbox" data-screen="${k}" ${S.screens.includes(k)?'checked':''}><span></span></label></div>`).join('')}
    ${S.screens.includes('indices')?`<div class="row"><div class="grow">Indices from<div class="name" style="white-space:normal">${S.indices_source=='yahoo'?'Real index values incl. the Dow. Unofficial source; may stop working.':'Tokenized S&amp;P 500 and Nasdaq funds. No extra CoinGecko calls.'}</div></div>
-     <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>`:''}
+     <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>
+   <div class="row"><div class="grow">Also show $ / point change<div class="name" style="white-space:normal">${S.indices_source=='yahoo'
+     ?'Flips from % to the change in index points halfway through.'
+     :'Flips from % to the $ change halfway through. S&amp;P and Nasdaq are tokenized-fund prices ($ per share, not index points); switch the source to Yahoo for real points. The Dow is always points.'}</div></div>
+     <label class="switch"><input type="checkbox" id="iview" ${S.indices_view=='both'?'checked':''}><span></span></label></div>`:''}
   </div>
   <p class="hint">Shown in this order at the start of each cycle, then your coins.</p>
   <h2>Weather on the clock</h2><div class="card">
@@ -791,7 +797,7 @@ function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
-      screens:S.screens.join(','),indices_source:S.indices_source,temp_unit:S.temp_unit,
+      screens:S.screens.join(','),indices_source:S.indices_source,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
@@ -824,6 +830,7 @@ function bind(){
     const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);on.add('coins');
     S.screens=order.filter(k=>on.has(k));save();render()});
   if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
+  if($('#iview'))$('#iview').onchange=e=>{S.indices_view=e.target.checked?'both':'percent';save()};
   const findPlace=async()=>{
     const q=$('#zip').value.trim();if(q.length<3)return toast('Enter a ZIP code or city',true);
     const box=$('#places');box.innerHTML='<div class="row"><div class="grow name">Looking up…</div></div>';

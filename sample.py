@@ -36,8 +36,8 @@ def apply_sample(ticker):
     ticker.next_fetch = float("inf")
     up = [100 + i * 0.05 + (i % 5) * 0.03 for i in range(24)]
     down = [100 - i * 0.03 + (i % 4) * 0.02 for i in range(24)]
-    ticker.index_rows = [{"label": "S&P", "change": 0.42, "abs": 3.24, "unit": "", "spark": up},
-                         {"label": "NAS", "change": -0.31, "abs": -2.31, "unit": "", "spark": down}]
+    ticker.index_rows = [{"label": "S&P", "change": 0.42, "abs": 3.24, "unit": "$", "spark": up},
+                         {"label": "NAS", "change": -0.31, "abs": -2.31, "unit": "$", "spark": down}]
     for feed in (ticker.yahoo_dow, ticker.yahoo, ticker.fear_greed, ticker.weather):
         feed.next_fetch = float("inf")
     ticker.yahoo_dow.data = [{"label": "DOW", "change": 0.18, "points": 81.4, "intraday": up}]

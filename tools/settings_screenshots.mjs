@@ -41,13 +41,15 @@ try {
     const { pg, errors } = await page(browser, 8095)
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-full.png"), fullPage: true })
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-top.png") })
-    await pg.locator("h2", { hasText: "Display" }).scrollIntoViewIfNeeded()
     await pg.evaluate(() => [...document.querySelectorAll("h2")].find(h => h.textContent == "Display").scrollIntoView())
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-list-view.png") })
+    await pg.evaluate(() => [...document.querySelectorAll("h2")].find(h => h.textContent == "Screens").scrollIntoView())
+    await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-indices.png") })
     await pg.evaluate(() => document.querySelector("#status").previousElementSibling.scrollIntoView())
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-status-update.png") })
     shots.push("settings-page-iphone-full.png", "settings-page-iphone-top.png",
-               "settings-page-iphone-list-view.png", "settings-page-iphone-status-update.png")
+               "settings-page-iphone-list-view.png", "settings-page-iphone-indices.png",
+               "settings-page-iphone-status-update.png")
     if (errors.length) throw new Error("page errors: " + errors.join("; "))
   } finally { srv.kill() }
   srv = await serve("needs_key", 8094)

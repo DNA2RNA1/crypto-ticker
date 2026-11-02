@@ -154,3 +154,11 @@ def test_focus_and_list_view_settings(app):
 def test_focus_defaults_off(app):
     s = app.settings()
     assert (s["focus"], s["list_view"], s["list_page_seconds"]) == ("off", "off", 6)
+
+
+def test_indices_view_setting_on_page(app):
+    assert app.settings()["indices_view"] == "percent"
+    assert app.save({"indices_view": "both"}) == {"INDICES_VIEW": "both"}
+    assert app.settings()["indices_view"] == "both"
+    with pytest.raises(ValueError):
+        app.save({"indices_view": "points"})

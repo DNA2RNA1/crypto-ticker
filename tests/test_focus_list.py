@@ -204,16 +204,44 @@ def test_punctuation_on_the_baseline_in_every_redrawn_font(name):
         assert max(rows(ch)) == bottom, (name, ch)        # nothing hangs below the digits
 
 
-def test_index_change_screen_has_no_dollar_sign():
-    """Index moves are shown as points: "+3.24", "+81.4", not "+$3.24"."""
-    from ticker import Config, Ticker
+def make_index_ticker(view="percent", source="coingecko"):
     from sample import apply_sample
     from test_ticker import FakeDisplay
+    from ticker import Config, Ticker
 
     cfg = Config()
     cfg.download_icons = False
+    cfg.screens = ["indices"]
+    cfg.indices_view, cfg.indices_source, cfg.sleep = view, source, 8
     t = Ticker(cfg, FakeDisplay())
     apply_sample(t)
-    assert all(r["unit"] == "" for r in t.index_rows)
-    assert Renderer.abs_text(3.24, "") == "+3.24" and Renderer.abs_text(81.4, "") == "+81.4"
-    assert Renderer.abs_text(-2.31, "") == "-2.31"
+    return t
+
+
+def test_coingecko_index_rows_are_labeled_in_dollars():
+    """Tokenized-fund moves are dollars per share, not index points: keep the "$"."""
+    t = make_index_ticker()
+    assert all(r["unit"] == "$" for r in t.index_rows)
+    assert Renderer.abs_text(3.24, "$") == "+$3.24"
+    assert Renderer.abs_text(81.4, "") == "+81.4"       # the Dow (Yahoo) is in points
+
+
+def test_indices_show_percent_only_by_default():
+    t = make_index_ticker()
+    screens = [s() for s in t.screens()]
+    assert len(screens) == 1 and screens[0][1] == 8    # one % screen for the full time
+
+
+def test_indices_both_flips_to_dollar_and_point_change():
+    t = make_index_ticker(view="both")
+    screens = [s() for s in t.screens()]
+    assert [s[1] for s in screens] == [4.0, 4.0] and screens[1][2] is False  # flip in place
+
+
+def test_indices_view_setting(monkeypatch):
+    from ticker import Config
+    assert Config.from_env().indices_view == "percent"
+    monkeypatch.setenv("INDICES_VIEW", "both")
+    assert Config.from_env().indices_view == "both"
+    monkeypatch.setenv("INDICES_VIEW", "points")
+    assert Config.from_env().indices_view == "percent"

@@ -108,6 +108,7 @@ class Config:
     screens: list = field(default_factory=lambda: list(SCREEN_NAMES))
     indices_source: str = "coingecko"
     indices: str = ""
+    indices_view: str = "percent"  # percent, or both (% then the $ / point change)
     timezone: str = ""
     weather_lat: float = 26.3017   # Edinburg, TX
     weather_lon: float = -98.1633
@@ -154,6 +155,7 @@ class Config:
         c.screens = [s for s in screens if s in SCREEN_NAMES] or ["coins"]
         c.indices_source = env("INDICES_SOURCE", c.indices_source, str.lower, choices=("coingecko", "yahoo"))
         c.indices = env("INDICES", "")
+        c.indices_view = env("INDICES_VIEW", c.indices_view, str.lower, choices=("percent", "both"))
         c.timezone = env("TIMEZONE", "")
         c.weather_lat = env("WEATHER_LAT", c.weather_lat, float, lo=-90.0, hi=90.0)
         c.weather_lon = env("WEATHER_LON", c.weather_lon, float, lo=-180.0, hi=180.0)
@@ -292,9 +294,7 @@ class Ticker:
                     a["price"], a["sparkline"], a.get("updated"))
                 index_rows.append({
                     "label": labels[a["id"]], "spark": chart or a["sparkline"], "open": is_open,
-                    # move of the tokenized fund (USD per share), shown without a "$" like
-                    # the index rows; it's ~1/10 of the S&P's point move (see PROJECT_NOTES)
-                    "abs": dollars, "unit": "",
+                    "abs": dollars, "unit": "$",  # per tokenized fund share, in USD
                     # fall back to the rolling 24h figure only if history is missing
                     "change": change if change is not None else (a["change_24h"] or 0.0)})
         return assets, index_rows
@@ -486,13 +486,14 @@ class Ticker:
                         rows.insert(1, {"label": "DOW", "change": dow[0]["change"],
                                         "abs": dow[0]["points"], "unit": "",
                                         "spark": dow[0]["intraday"]})
-                if rows:  # % first, then flip in place to the $ / point change
-                    half = max(2.0, sleep / 2)
+                if rows:
                     stale = self.stale and self.cfg.indices_source == "coingecko"
-                    out.append(lambda rows=rows: (self.renderer.indices(rows, tag=None, stale=stale), half))
-                    if any(r.get("abs") is not None for r in rows):
+                    flip = self.cfg.indices_view == "both" and any(r.get("abs") is not None for r in rows)
+                    hold = max(2.0, sleep / 2) if flip else sleep
+                    out.append(lambda rows=rows: (self.renderer.indices(rows, tag=None, stale=stale), hold))
+                    if flip:  # % first, then flip in place to the $ / point change
                         out.append(lambda rows=rows: (
-                            self.renderer.indices(rows, tag=None, mode="abs", stale=stale), half, False))
+                            self.renderer.indices(rows, tag=None, mode="abs", stale=stale), hold, False))
             elif name == "coins":
                 out += self.coin_screens()
         return out
