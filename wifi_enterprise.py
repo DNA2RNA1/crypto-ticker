@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Add or remove a second Wi-Fi profile for a WPA2-Enterprise (PEAP + MSCHAPv2) network.
+"""Extra Wi-Fi profiles: a WPA2-Enterprise (PEAP + MSCHAPv2) work network, ordinary
+networks such as a phone hotspot, and a list of what's saved.
 
 Run through install.sh, which asks the questions:
 
     ./install.sh --enterprise-wifi          add (or replace) the work Wi-Fi profile
     ./install.sh --remove-enterprise-wifi   remove it again
+    ./install.sh --add-wifi                 save an ordinary network (e.g. a phone hotspot)
+    ./install.sh --list-wifi                list saved networks and the ones in range
 
 It writes one NetworkManager keyfile, /etc/NetworkManager/system-connections/
 ticker-work-wifi.nmconnection (root-only, mode 600), and loads it. Nothing else about
@@ -200,6 +203,97 @@ def remove():
     return removed
 
 
+# --- ordinary (WPA2/WPA3-Personal or open) networks, e.g. a phone hotspot ----------------
+EXTRA_PREFIX = "ticker-wifi-"
+
+
+def extra_id(ssid):
+    """Profile name for an extra network: ticker-wifi-<ssid with only safe characters>."""
+    slug = re.sub(r"[^A-Za-z0-9_.-]+", "-", ssid).strip("-")[:40] or "network"
+    return EXTRA_PREFIX + slug
+
+
+def validate_psk(ssid, password):
+    _no_control("Network name", ssid, 32)
+    if len(ssid.encode("utf-8")) > 32:
+        raise WifiError("Network name is longer than 32 bytes")
+    if password:
+        if re.fullmatch(r"[0-9A-Fa-f]{64}", password):
+            return True
+        if not 8 <= len(password) <= 63 or not all(32 <= ord(c) <= 126 for c in password):
+            raise WifiError("A Wi-Fi password is 8 to 63 ordinary characters (letters, digits, symbols)")
+    return True
+
+
+def psk_keyfile(ssid, password, hidden=False, uid=None):
+    lines = ["[connection]", f"id={extra_id(ssid)}", f"uuid={uid or uuid.uuid4()}", "type=wifi",
+             "autoconnect=true", "# the home Wi-Fi (priority 0) wins if both networks are in range",
+             "autoconnect-priority=-1", "", "[wifi]", "mode=infrastructure", f"ssid={_ssid(ssid)}"]
+    if hidden:
+        lines.append("hidden=true")
+    if password:
+        lines += ["", "[wifi-security]", "key-mgmt=wpa-psk", "psk-flags=0", f"psk={_escape(password)}"]
+    lines += ["", "[ipv4]", "method=auto", "", "[ipv6]", "addr-gen-mode=default", "method=auto", ""]
+    return "\n".join(lines)
+
+
+def add_psk(ssid, password, hidden=""):
+    """Save an ordinary Wi-Fi network (root-only file, loaded with nmcli). Doesn't connect now."""
+    validate_psk(ssid, password)
+    name = extra_id(ssid)
+    p = nmcli("-t", "-f", "NAME", "connection", "show", check=False)
+    if p.returncode == 0 and name in p.stdout.splitlines():
+        nmcli("connection", "delete", "id", name)
+    os.makedirs(NM_DIR, exist_ok=True)
+    path = os.path.join(NM_DIR, f"{name}.nmconnection")
+    _write_private(path, psk_keyfile(ssid, password, hidden.lower() in ("y", "yes", "1", "true")))
+    nmcli("connection", "load", path)
+    return name
+
+
+def _split(line):
+    return [p.replace("\\:", ":") for p in re.split(r"(?<!\\):", line)]
+
+
+def list_networks():
+    """Saved Wi-Fi profiles (no passwords) and the networks in range right now."""
+    p = nmcli("-t", "-f", "NAME,TYPE,AUTOCONNECT,AUTOCONNECT-PRIORITY,ACTIVE", "connection", "show", check=False)
+    if p.returncode:
+        raise WifiError(f"nmcli couldn't list connections: {(p.stderr or p.stdout).strip()[:200]}")
+    saved = []
+    for line in p.stdout.splitlines():
+        f = _split(line)
+        if len(f) >= 5 and f[1] in ("802-11-wireless", "wifi"):
+            ssid = nmcli("-g", "802-11-wireless.ssid", "connection", "show", "id", f[0], check=False).stdout.strip()
+            saved.append({"name": f[0], "ssid": ssid or "?", "auto": f[2] == "yes", "priority": f[3],
+                          "active": f[4] == "yes"})
+    scan = nmcli("-t", "-f", "SSID,SIGNAL,SECURITY", "device", "wifi", "list", "--rescan", "no", check=False)
+    in_range = {}
+    for line in scan.stdout.splitlines():
+        f = _split(line)
+        if len(f) >= 2 and f[0]:
+            try:
+                in_range[f[0]] = max(in_range.get(f[0], 0), int(f[1]))
+            except ValueError:
+                pass
+    return saved, in_range
+
+
+def format_networks(saved, in_range):
+    out = ["Saved Wi-Fi networks (the Pi joins any of these that's in range; passwords not shown):"]
+    if not saved:
+        out.append("  (none)")
+    for n in sorted(saved, key=lambda n: (-int(n["priority"] or 0), n["name"])):
+        state = "connected" if n["active"] else (f"in range, {in_range[n['ssid']]}%" if n["ssid"] in in_range
+                                                 else "not in range")
+        auto = "" if n["auto"] else ", auto-join off"
+        out.append(f"  {n['ssid']:<24} {state:<20} priority {n['priority']}{auto}   ({n['name']})")
+    others = sorted(s for s in in_range if s not in {n["ssid"] for n in saved})
+    if others:
+        out.append("Other networks in range: " + ", ".join(f"{s} ({in_range[s]}%)" for s in others[:12]))
+    return "\n".join(out)
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if not argv:
@@ -214,6 +308,13 @@ def main(argv=None):
             fields = (fields + [""] * 7)[:7]
             path = add(*fields)
             print(f"Saved the work Wi-Fi profile ({path}, readable by root only).")
+        elif argv[0] == "add-psk":
+            fields = sys.stdin.buffer.read().decode("utf-8").split("\0")
+            fields = (fields + [""] * 3)[:3]
+            name = add_psk(*fields)
+            print(f"Saved \"{fields[0]}\" as {name} (readable by root only). The Pi joins it when it's in range.")
+        elif argv[0] == "list":
+            print(format_networks(*list_networks()))
         elif argv[0] == "remove":
             print("Removed the work Wi-Fi profile." if remove() else "There was no work Wi-Fi profile.")
         elif argv[0] == "exists":

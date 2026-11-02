@@ -31,6 +31,10 @@ case "$*" in
   "-t -f NAME connection show") echo "preconfigured"; [ -f "$D/loaded" ] && cat "$D/loaded" ;;
   "connection load "*) echo ticker-work-wifi > "$D/loaded" ;;
   "connection delete id ticker-work-wifi") rm -f "$D/loaded" ;;
+  "connection delete id ticker-wifi-"*) ;;
+  "-t -f NAME,TYPE,AUTOCONNECT,AUTOCONNECT-PRIORITY,ACTIVE connection show") echo "preconfigured:802-11-wireless:yes:0:yes" ;;
+  "-g 802-11-wireless.ssid connection show id preconfigured") echo "HomeNet" ;;
+  "-t -f SSID,SIGNAL,SECURITY device wifi list --rescan no") echo "HomeNet:80:WPA2" ;;
   *) echo "unexpected nmcli call: $*" >&2; exit 9 ;;
 esac
 """
@@ -271,3 +275,93 @@ def test_no_credentials_in_repo():
     assert not [f for f in tracked if f.endswith((".nmconnection", ".pem", ".crt", ".key"))]
     gitignore = open(os.path.join(ROOT, ".gitignore")).read()
     assert "*.nmconnection" in gitignore
+
+
+# --- ordinary extra networks (--add-wifi / --list-wifi) --------------------------------------
+HOTSPOT_PW = "hotspot-Pass;#1"   # made up for the tests
+
+
+def test_psk_keyfile():
+    cp = parse(we.psk_keyfile("My Phone", HOTSPOT_PW, uid="u-2"))
+    assert cp["connection"]["id"] == "ticker-wifi-My-Phone" and cp["connection"]["autoconnect-priority"] == "-1"
+    assert cp["wifi"]["ssid"] == "My Phone" and "hidden" not in cp["wifi"]
+    assert cp["wifi-security"]["key-mgmt"] == "wpa-psk" and cp["wifi-security"]["psk"] == HOTSPOT_PW
+    open_net = parse(we.psk_keyfile("Cafe", "", hidden=True))
+    assert "wifi-security" not in open_net and open_net["wifi"]["hidden"] == "true"
+
+
+@pytest.mark.parametrize("ssid,pw,ok", [
+    ("Phone", "12345678", True), ("Phone", "a" * 63, True), ("Phone", "ab" * 32, True),   # 64 hex = raw key
+    ("Phone", "", True),                                       # open network
+    ("Phone", "short", False), ("Phone", "x" * 64, False), ("Phone", "pässwörd", False),
+    ("Phone", "line\nbreak1", False), ("", "12345678", False), ("x" * 33, "12345678", False),
+])
+def test_psk_validation(ssid, pw, ok):
+    if ok:
+        assert we.validate_psk(ssid, pw)
+    else:
+        with pytest.raises(we.WifiError):
+            we.validate_psk(ssid, pw)
+
+
+def test_extra_id_is_safe():
+    assert we.extra_id("Bob's iPhone (2)") == "ticker-wifi-Bob-s-iPhone-2"
+    assert we.extra_id("../../etc") == "ticker-wifi-..-..-etc"
+    assert "/" not in we.extra_id("a/b") and we.extra_id("!!!") == "ticker-wifi-network"
+
+
+def test_add_psk_writes_root_only_profile_without_connecting(nm):
+    name = we.add_psk("My Phone", HOTSPOT_PW)
+    path = nm["nm_dir"] / f"{name}.nmconnection"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    log = nm["log"].read_text()
+    assert f"connection load {path}" in log
+    assert "connection up" not in log and "device wifi connect" not in log     # doesn't switch networks
+    assert HOTSPOT_PW not in log
+
+
+LIST_STUB = r"""#!/bin/sh
+case "$*" in
+  "-t -f NAME,TYPE,AUTOCONNECT,AUTOCONNECT-PRIORITY,ACTIVE connection show")
+     printf 'preconfigured:802-11-wireless:yes:0:yes\nticker-wifi-My-Phone:802-11-wireless:yes:-1:no\nWired connection 1:802-3-ethernet:yes:-999:no\nticker-work-wifi:802-11-wireless:yes:-1:no\n' ;;
+  "-g 802-11-wireless.ssid connection show id preconfigured") echo "HomeNet" ;;
+  "-g 802-11-wireless.ssid connection show id ticker-wifi-My-Phone") echo "My Phone" ;;
+  "-g 802-11-wireless.ssid connection show id ticker-work-wifi") echo "Corp" ;;
+  "-t -f SSID,SIGNAL,SECURITY device wifi list --rescan no") printf 'HomeNet:81:WPA2\nMy Phone:55:WPA2\nNeighbor\\:5G:30:WPA2\n' ;;
+  *) echo "unexpected: $*" >&2; exit 9 ;;
+esac
+"""
+
+
+def test_list_networks(tmp_path, monkeypatch):
+    stub = tmp_path / "nmcli"
+    stub.write_text(LIST_STUB)
+    stub.chmod(0o755)
+    monkeypatch.setattr(we, "NMCLI", str(stub))
+    saved, in_range = we.list_networks()
+    assert [n["ssid"] for n in saved] == ["HomeNet", "My Phone", "Corp"]       # ethernet left out
+    assert in_range == {"HomeNet": 81, "My Phone": 55, "Neighbor:5G": 30}
+    text = we.format_networks(saved, in_range)
+    assert "HomeNet" in text and "connected" in text and "in range, 55%" in text and "not in range" in text
+    assert "Other networks in range: Neighbor:5G (30%)" in text
+    assert text.index("HomeNet") < text.index("My Phone")                     # priority order
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_add_wifi_flag(tmp_path):
+    answers = "\n".join(["My Phone", HOTSPOT_PW, "typo-typo", HOTSPOT_PW, HOTSPOT_PW, "n"]) + "\n"
+    p, sudo_log, nmcli_log, repo = run_install(tmp_path, ["--add-wifi"], answers)
+    assert p.returncode == 0, p.stdout[-2000:] + p.stderr[-2000:]
+    prof = tmp_path / "nm" / "ticker-wifi-My-Phone.nmconnection"
+    assert stat.S_IMODE(prof.stat().st_mode) == 0o600
+    assert parse(prof.read_text())["wifi-security"]["psk"] == HOTSPOT_PW
+    assert HOTSPOT_PW not in sudo_log and HOTSPOT_PW not in nmcli_log.read_text() and HOTSPOT_PW not in p.stdout
+    assert "apt-get" not in sudo_log and not (repo / "settings.env").exists()   # nothing else touched
+    assert "didn't match" in p.stdout
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+def test_list_wifi_flag(tmp_path):
+    p, sudo_log, _, _ = run_install(tmp_path, ["--list-wifi"])
+    assert p.returncode == 0, p.stderr[-1000:]
+    assert "Saved Wi-Fi networks" in p.stdout and sudo_log == ""             # read-only, no sudo
