@@ -875,6 +875,49 @@ class Renderer:
                 px[x, yb] = (120, 120, 130)
         px[x1, prev[0]] = (255, 255, 255)  # latest
 
+    def quote(self, r, stale=False):
+        """One watchlist symbol: label and price, the day's change in % and points (or a
+        NAV / CLOSED tag), and today's chart against yesterday's close. Mutual funds chart
+        the last month of daily prices. Funds and stocks get a currency sign; futures and
+        indices are plain numbers (points, cents per bushel, a yield)."""
+        img = self._base()
+        f = self.fonts
+        color = trend_color(r["change"])
+        font = f["5x8"]
+        cur = r.get("currency") or ""
+        prices = [p for p in self.compact_prices(r["price"], cur) if self._drawable(font, p)]
+        whole = [p for p in prices if "K" not in p and "M" not in p] or prices
+        label, text = r["label"], None
+        for lab in (label, label[:5], label[:4]):
+            text = next((p for p in whole if font.width(lab) + 3 + font.width(p) <= 64), None)
+            if text:
+                label = lab
+                break
+        if text is None:
+            label = label[:4]
+            text = next((p for p in prices if font.width(label) + 3 + font.width(p) <= 64), prices[-1])
+        font.draw(img, 1, 7, label, SYMBOL)
+        font.draw(img, 64 - font.width(text), 7, text, PRICE)
+        font.draw(img, 1, 15, change_text(r["change"]), color)
+        tag = "NAV" if r.get("kind") == "MUTUALFUND" else "CLOSED" if r.get("closed") else ""
+        if tag:
+            tw = f["4x6"].width(tag)
+            f["4x6"].draw(img, 64 - tw, 14, tag, DIM_TEXT)
+        else:
+            pts = r.get("points")
+            ptxt = self.abs_text(pts, "") if pts is not None else ""
+            if ptxt and font.width(change_text(r["change"])) + 3 + font.width(ptxt) <= 64:
+                font.draw(img, 64 - font.width(ptxt), 15, ptxt, color)
+        pts = list(r.get("intraday") or [])
+        if r.get("span") == "1M":
+            if len(pts) >= 2:
+                self._day_chart(img, pts, pts[0], (0, 18, 63, 31))
+                f["4x6"].draw(img, 1, 23, "1M", DIM_TEXT)
+        elif len(pts) >= 2 and r.get("prev_close"):
+            self._day_chart(img, pts, r["prev_close"], (0, 18, 63, 31))
+        img = self._place(img)
+        return self.stale_mark(img) if stale else img
+
     def metals(self, rows, stale=False):
         """Gold, silver and oil. Up to two: name and price (green/red by today's change)
         with today's chart under each. Three: a price list, one row each."""
@@ -949,9 +992,9 @@ class Renderer:
             baseline = top + i * line + font.ascent
             color = trend_color(a.get("change_24h"))
             right = 61 if stale and i == rows - 1 else 64  # leave room for the stale dot
-            prices = [p for p in self.compact_prices(a["price"], self.currency) if self._drawable(font, p)]
+            cur = a.get("currency", self.currency)  # watchlist rows carry their own (or none)
+            prices = [p for p in self.compact_prices(a["price"], cur) if self._drawable(font, p)]
             prices = prices or [f"{a['price']:.3g}"]
-            sign = CURRENCY_SIGNS.get(self.currency, "")
             whole = [p for p in prices if "K" not in p and "M" not in p] or prices[:1]
             full_sym = a["symbol"][:6]
             sym, text = full_sym, None

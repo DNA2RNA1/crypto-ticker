@@ -33,6 +33,7 @@ from retry import backoff_delay
 from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, DEFAULT_POLITICS_FEEDS, News
 from videos import TAG_COLOR as VIDEO_TAG, Videos, parse_entry as parse_channel
 from arcade import Animation, Arcade
+from watchlist import REFRESH_CHOICES as WATCHLIST_REFRESH, Watchlist, entries_from_env as watchlist_from_env
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
@@ -40,8 +41,8 @@ from usage import Usage
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
-SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "metals", "news", "videos", "sports", "arcade",
-                "coins")
+SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "metals", "watchlist", "news", "videos", "sports",
+                "arcade", "coins")
 DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
@@ -154,6 +155,9 @@ class Config:
     videos_channels: list = field(default_factory=list)  # "UC..." ids or "@handles"
     videos_per_cycle: int = 3
     arcade_per_cycle: int = 1      # arcade animation scenes per cycle (they rotate)
+    watchlist: list = field(default_factory=list)  # [(Yahoo symbol, panel label)]
+    watchlist_refresh: int = 10    # minutes between watchlist refreshes
+    watchlist_per_cycle: int = 5   # watchlist symbols per cycle (they rotate)
     videos_max_age_days: int = 3
     videos_skip_shorts: bool = True
     sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
@@ -222,6 +226,10 @@ class Config:
         c.videos_channels = channels_from_env(env("VIDEOS_CHANNELS", ""))
         c.videos_per_cycle = env("VIDEOS_PER_CYCLE", c.videos_per_cycle, int, lo=1, hi=10)
         c.arcade_per_cycle = env("ARCADE_PER_CYCLE", c.arcade_per_cycle, int, lo=1, hi=4)
+        c.watchlist = watchlist_from_env(env("WATCHLIST", ""))
+        c.watchlist_refresh = int(env("WATCHLIST_REFRESH", str(c.watchlist_refresh),
+                                      choices=tuple(str(m) for m in WATCHLIST_REFRESH)))
+        c.watchlist_per_cycle = env("WATCHLIST_PER_CYCLE", c.watchlist_per_cycle, int, lo=1, hi=20)
         c.videos_max_age_days = env("VIDEOS_MAX_AGE_DAYS", c.videos_max_age_days, int, lo=1, hi=30)
         c.videos_skip_shorts = env("VIDEOS_SKIP_SHORTS", c.videos_skip_shorts, bool)
         c.sports = follow_from_env(os.environ)
@@ -335,6 +343,7 @@ class Ticker:
         self.news = News(news_urls(cfg))
         self.videos = self._make_videos(cfg)
         self.arcade = Arcade()
+        self.watchlist = Watchlist(cfg.watchlist, cfg.watchlist_refresh)
         self.sports = Sports(cfg.sports)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
@@ -534,6 +543,10 @@ class Ticker:
                 self.videos.update()  # check the channels now, so the phone page can show it
         if new.indices != old.indices:
             self.yahoo = Indices(parse_indices(new.indices))
+        if (new.watchlist, new.watchlist_refresh) != (old.watchlist, old.watchlist_refresh):
+            self.watchlist = Watchlist(new.watchlist, new.watchlist_refresh)
+            if "watchlist" in new.screens:
+                self.watchlist.update()  # check the symbols now, so the phone page can show it
         self.cfg = new
         if not self.failures:  # never cut short a backoff (e.g. after HTTP 429)
             self.next_fetch = min(self.next_fetch, time.time() + self.interval())
@@ -732,6 +745,8 @@ class Ticker:
                 rows = self.metals.update()
                 if rows:
                     out.append(lambda rows=rows: (self.renderer.metals(rows), sleep))
+            elif name == "watchlist":
+                out += self.watchlist_screens()
             elif name == "news":
                 if self.news.update():  # last good headlines; refreshed in the background
                     speed = SPEEDS[self.cfg.news_speed]
@@ -755,6 +770,24 @@ class Ticker:
                         g, LEAGUE_BY_KEY[g["league"]], self.tz, time.time(), hold=sleep, stale=stale))
             elif name == "coins":
                 out += self.coin_screens()
+        return out
+
+    def watchlist_screens(self):
+        """The next WATCHLIST_PER_CYCLE symbols, one chart each; with List view on, list
+        pages of the whole watchlist follow."""
+        self.watchlist.update()      # background refresh; last good quotes meanwhile
+        rows = self.watchlist.rows()
+        sleep = self.cfg.sleep
+        out = [lambda r=r: (self.renderer.quote(r, stale=r["stale"]), sleep)
+               for r in self.watchlist.next_batch(rows, self.cfg.watchlist_per_cycle)]
+        if self.cfg.list_view and rows:
+            n = self.cfg.list_view
+            items = [{"symbol": r["label"], "price": r["price"], "change_24h": r["change"],
+                      "currency": r["currency"], "stale": r["stale"]} for r in rows]
+            for i in range(0, len(items), n):
+                page = items[i:i + n]
+                out.append(lambda page=page: (self.renderer.list_page(
+                    page, rows=n, stale=any(p["stale"] for p in page)), self.cfg.list_page_seconds))
         return out
 
     def coins_in_rotation(self):

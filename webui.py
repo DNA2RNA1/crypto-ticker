@@ -63,6 +63,9 @@ EDITABLE = {  # key -> validator returning the string to store
     "VIDEOS_CHANNELS": lambda v: _channels(v),
     "VIDEOS_PER_CYCLE": lambda v: _int(v, 1, 10),
     "ARCADE_PER_CYCLE": lambda v: _int(v, 1, 4),
+    "WATCHLIST": lambda v: _watchlist(v),
+    "WATCHLIST_REFRESH": lambda v: _choice(v.strip(), ("5", "10", "15", "30")),
+    "WATCHLIST_PER_CYCLE": lambda v: _int(v, 1, 20),
     "VIDEOS_MAX_AGE_DAYS": lambda v: _int(v, 1, 30),
     "VIDEOS_SKIP_SHORTS": lambda v: _choice(v.strip().lower(), ("on", "off")),
 }
@@ -89,6 +92,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed",
           "VIDEOS_CHANNELS": "YouTube channels", "VIDEOS_PER_CYCLE": "Videos per cycle",
           "ARCADE_PER_CYCLE": "Arcade scenes per cycle",
+          "WATCHLIST": "Watchlist", "WATCHLIST_REFRESH": "Watchlist refresh",
+          "WATCHLIST_PER_CYCLE": "Watchlist symbols per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts"}
 
 
@@ -168,7 +173,8 @@ def _tz(v):
     return v
 
 
-SCREENS = ("clock", "weather", "feargreed", "indices", "metals", "news", "videos", "sports", "arcade", "coins")
+SCREENS = ("clock", "weather", "feargreed", "indices", "metals", "watchlist", "news", "videos", "sports", "arcade",
+           "coins")
 
 
 def _screens(v):
@@ -257,6 +263,13 @@ def _channels(v):
     Empty is allowed (no channels yet)."""
     from videos import parse_entries
     return ",".join(parse_entries(v))
+
+
+def _watchlist(v):
+    """Yahoo symbols, one per line or comma separated, each optionally SYMBOL:LABEL.
+    Empty is allowed (nothing on the watchlist yet)."""
+    from watchlist import format_entries, parse_entries
+    return format_entries(parse_entries(v))
 
 
 def _default_feeds():
@@ -497,6 +510,11 @@ class WebApp:
             "videos_channels": [c for c in clean("VIDEOS_CHANNELS", "").split(",") if c],
             "videos_per_cycle": int(clean("VIDEOS_PER_CYCLE", "3")),
             "arcade_per_cycle": int(clean("ARCADE_PER_CYCLE", "1")),
+            "watchlist": [e for e in clean("WATCHLIST", "").split(",") if e],
+            "watchlist_refresh": int(clean("WATCHLIST_REFRESH", "10")),
+            "watchlist_per_cycle": int(clean("WATCHLIST_PER_CYCLE", "5")),
+            "watchlist_status": self._watchlist_status(clean),
+            "watchlist_packs": self._watchlist_packs(),
             "videos_max_age_days": int(clean("VIDEOS_MAX_AGE_DAYS", "3")),
             "videos_skip_shorts": clean("VIDEOS_SKIP_SHORTS", "on"),
             "videos_status": self._videos_status(clean),
@@ -511,6 +529,21 @@ class WebApp:
         if videos is None:
             return {e: None for e in entries}
         return videos.status_for(entries)
+
+    def _watchlist_status(self, clean):
+        """Per symbol: {"ok": True, "name"} once fetched, {"ok": False, "error"} if it
+        failed, None if not checked yet (the screen off, or the first fetch pending)."""
+        from watchlist import entries_from_env
+        entries = entries_from_env(clean("WATCHLIST", ""))
+        wl = getattr(self.ticker, "watchlist", None)
+        if wl is None:
+            return {sym: None for sym, _ in entries}
+        return wl.status_for(entries)
+
+    @staticmethod
+    def _watchlist_packs():
+        from watchlist import PACKS
+        return [{"name": name, "entries": entries.split(",")} for name, entries in PACKS]
 
     def _sports(self, clean):
         """One entry per league for the Sports cards (out-of-season ones flagged)."""
@@ -859,7 +892,8 @@ function focusHint(){const h=$('#focushint');if(!h)return;
   const syms=S.coins.map(c=>c.entry.split(':')[0]);
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
 const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',metals:'Gold, silver &amp; oil',
-  news:'News headlines',videos:'YouTube videos',sports:'Sports scores',arcade:'Arcade animations'};
+  news:'News headlines',videos:'YouTube videos',sports:'Sports scores',arcade:'Arcade animations',
+  watchlist:'Watchlist (stocks, funds, futures)'};
 function screenOrder(){  // enabled screens in their saved order, then the others
   const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
   const o=(S.screen_order||[]).filter(k=>all.includes(k));
@@ -872,6 +906,27 @@ function arcadeRows(){
   return `<h2>Arcade animations</h2><div class="card">
    <div class="row"><div class="grow">Scenes per cycle<div class="name" style="white-space:normal">Chase, power pellet, cherries and sweethearts take turns, about 5 seconds each.</div></div>
     <select id="arcn">${[1,2,3,4].map(n=>`<option ${S.arcade_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
+  </div>`;
+}
+function watchlistRows(){
+  const st=S.watchlist_status||{};
+  const line=e=>{const sym=e.split(':')[0],x=st[sym];
+    const msg=x==null?'<span class="name">Not checked yet</span>'
+      :x.ok?`<span style="color:#3ad07a">✓ ${esc(x.name||sym)}${x.kind=='MUTUALFUND'?' · NAV':''}</span>`
+      :`<span style="color:#ff6b5e">⚠ ${esc(x.error)}${x.had?' (showing the last good price)':''}</span>`;
+    return `<div class="row"><div class="grow" style="min-width:0"><div style="font:13px ui-monospace,monospace">${esc(e)}</div><div style="font-size:13px">${msg}</div></div></div>`};
+  const n=(S.watchlist||[]).length;
+  return `<h2>Watchlist</h2><div class="card">
+   <div class="row" style="display:block"><div>Symbols<div class="name" style="white-space:normal">Yahoo Finance symbols, one per line, up to 20: stocks (AAPL), ETFs (SPY), mutual funds (VTSAX) and futures (ES=F). Add a short panel name after a colon: <code>CL=F:WTI</code>.</div></div>
+    ${feedBox('wlist',S.watchlist).replace('rows="','placeholder="AAPL\nVTSAX\nES=F:S&amp;P" rows="')}</div>
+   ${(S.watchlist||[]).map(line).join('')}
+   <div class="row"><div class="grow">Add a pack<div class="name" style="white-space:normal">Adds the group's symbols to the list (skipping ones already on it).</div></div>
+    <select id="wpack"><option value="">Choose…</option>${(S.watchlist_packs||[]).map((p,i)=>`<option value="${i}">${esc(p.name)}</option>`).join('')}</select></div>
+   ${n?'':'<p class="hint err" style="margin:8px 0">The watchlist is empty, so its screen is skipped.</p>'}
+   <div class="row"><div class="grow">Symbols per cycle<div class="name" style="white-space:normal">They take turns across cycles. With List view on, list pages of the whole watchlist follow.</div></div>
+    <select id="wper">${[1,2,3,4,5,6,8,10,15,20].map(k=>`<option ${S.watchlist_per_cycle==k?'selected':''}>${k}</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Refresh every</div><select id="wref">${[5,10,15,30].map(k=>`<option value="${k}" ${S.watchlist_refresh==k?'selected':''}>${k} minutes</option>`).join('')}</select></div>
+   <div class="row"><div class="name" style="white-space:normal">Mutual funds show their daily NAV and a one-month chart. Prices more than 90 minutes old (overnight, weekends) are tagged CLOSED. Futures and indices show plain numbers, not dollars.</div></div>
   </div>`;
 }
 function videosRows(){
@@ -968,6 +1023,7 @@ function render(){
   ${S.screens.includes('news')?newsRows():''}
   ${S.screens.includes('videos')?videosRows():''}
   ${S.screens.includes('arcade')?arcadeRows():''}
+  ${S.screens.includes('watchlist')?watchlistRows():''}
   <p class="hint">Shown in this order at the start of each cycle, then your coins (if Crypto prices is on). If everything is off, the coins show. The weather screen uses the location below.</p>
   ${S.screens.includes('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
@@ -1079,7 +1135,8 @@ function save(extra){
       screens:S.screens.join(','),indices_source:S.indices_source,indices_style:S.indices_style,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,weather_extra:(S.weather_extra||[]).join(';'),timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
-      videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,arcade_per_cycle:S.arcade_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
+      videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,arcade_per_cycle:S.arcade_per_cycle,
+      watchlist:(S.watchlist||[]).join('\n'),watchlist_refresh:S.watchlist_refresh,watchlist_per_cycle:S.watchlist_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
@@ -1132,6 +1189,15 @@ function bind(){
     const q=inp.value.trim(),box=$('#teams-'+inp.dataset.teamq);if(q.length<2){box.innerHTML='';return}
     inp._t=setTimeout(()=>teamSearch(inp.dataset.teamq,q,box),350)});
   if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
+  if($('#wlist'))$('#wlist').onchange=e=>{S.watchlist=e.target.value.split(/[\s,]+/).filter(Boolean);save(0);setTimeout(load,1500);setTimeout(load,8000)};
+  if($('#wpack'))$('#wpack').onchange=e=>{const p=(S.watchlist_packs||[])[+e.target.value];if(!p)return;
+    const have=new Set((S.watchlist||[]).map(x=>x.split(':')[0].toUpperCase()));
+    const add=p.entries.filter(x=>!have.has(x.split(':')[0]));
+    const room=20-(S.watchlist||[]).length;
+    if(add.length>room)toast(`Only ${Math.max(0,room)} more fit (20 at most)`,true);
+    S.watchlist=[...(S.watchlist||[]),...add.slice(0,Math.max(0,room))];render();save(0);setTimeout(load,1500);setTimeout(load,8000)};
+  if($('#wper'))$('#wper').onchange=e=>{S.watchlist_per_cycle=+e.target.value;save()};
+  if($('#wref'))$('#wref').onchange=e=>{S.watchlist_refresh=+e.target.value;save()};
   if($('#arcn'))$('#arcn').onchange=e=>{S.arcade_per_cycle=+e.target.value;save()};
   if($('#iview'))$('#iview').onchange=e=>{S.indices_view=e.target.checked?'both':'percent';save()};
   const findPlace=async()=>{
