@@ -509,7 +509,9 @@ class Renderer:
         f = self.fonts
         hi, lo = wx.get("high"), wx.get("low")
         hl = [] if hi is None or lo is None else [f"{round(hi)}", f"{round(lo)}"]
-        right = 64 - (max(f["5x8"].width(t) for t in hl) + 2 if hl else 0)  # high/low column
+        # high/low column: a small dim "H"/"L" in front of each number
+        tag_w = f["4x6"].width("H") + 1
+        right = 64 - (max(f["5x8"].width(t) for t in hl) + tag_w + 2 if hl else 0)
         temp = f"{round(wx['temp'])}°"
         # biggest layout that fits: large icon first, then the clock-size icon;
         # the small unit letter goes last
@@ -534,13 +536,21 @@ class Renderer:
         font.draw(img, x, 16, temp, PRICE)
         if unit_w:
             f["5x8"].draw(img, x + font.width(temp), 9, unit, DIM_TEXT)
-        # today's high (orange) and low (blue), right column
-        for y, t, color in zip((7, 15), hl, (self.HIGH, self.LOW)):
-            f["5x8"].draw(img, 64 - f["5x8"].width(t), y, t, color)
-        # next 12 hours: a line chart under everything
+        # today's high (orange) and low (blue), right column, labeled H and L
+        for y, t, color, letter in zip((7, 15), hl, (self.HIGH, self.LOW), ("H", "L")):
+            x_num = 64 - f["5x8"].width(t)
+            f["5x8"].draw(img, x_num, y, t, color)
+            f["4x6"].draw(img, x_num - tag_w, y - 1, letter, DIM_TEXT)
+        # next 12 hours: a line chart under everything, with a tick every 3 hours
         pts = wx.get("hourly") or []
         if len(pts) >= 2:
             self._temp_line(img, pts, (1, 21, 62, 31))
+            hours = len(pts) - 1
+            px = img.load()
+            for h in range(3, hours + 1, 3):
+                x_tick = 1 + round(h / hours * 61)
+                px[x_tick, 31] = (110, 110, 120)
+                px[x_tick, 30] = (110, 110, 120) if (now.hour + h) % 12 == 0 else px[x_tick, 30]
         return self._place(img)
 
     def _temp_line(self, img, pts, box):
