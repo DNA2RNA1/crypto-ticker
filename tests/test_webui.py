@@ -55,7 +55,7 @@ def test_normalization(app):
     saved = app.save({"symbols": " BTC , btc, Eth:Ethereum ", "screens": "clock,clock",
                       "dim_hours": "07-22", "layout": " Chart "})
     assert saved["SYMBOLS"] == "btc,eth:ethereum"
-    assert saved["SCREENS"] == "clock,coins"
+    assert saved["SCREENS"] == "clock"  # crypto prices can be off now
     assert saved["DIM_HOURS"] == "7-22" and saved["LAYOUT"] == "chart"
 
 
@@ -175,9 +175,9 @@ def test_transition_choices(app):
 # --- weather / news / sports settings ------------------------------------------------
 def test_new_screens_save_in_order(app):
     saved = app.save({"screens": "sports,clock,news,weather"})
-    assert saved["SCREENS"] == "sports,clock,news,weather,coins"
+    assert saved["SCREENS"] == "sports,clock,news,weather"
     s = app.settings()
-    assert s["screens"] == ["sports", "clock", "news", "weather", "coins"]
+    assert s["screens"] == ["sports", "clock", "news", "weather"]
     assert s["screen_names"][-1] == "coins" and {"weather", "news", "sports"} <= set(s["screen_names"])
 
 

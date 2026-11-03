@@ -298,3 +298,27 @@ def test_list_row_shows_whole_price_without_percent():
         assert font.width("BTC") + 3 + font.width("$77,530") <= 64
         colors = {img.getpixel((x, y)) for x in range(64) for y in range(32)}
         assert UP in colors and DOWN not in colors
+
+
+def test_coins_screen_can_be_turned_off():
+    import webui
+    assert webui._screens("clock,weather") == "clock,weather"
+    assert webui._screens("coins,clock") == "clock,coins"  # coins stay last
+    assert webui._screens("") == "coins"                     # never an empty rotation
+
+
+def test_no_coingecko_calls_when_crypto_prices_are_off():
+    t = ticker()
+    t.cfg.screens = ["clock"]
+    t.next_fetch = 0
+    t.refresh(wait=True)
+    assert t._fetching is None and t.last_success in (0, None, 0.0)
+
+
+def test_coingecko_indices_still_fetch_with_coins_off():
+    t = ticker()
+    t.cfg.screens = ["indices"]
+    t.cfg.indices_source = "coingecko"
+    assert t._needs_prices(t.cfg)
+    t.cfg.indices_source = "yahoo"
+    assert not t._needs_prices(t.cfg)

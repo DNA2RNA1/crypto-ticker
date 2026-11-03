@@ -501,8 +501,8 @@ class Renderer:
     LOW = (80, 170, 255)
 
     def weather(self, wx, unit="F", now=None):
-        """Big current temperature with a large condition icon, today's high/low, and a
-        line of the next 12 hours' temperatures along the bottom."""
+        """Big current temperature with a large condition icon, today's high/low, and the
+        forecast for +3, +6, +9 and +12 hours along the bottom."""
         from datetime import datetime
         now = now or datetime.now()
         img = self._base()
@@ -541,42 +541,26 @@ class Renderer:
             x_num = 64 - f["5x8"].width(t)
             f["5x8"].draw(img, x_num, y, t, color)
             f["4x6"].draw(img, x_num - tag_w, y - 1, letter, DIM_TEXT)
-        # next 12 hours: a line chart under everything, with a tick every 3 hours
+        # next 12 hours, spelled out: the hour (dim) over its forecast temperature, every
+        # 3 hours. The temperature's color runs from the low (blue) to the high (orange).
         pts = wx.get("hourly") or []
-        if len(pts) >= 2:
-            self._temp_line(img, pts, (1, 21, 62, 31))
-            hours = len(pts) - 1
-            px = img.load()
-            for h in range(3, hours + 1, 3):
-                x_tick = 1 + round(h / hours * 61)
-                px[x_tick, 31] = (110, 110, 120)
-                px[x_tick, 30] = (110, 110, 120) if (now.hour + h) % 12 == 0 else px[x_tick, 30]
+        steps = [h for h in (3, 6, 9, 12) if h < len(pts)]
+        if steps:
+            small = f["4x6"]
+            vals = [pts[h] for h in steps]
+            lo_v, hi_v = min(pts), max(pts)
+            span = (hi_v - lo_v) or 1.0
+            slot = 64 // len(steps)
+            for i, (h, v) in enumerate(zip(steps, vals)):
+                hour = (now.hour + h) % 24
+                label = f"{hour % 12 or 12}{'A' if hour < 12 else 'P'}"
+                t = (v - lo_v) / span
+                color = tuple(int(self.LOW[j] + (self.HIGH[j] - self.LOW[j]) * t) for j in range(3))
+                temp_txt = f"{round(v)}°"
+                cx = i * slot + slot // 2
+                small.draw(img, cx - small.width(label) // 2, 25, label, DIM_TEXT)
+                small.draw(img, cx - small.width(temp_txt) // 2, 31, temp_txt, color)
         return self._place(img)
-
-    def _temp_line(self, img, pts, box):
-        """Temperature line from now (left) to +12 h (right); the line is colored from the
-        low (blue) to the high (orange) of the range, with a white dot at 'now'."""
-        x0, y0, x1, y1 = box
-        lo, hi = min(pts), max(pts)
-        span = (hi - lo) or 1.0
-        px = img.load()
-        d = ImageDraw.Draw(img)
-        d.line((x0, y1, x1, y1), fill=(40, 40, 48))  # faint baseline
-        prev = None
-        n = len(pts) - 1
-        for i in range(x1 - x0 + 1):
-            pos = i / (x1 - x0) * n
-            k = min(int(pos), n - 1)
-            v = pts[k] + (pts[k + 1] - pts[k]) * (pos - k)
-            t = (v - lo) / span
-            y = round(y1 - 1 - t * (y1 - 1 - y0))
-            c = tuple(int(self.LOW[j] + (self.HIGH[j] - self.LOW[j]) * t) for j in range(3))
-            a, b = (y, y) if prev is None else (min(prev, y), max(prev, y))
-            for yy in range(a, b + 1):
-                px[x0 + i, yy] = c
-            prev = y
-        first = round(y1 - 1 - (pts[0] - lo) / span * (y1 - 1 - y0))
-        d.rectangle((x0, first - 1, x0 + 1, first), fill=PRICE)
 
     # --- news screen -----------------------------------------------------------
     def tag(self, img, x, y, text, color, font=None):

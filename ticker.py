@@ -304,6 +304,10 @@ class Ticker:
     def _cg_indices(self, cfg):
         return "indices" in cfg.screens and cfg.indices_source == "coingecko"
 
+    def _needs_prices(self, cfg):
+        """CoinGecko is only called when something on screen uses it."""
+        return "coins" in cfg.screens or self._cg_indices(cfg)
+
     @staticmethod
     def _make_videos(cfg):
         return Videos(cfg.videos_channels, cfg.videos_max_age_days, cfg.videos_skip_shorts)
@@ -328,6 +332,8 @@ class Ticker:
         wait=True blocks until it finishes (used by tests and preview.py)."""
         now = now or time.time()
         t = self._fetching
+        if t is None and not self._needs_prices(self.cfg):
+            return  # crypto prices are off and nothing else needs CoinGecko
         if t is None and now >= self.next_fetch:
             api = self.api
             self.next_fetch = now + self.interval()  # provisional; set again when done
@@ -558,7 +564,7 @@ class Ticker:
         self.usage.tick()
         self.refresh()
         self.apply_brightness()
-        if not self.assets:
+        if not self.assets and "coins" in self.cfg.screens:  # LOADING / NO DATA are about coins
             if self._fetching is not None and self.last_error is None:
                 self.loading()  # first fetch still running
                 return

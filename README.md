@@ -256,7 +256,7 @@ nothing to show.
 
 **Weather** uses the same Open-Meteo data and location as the clock (set by ZIP code or city on the
 phone page) and the °F/°C setting: a big current temperature, a condition icon, today's high
-(orange) and low (blue), and a line of the next 12 hours' temperatures along the bottom.
+(orange) and low (blue), and along the bottom the forecast temperature in 3, 6, 9 and 12 hours, each under its hour.
 
 **News** shows one headline at a time, scrolling right to left in a big bold font, with the source
 in a small colored tag and the headline's age. Feeds are checked every 15 minutes in the background;

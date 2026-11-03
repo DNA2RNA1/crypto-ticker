@@ -271,7 +271,7 @@ def test_page_settings(app):
     saved = app.save({"videos_channels": f"https://www.youtube.com/@SomeChannel\n{CID}\nyoutube.com/@somechannel",
                       "videos_per_cycle": 5, "videos_max_age_days": 7, "videos_skip_shorts": "off",
                       "screens": "videos,clock"})
-    assert saved["VIDEOS_CHANNELS"] == f"@somechannel,{CID}" and saved["SCREENS"] == "videos,clock,coins"
+    assert saved["VIDEOS_CHANNELS"] == f"@somechannel,{CID}" and saved["SCREENS"] == "videos,clock"  # coins only when switched on
     s = app.settings()
     assert s["videos_channels"] == ["@somechannel", CID]
     assert s["videos_status"] == {"@somechannel": None, CID: None}  # not checked yet

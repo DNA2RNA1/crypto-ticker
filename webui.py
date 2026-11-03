@@ -151,8 +151,10 @@ def _screens(v):
             raise ValueError(f"unknown screen: {x[:20]}")
         if x not in names:
             names.append(x)
-    if "coins" not in names:
-        names.append("coins")
+    if "coins" in names:  # crypto prices always come last in the cycle
+        names = [n for n in names if n != "coins"] + ["coins"]
+    if not names:  # something has to be on; with everything off, show the coins
+        names = ["coins"]
     return ",".join(names)
 
 
@@ -815,7 +817,7 @@ function screenOrder(){  // enabled screens in their saved order, then the other
   for(const k of all)if(!o.includes(k))o.push(k);
   return S.screen_order=o;
 }
-function saveScreens(order,on){S.screens=[...order.filter(k=>on.has(k)),'coins'];save();render()}
+function saveScreens(order,on){S.screens=[...order.filter(k=>on.has(k)),...(on.has('coins')?['coins']:[])];save();render()}
 function videosRows(){
   const st=S.videos_status||{};
   const line=c=>{const x=st[c];
@@ -886,6 +888,8 @@ function render(){
      <button class="btn" data-sup="${k}" ${i==0?'disabled':''} aria-label="Move up">↑</button>
      <button class="btn" data-sdown="${k}" ${i==a.length-1?'disabled':''} aria-label="Move down">↓</button>
      <label class="switch"><input type="checkbox" data-screen="${k}" ${S.screens.includes(k)?'checked':''}><span></span></label></div>`).join('')}
+   <div class="row"><div class="grow">Crypto prices<div class="name" style="white-space:normal">Your coins, at the end of each cycle. Off = no coin screens and no CoinGecko calls (unless the indices use CoinGecko).</div></div>
+     <label class="switch"><input type="checkbox" data-screen="coins" ${S.screens.includes('coins')?'checked':''}><span></span></label></div>
    ${S.screens.includes('indices')?`<div class="row"><div class="grow">Indices from<div class="name" style="white-space:normal">${S.indices_source=='yahoo'?'Real index values incl. the Dow. Unofficial source; may stop working.':'Tokenized S&amp;P 500 and Nasdaq funds. No extra CoinGecko calls.'}</div></div>
      <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>
    <div class="row"><div class="grow">Also show $ / point change<div class="name" style="white-space:normal">${S.indices_source=='yahoo'
@@ -895,7 +899,7 @@ function render(){
   </div>
   ${S.screens.includes('news')?newsRows():''}
   ${S.screens.includes('videos')?videosRows():''}
-  <p class="hint">Shown in this order at the start of each cycle, then your coins. The weather screen uses the location below.</p>
+  <p class="hint">Shown in this order at the start of each cycle, then your coins (if Crypto prices is on). If everything is off, the coins show. The weather screen uses the location below.</p>
   ${S.screens.includes('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
    <div class="row"><div class="grow">Location<div class="name" id="wplace">${esc(S.weather_place||(S.weather_lat+', '+S.weather_lon))}</div></div></div>
