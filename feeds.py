@@ -196,11 +196,12 @@ class Indices(Feed):
 
 
 # Gold and silver: spot first, futures (very close to spot) if Yahoo has no spot quote.
-METALS = [(("XAUUSD=X", "GC=F"), "GOLD"), (("XAGUSD=X", "SI=F"), "SILVER")]
+# Oil: WTI crude front-month futures.
+METALS = [(("XAUUSD=X", "GC=F"), "GOLD"), (("XAGUSD=X", "SI=F"), "SILVER"), (("CL=F",), "OIL")]
 
 
 class Metals(Indices):
-    """Gold and silver prices from Yahoo. One metal failing doesn't hide the other."""
+    """Gold, silver and WTI oil prices from Yahoo. One failing doesn't hide the others."""
 
     def __init__(self):
         super().__init__([])
@@ -215,7 +216,7 @@ class Metals(Indices):
                 except Exception as exc:
                     log.info("metals: %s unavailable (%s)", symbol, exc)
         if not out:
-            raise ValueError("no gold or silver price")
+            raise ValueError("no gold, silver or oil price")
         return out
 
 

@@ -137,3 +137,20 @@ def test_curl_fallback_when_python_is_refused(monkeypatch):
     assert row["price"] == 4012.5
     assert calls[0][0] == "curl" and "query2.finance.yahoo.com/v8/finance/chart/GC=F" in calls[0][-1]
     assert "-A" in calls[0] and "Mozilla/5.0" in calls[0]
+
+
+def test_oil_is_included_and_three_rows_fit():
+    m = Metals()
+    m.session = FakeSession({("query2", "GC=F"): (200, chart_json(3929.9, 3969.6)),
+                             ("query2", "SI=F"): (200, chart_json(49.335, 50.888)),
+                             ("query2", "CL=F"): (200, chart_json(61.27, 60.76))})
+    rows = m.fetch()
+    assert [(r["label"], r["symbol"]) for r in rows] == [("GOLD", "GC=F"), ("SILVER", "SI=F"), ("OIL", "CL=F")]
+    r = Renderer()
+    font = r.fonts["5x8"]
+    drawn = []
+    real = font.draw
+    font.draw = lambda img, x, b, t, c: (drawn.append((x, t)), real(img, x, b, t, c))[1]
+    img = r.metals(rows)
+    assert [t for _, t in drawn] == ["GOLD", "$3,930", "SILVER", "$49.34", "OIL", "$61.27"]
+    assert all(0 <= x and x + font.width(t) <= 64 for x, t in drawn)

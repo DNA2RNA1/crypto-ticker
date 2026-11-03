@@ -866,13 +866,15 @@ class Renderer:
         px[x1, prev[0]] = (255, 255, 255)  # latest
 
     def metals(self, rows, stale=False):
-        """Gold and silver: name and price (green/red by today's change), chart underneath."""
+        """Gold, silver and oil. Up to two: name and price (green/red by today's change)
+        with today's chart under each. Three: a price list, one row each."""
         img = self._base()
         f = self.fonts
-        n = max(1, min(2, len(rows)))
+        n = max(1, min(3, len(rows)))
         band = 32 // n
+        top0 = (32 - band * n) // 2
         for i, r in enumerate(rows[:n]):
-            top = i * band
+            top = top0 + i * band
             color = trend_color(r["change"])
             label = r["label"]
             prices = [p for p in self.compact_prices(r["price"], "usd") if "K" not in p] or \
@@ -881,9 +883,11 @@ class Renderer:
                         None)
             if text is None:  # long name and long price: shorten the name, keep the price whole
                 label, text = label[:4], prices[0]
-            f["5x8"].draw(img, 1, top + 7, label, PRICE)
-            f["5x8"].draw(img, 63 - f["5x8"].width(text), top + 7, text, color)
-            self._sparkline(img, r["intraday"], (1, top + 9, 62, top + band - 2))
+            base = top + 7 if n <= 2 else top + (band + 7) // 2
+            f["5x8"].draw(img, 1, base, label, PRICE)
+            f["5x8"].draw(img, 63 - f["5x8"].width(text), base, text, color)
+            if n <= 2:
+                self._sparkline(img, r["intraday"], (1, top + 9, 62, top + band - 2))
         img = self._place(img)
         return self.stale_mark(img) if stale else img
 

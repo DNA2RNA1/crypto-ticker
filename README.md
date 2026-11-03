@@ -216,7 +216,7 @@ value is logged as a warning and the default is used.
 | `FOCUS` | `off` | `on` = coin rotation shows only starred coins, one big-picture screen each (clock, Fear & Greed and indices keep running). With nothing starred, all coins show |
 | `LIST_VIEW` | `off` | `off`, `4` (pages of 4 coins; the phone page's switch turns this on) or `5` (pages of 5, smaller font). Each row is the symbol and the whole price, green if up for the day, red if down. The list pages come at the end of each cycle, after every coin's full screen; Focus narrows both to starred coins |
 | `LIST_PAGE_SECONDS` | `6` | Seconds per list page (2–60) |
-| `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle, in order (coins always last). Also `weather`, `metals` (gold and silver from Yahoo: spot, or futures if spot isn't available), `news`, `videos`, `sports` (off by default) |
+| `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle, in order (coins always last). Also `weather`, `metals` (gold, silver and WTI oil from Yahoo: spot gold/silver, or futures if spot isn't available; WTI front-month futures), `news`, `videos`, `sports` (off by default) |
 | `INDICES_SOURCE` | `coingecko` | `coingecko` (tokenized funds, no extra calls) or `yahoo` (real index values; unofficial) |
 | `NEWS_FEEDS` | three crypto/business feeds | RSS or Atom URLs, comma separated (one per line on the phone page), up to 8 |
 | `NEWS_CRYPTO` / `NEWS_GENERAL` | `on` / `off` | Switch the crypto feeds (`NEWS_FEEDS`) and the general news feeds (`NEWS_GENERAL_FEEDS`) on or off separately |

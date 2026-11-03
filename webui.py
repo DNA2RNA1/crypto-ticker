@@ -834,7 +834,7 @@ function seg(key,opts){return `<div class="seg" data-seg="${key}">${opts.map(([v
 function focusHint(){const h=$('#focushint');if(!h)return;
   const syms=S.coins.map(c=>c.entry.split(':')[0]);
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
-const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',metals:'Gold &amp; silver',
+const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',metals:'Gold, silver &amp; oil',
   news:'News headlines',videos:'YouTube videos',sports:'Sports scores'};
 function screenOrder(){  // enabled screens in their saved order, then the others
   const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
