@@ -8,6 +8,7 @@ Standard library only, so it works before the venv exists.
 """
 
 import os
+import glob
 import platform
 import pwd
 import re
@@ -306,6 +307,32 @@ def check_panel(settings, model="", modprobe_dir="/etc/modprobe.d", lsmod="/proc
     return out
 
 
+def check_led_library(repo):
+    """The LED library's C code is built against one Pillow version's internals; if Pillow
+    was upgraded afterwards, drawing can fail until it's rebuilt. Reads files only."""
+    venv = os.path.join(repo, "venv")
+    try:
+        with open(os.path.join(venv, ".led-built-with-pillow")) as fh:
+            built = fh.read().strip()
+    except OSError:
+        return []  # built before this check existed (or not built yet): nothing to compare
+    installed = None
+    for site in sorted(glob.glob(os.path.join(venv, "lib", "python3*", "site-packages", "PIL", "_version.py"))):
+        try:
+            with open(site) as fh:
+                m = re.search(r"""__version__\s*=\s*["']([^"']+)["']""", fh.read())
+            installed = m.group(1) if m else None
+        except OSError:
+            pass
+    if installed is None:
+        return [Result("WARN", "LED library", f"built with Pillow {built}, but Pillow isn't installed now",
+                       "Run ./install.sh to reinstall the Python packages and rebuild the LED library.")]
+    if installed != built:
+        return [Result("WARN", "LED library", f"built with Pillow {built}, now Pillow {installed} is installed",
+                       "If the panel stays blank or garbled, rebuild it: ./install.sh")]
+    return [Result("OK", "LED library", f"built with the installed Pillow {installed}")]
+
+
 def check_deploy_key(home, run=run):
     key = os.path.join(home, ".ssh", "crypto-ticker-deploy")
     if not os.path.exists(key):
@@ -374,6 +401,7 @@ def main(argv=None, repo=HERE, run=run, fetch=fetch, wifi=None):
     results += svc
     results += check_resources(repo)
     results += check_panel(settings, model)
+    results += check_led_library(repo)
     results += check_deploy_key(owner_home(repo), run)
     print(report(results, log_rows))
     return 1 if any(r.status == "FAIL" for r in results) else 0
