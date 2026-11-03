@@ -831,32 +831,13 @@ class Renderer:
     def _drawable(font, text):
         return all(ord(c) in font.glyphs for c in text)
 
-    @staticmethod
-    def _arrow(img, x, baseline, up, color):
-        """5x3 triangle for fonts without ▲/▼ glyphs (4x6). Returns its width + gap."""
-        px = img.load()
-        rows = [(2, 2), (1, 3), (0, 4)] if up else [(0, 4), (1, 3), (2, 2)]
-        for dy, (a, b) in enumerate(rows):
-            for dx in range(a, b + 1):
-                px[x + dx, baseline - 4 + dy] = color
-        return 6
-
-    @staticmethod
-    def list_changes(change):
-        """Always with the % sign; one decimal unless there's no room at all."""
-        if change is None:
-            return ["--"]
-        arrow = "▲" if change >= 0 else "▼"
-        a = abs(change)
-        return [f"{arrow}{a:.1f}%", f"{arrow}{a:.0f}%"] if a < 100 else [f"{arrow}{a:.0f}%"]
-
     def list_page(self, assets, rows=5, stale=False):
-        """One page of up to ``rows`` coins.
+        """One page of up to ``rows`` coins: symbol on the left, the full price on the
+        right, colored green/red by the 24h change (no arrow or %).
 
-        rows=5: 4x6 font; symbol, then ▲/▼ + price colored by the 24h change.
-        rows=4: 5x8 font; symbol, price colored by the 24h change, and ▲/▼ % change.
-        A row that's too wide is shortened step by step (fewer digits, K/M, no
-        currency sign, shorter % change) until it fits the 64-pixel width.
+        rows=5 uses the 4x6 font, rows=4 the 5x8 font. The price is kept whole as long as
+        possible: full price, then without the currency sign, then a shorter symbol, and
+        only as a last resort a shortened price (4,012 -> 4.0K).
         """
         rows = rows if rows in self.LIST_ROWS else 5
         img = self._base()
@@ -866,41 +847,27 @@ class Renderer:
         gap = 3 if rows == 5 else 2
         for i, a in enumerate(assets[:rows]):
             baseline = top + i * line + font.ascent
-            change = a.get("change_24h")
-            color = trend_color(change)
-            sym = a["symbol"][:6]
-            sw = font.width(sym)
+            color = trend_color(a.get("change_24h"))
             right = 61 if stale and i == rows - 1 else 64  # leave room for the stale dot
             prices = [p for p in self.compact_prices(a["price"], self.currency) if self._drawable(font, p)]
             prices = prices or [f"{a['price']:.3g}"]
-            if rows == 5:
-                aw = 6 if change is not None else 0
-                room = right - sw - gap - aw
-                text = next((p for p in prices if font.width(p) <= room), prices[-1])
-                font.draw(img, 0, baseline, sym, SYMBOL)
-                x = right - font.width(text)
-                font.draw(img, x, baseline, text, color)
-                if aw:
-                    self._arrow(img, x - aw, baseline, change >= 0, color)
-            else:
-                # keep the % change whole; shorten the price first (4,012 -> 4.0K),
-                # then the change's decimal, and only then a long symbol
-                fit = None
-                for symbol in (sym, sym[:4], sym[:3]):
-                    sw = font.width(symbol)
-                    for ctext in self.list_changes(change):
-                        fit = next(((p, ctext) for p in prices
-                                    if sw + gap + font.width(p) + gap + font.width(ctext) <= right), None)
-                        if fit:
-                            break
-                    if fit:
-                        sym = symbol
-                        break
-                ptext, ctext = fit or (min(prices, key=font.width), self.list_changes(change)[-1])
-                cw = font.width(ctext)
-                font.draw(img, 0, baseline, sym, SYMBOL)
-                font.draw(img, right - cw - gap - font.width(ptext), baseline, ptext, color)
-                font.draw(img, right - cw, baseline, ctext, color)
+            sign = CURRENCY_SIGNS.get(self.currency, "")
+            whole = [p for p in prices if "K" not in p and "M" not in p] or prices[:1]
+            full_sym = a["symbol"][:6]
+            sym, text = full_sym, None
+            # whole price first (with sign, then without), shortening the symbol before the price
+            for symbol in (full_sym, full_sym[:5], full_sym[:4], full_sym[:3]):
+                room = right - font.width(symbol) - gap
+                text = next((p for p in whole if font.width(p) <= room), None)
+                if text:
+                    sym = symbol
+                    break
+            if text is None:  # last resort: K/M forms with the full symbol
+                room = right - font.width(full_sym) - gap
+                sym = full_sym
+                text = next((p for p in prices if font.width(p) <= room), min(prices, key=font.width))
+            font.draw(img, 0, baseline, sym, SYMBOL)
+            font.draw(img, right - font.width(text), baseline, text, color)
         img = self._place(img)
         return self.stale_mark(img) if stale else img
 

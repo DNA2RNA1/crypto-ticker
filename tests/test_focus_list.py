@@ -75,8 +75,8 @@ def test_focus_keeps_other_screens():
                                      (4, [("BTC", "ETH", "ADA", "SOL"), ("PEPE", "DOGE", "LINK")])])
 def test_list_view_pages(monkeypatch, n, pages):
     calls = kinds(ticker(list_view=n, featured=["eth"]), monkeypatch)
-    assert calls[:2] == [("big", "ETH"), ("coin", "ETH")]  # starred keep big screens
-    assert [c[1] for c in calls if c[0] == "list"] == pages
+    assert all(c[0] == "list" for c in calls)  # list pages only, even with a starred coin
+    assert [c[1] for c in calls] == pages
 
 
 def test_list_view_with_focus_lists_only_starred(monkeypatch):
@@ -147,9 +147,10 @@ def test_5x8_punctuation_sits_on_the_baseline():
 
 
 @pytest.mark.parametrize("currency", ["usd", "eur", "jpy"])
-def test_4_row_list_always_shows_percent_and_fits(currency):
+@pytest.mark.parametrize("rows", [4, 5])
+def test_list_rows_fit_without_percent(currency, rows):
     r = Renderer(currency=currency)
-    font = r.fonts["5x8"]
+    font = r.fonts["5x8"] if rows == 4 else r.fonts["4x6"]
     drawn = []
     real = font.draw
 
@@ -159,20 +160,19 @@ def test_4_row_list_always_shows_percent_and_fits(currency):
 
     font.draw = spy
     for price in (109234.56, 4012.37, 999.99, 212.44, 22.41, 0.8123, 0.00001123, 1234567.0):
-        for change in (-2.91, 12.345, -123.4, 0.0):
+        for change in (-2.91, 12.345, -123.4, 0.0, None):
             for sym in ("ETH", "PEPE", "LONGSYM"):
                 a = sample_assets(["btc"])[0] | {"symbol": sym, "price": price, "change_24h": change}
                 drawn.clear()
-                r.list_page([a], rows=4)
-                ctext = drawn[-1][2]
-                assert ctext.endswith("%"), (price, change, sym, drawn)
+                r.list_page([a], rows=rows)
+                assert len(drawn) == 2 and not any("%" in t for _, _, t in drawn), drawn
                 for x, _, text in drawn:                 # nothing overlaps or runs off the edge
                     assert x >= 0 and x + font.width(text) <= 64, (price, change, sym, drawn)
-                xs = sorted((x, x + font.width(t)) for x, _, t in drawn)
-                assert all(a_end <= b_start for (_, a_end), (b_start, _) in zip(xs, xs[1:])), drawn
+                (x1, _, t1), (x2, _, _) = sorted(drawn)
+                assert x1 + font.width(t1) <= x2, drawn
 
 
-def test_eth_example_uses_short_price_not_dropped_percent():
+def test_eth_example_keeps_the_whole_price():
     r = Renderer()
     a = sample_assets(["eth"])[0] | {"price": 4012.37, "change_24h": -2.91}
     font = r.fonts["5x8"]
@@ -180,7 +180,7 @@ def test_eth_example_uses_short_price_not_dropped_percent():
     real = font.draw
     font.draw = lambda img, x, b, t, c: (drawn.append(t), real(img, x, b, t, c))[1]
     r.list_page([a], rows=4)
-    assert drawn == ["ETH", "4.0K", "▼2.9%"]
+    assert drawn == ["ETH", "$4,012"]
 
 
 @pytest.mark.parametrize("price", [0.00009999, 0.000099999, 0.0000999, 0.00001123, 0.0000000123])
@@ -279,3 +279,16 @@ def test_list_pages_use_the_transition_setting(rows, transition, frames):
     if frames:
         expected = transition_frames(shown[pages[0]][0], shown[pages[1]][0], vertical=transition == "scroll")
         assert all(a.tobytes() == b.tobytes() for (a, _), b in zip(between, expected))
+
+
+def test_list_row_shows_whole_price_without_percent():
+    r = Renderer()
+    a = sample_assets(["btc"])
+    a[0]["price"], a[0]["change_24h"] = 77530.0, 2.0
+    for rows in (5, 4):
+        img = r.list_page(a, rows=rows)
+        font = r.fonts["4x6"] if rows == 5 else r.fonts["5x8"]
+        # the full "$77,530" fits next to BTC, so the K form is never chosen
+        assert font.width("BTC") + 3 + font.width("$77,530") <= 64
+        colors = {img.getpixel((x, y)) for x in range(64) for y in range(32)}
+        assert UP in colors and DOWN not in colors

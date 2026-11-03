@@ -670,10 +670,9 @@ class Ticker:
             out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
 
         if self.cfg.list_view:
+            # List view is list pages only (no big or single-coin screens); Focus still
+            # narrows the list to starred coins.
             n = self.cfg.list_view
-            for asset in coins:
-                if asset["id"] in starred_ids:
-                    big(asset)
             for i in range(0, len(coins), n):
                 out.append(lambda page=coins[i:i + n]: (
                     self.renderer.list_page(page, rows=n, stale=self.stale), self.cfg.list_page_seconds))
