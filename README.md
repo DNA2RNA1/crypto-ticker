@@ -312,8 +312,10 @@ AP rankings, season months, default on/off, default top teams, tag color).
 **Arcade animations** (`arcade`, off by default) are short maze-chase scenes, about 5 seconds
 each, drawn as original pixel art: a yellow chomper eating a row of dots with four ghosts on its
 tail, a power pellet that turns the ghosts blue and sends them running, blinking cherries worth
-"100", and the chomper meeting a Ms. chomper with a red bow under a beating heart. They take turns;
-set how many play each cycle (1-4) on the phone page, and switch the screen on or off and move it
+"100", the chomper meeting a Ms. chomper with a red bow under a beating heart, a ghost snack
+(the chomper catches a blue ghost, "200" pops up and the ghost's eyes race home), and an
+intermission where a giant chomper turns the tables on a ghost. They take turns;
+set how many play each cycle (1-6) on the phone page, and switch the screen on or off and move it
 in the Screens list like any other.
 
 ![Arcade animations](docs/preview-arcade.gif)

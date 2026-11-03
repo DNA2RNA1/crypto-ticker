@@ -62,7 +62,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
     "VIDEOS_CHANNELS": lambda v: _channels(v),
     "VIDEOS_PER_CYCLE": lambda v: _int(v, 1, 10),
-    "ARCADE_PER_CYCLE": lambda v: _int(v, 1, 4),
+    "ARCADE_PER_CYCLE": lambda v: _int(v, 1, 6),
     "WATCHLIST": lambda v: _watchlist(v),
     "WATCHLIST_REFRESH": lambda v: _choice(v.strip(), ("5", "10", "15", "30")),
     "WATCHLIST_PER_CYCLE": lambda v: _int(v, 1, 20),
@@ -926,8 +926,8 @@ function screenOrder(){  // enabled screens in their saved order, then the other
 function saveScreens(order,on){S.screens=[...order.filter(k=>on.has(k)),...(on.has('coins')?['coins']:[])];save();render()}
 function arcadeRows(){
   return `<h2>Arcade animations</h2><div class="card">
-   <div class="row"><div class="grow">Scenes per cycle<div class="name" style="white-space:normal">Chase, power pellet, cherries and sweethearts take turns, about 5 seconds each.</div></div>
-    <select id="arcn">${[1,2,3,4].map(n=>`<option ${S.arcade_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Scenes per cycle<div class="name" style="white-space:normal">Chase, power pellet, cherries, sweethearts, ghost snack and the giant take turns, about 5 seconds each.</div></div>
+    <select id="arcn">${[1,2,3,4,5,6].map(n=>`<option ${S.arcade_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
   </div>`;
 }
 function oddsRows(){

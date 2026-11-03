@@ -140,6 +140,9 @@ def main():
         ("20b-arcade-power-pellet", lambda: scene(1, 0.62)),
         ("20c-arcade-cherries", lambda: scene(2, 0.12)),
         ("20d-arcade-sweethearts", lambda: scene(3, 0.6)),
+        ("20e-arcade-ghost-snack", lambda: scene(4, 0.42)),
+        ("20f-arcade-eyes-home", lambda: scene(4, 0.6)),
+        ("20g-arcade-giant", lambda: scene(5, 0.75)),
         ("21-watchlist-stock", lambda: r.quote(watch[0])),
         ("21b-watchlist-future", lambda: r.quote(watch[1])),
         ("21c-watchlist-closed", lambda: r.quote(watch[2])),
@@ -188,10 +191,10 @@ def news_gif(out):
 
 
 def arcade_gif(out):
-    """All four arcade scenes with the scroll transition, via the real Ticker.play_frames()."""
+    """Every arcade scene with the scroll transition, via the real Ticker.play_frames()."""
     import arcade
     t, gif = _gif_ticker()
-    scenes = arcade.Arcade().next_scenes(4)
+    scenes = arcade.Arcade().next_scenes(len(arcade.SCENES))
     for anim in scenes:
         t.play_frames(anim)
     t.play_frames(scenes[0])          # back to the start so the loop is seamless
@@ -261,6 +264,8 @@ LABELS = {
     "19-sports-row-scrolling": "Sports: long row scrolls",
     "20-arcade-chase": "Arcade: chase", "20b-arcade-power-pellet": "Arcade: power pellet",
     "20c-arcade-cherries": "Arcade: cherries", "20d-arcade-sweethearts": "Arcade: sweethearts",
+    "20e-arcade-ghost-snack": "Arcade: ghost snack (200)", "20f-arcade-eyes-home": "Arcade: eyes go home",
+    "20g-arcade-giant": "Arcade: giant chomper",
     "21-watchlist-stock": "Watchlist: stock", "21b-watchlist-future": "Watchlist: future (no $)",
     "21c-watchlist-closed": "Watchlist: market closed", "21d-watchlist-fund-nav": "Watchlist: fund NAV, 1 month",
     "21e-watchlist-list": "Watchlist: list view",

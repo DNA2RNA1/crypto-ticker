@@ -24,7 +24,7 @@ def colors(img):
 
 
 def test_scene_contents():
-    chase, power, cherries, hearts = (m() for m in ar.SCENES)
+    chase, power, cherries, hearts = (m() for m in ar.SCENES[:4])
     mid = chase.frames[len(chase.frames) // 2]
     assert {ar.YELLOW} <= colors(chase.frames[30]) and set(ar.GHOSTS.values()) <= colors(mid) | colors(chase.frames[90])
     assert ar.SCARED in colors(power.frames[70]) and ar.SCARED not in colors(power.frames[10])
@@ -44,10 +44,11 @@ def test_sprites_stay_in_the_lane():
 def test_rotation_and_caching():
     a = ar.Arcade()
     names = [s.name for s in a.next_scenes(1) + a.next_scenes(1) + a.next_scenes(2) + a.next_scenes(4)]
-    assert names == ["chase", "power", "cherries", "sweethearts", "chase", "power", "cherries", "sweethearts"]
-    again = a.next_scenes(4)
-    assert [s.name for s in again] == ["chase", "power", "cherries", "sweethearts"]
-    assert again[0] is a.next_scenes(4)[0]                   # built once, then reused
+    assert names == ["chase", "power", "cherries", "sweethearts", "snack", "giant", "chase", "power"]
+    again = a.next_scenes(6)
+    assert [s.name for s in again] == ["cherries", "sweethearts", "snack", "giant", "chase", "power"]
+    assert again[0] is a.next_scenes(6)[0]                   # built once, then reused
+    assert len(a.next_scenes(9)) == 6                        # never more than there are
 
 
 def make_ticker(screens=("arcade",), per_cycle=1, transition="scroll"):
@@ -125,7 +126,7 @@ def test_settings(monkeypatch):
     monkeypatch.setenv("SCREENS", "clock,arcade,coins")
     monkeypatch.setenv("ARCADE_PER_CYCLE", "9")
     c = Config.from_env()
-    assert c.screens == ["clock", "arcade", "coins"] and c.arcade_per_cycle == 4
+    assert c.screens == ["clock", "arcade", "coins"] and c.arcade_per_cycle == 6
 
 
 def test_settings_page(app):
@@ -133,13 +134,44 @@ def test_settings_page(app):
     assert s["arcade_per_cycle"] == 1 and "arcade" in s["screen_names"]
     assert app.save({"screens": "arcade,clock", "arcade_per_cycle": 3}) == {
         "SCREENS": "arcade,clock", "ARCADE_PER_CYCLE": "3"}
-    for bad in (0, 5, "two"):
+    assert app.save({"arcade_per_cycle": 6}) == {"ARCADE_PER_CYCLE": "6"}
+    for bad in (0, 7, "two"):
         with pytest.raises(ValueError):
             app.save({"arcade_per_cycle": bad})
 
 
+def test_ghost_snack():
+    s = ar.ghost_snack()
+    seen = [colors(f) for f in s.frames]
+    caught = next(i for i, c in enumerate(seen) if ar.YELLOW not in c and i > 10)
+    assert all(ar.SCARED in c or (255, 0, 0) in c for c in seen[:caught])    # a blue (or blinking) ghost
+    assert (0, 255, 255) in seen[caught] and ar.YELLOW not in seen[caught]   # freeze: "200", chomper hidden
+    later = seen[caught + 20]
+    assert ar.PUPIL in later and ar.SCARED not in later and ar.YELLOW in later  # eyes going home
+
+
+def test_giant():
+    g = ar.giant()
+    yellow = [sum(f.getpixel((x, y)) == ar.YELLOW for x in range(64) for y in range(32)) for f in g.frames]
+    assert max(yellow[:56]) < 130 and max(yellow[56:]) > 350               # small first, then giant
+    assert ar.GHOSTS["red"] in colors(g.frames[20]) and ar.SCARED in colors(g.frames[100])
+
+
+@pytest.mark.parametrize("facing", [1, -1])
+def test_giant_eye(facing):
+    """The big chomper's eye: 3x3 dark pupil with a glint, up and forward like the small one."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (40, 40))
+    ar.chomper(ImageDraw.Draw(img), 20, 20, 0, facing, r=12)
+    ey = 20 - 8
+    ex = 22 if facing > 0 else 16
+    glint = (ex + 2, ey) if facing > 0 else (ex, ey)
+    assert img.getpixel(glint) == ar.WHITE
+    assert sum(img.getpixel((ex + dx, ey + dy)) == ar.PUPIL_DARK for dx in range(3) for dy in range(3)) == 8
+
+
 def test_frame_build_is_cheap():
-    """Scenes are built once and reused; building all four should be quick."""
+    """Scenes are built once and reused; building all of them should be quick."""
     t0 = time.perf_counter()
     for make in ar.SCENES:
         make()

@@ -1,7 +1,7 @@
 """Arcade animations: short maze-chase scenes for the panel (the "arcade" screen).
 
 Original pixel art drawn here (not copied sprites): a yellow chomper, four ghosts, scared
-blue ghosts, cherries, and a chomper with a red bow. Each scene is a list of 64x32 frames
+blue ghosts, ghost eyes, cherries, a chomper with a red bow, and a giant chomper. Each scene is a list of 64x32 frames
 played at FPS; the ticker shows them with the normal transition in and out.
 
 Scenes rotate: each cycle shows the next ARCADE_PER_CYCLE scenes.
@@ -67,10 +67,13 @@ def chomper(d, x, y, t, facing=1, r=6, color=YELLOW, bow=False):
         d.point((x + 3 * facing, y + 2), fill=BOW)        # a touch of lipstick
     # the eye: a 2x2 dark pupil just behind the upper lip, with a white glint on the side
     # it's facing (a black eye alone is just unlit LEDs; the white LED makes it read)
-    ex = x + 1 if facing > 0 else x - 2
-    ey = y - 4
-    d.rectangle((ex, ey, ex + 1, ey + 1), fill=PUPIL_DARK)
-    d.point((ex + 1 if facing > 0 else ex, ey), fill=WHITE)
+    # (same spot at every size: a sixth of the radius forward, two thirds up; the giant's is 3x3)
+    n = 2 if r < 10 else 3
+    fwd = max(1, r // 6)
+    ex = x + fwd if facing > 0 else x - fwd - n + 1
+    ey = y - (2 * r) // 3
+    d.rectangle((ex, ey, ex + n - 1, ey + n - 1), fill=PUPIL_DARK)
+    d.point((ex + n - 1 if facing > 0 else ex, ey), fill=WHITE)
 
 
 def ghost(d, x, y, t, color, look=1, scared=False, blink=False):
@@ -93,6 +96,14 @@ def ghost(d, x, y, t, color, look=1, scared=False, blink=False):
     for ex in (x - 3, x + 2):                              # eyes looking the way it moves
         d.rectangle((ex - 1, y - 3, ex + 1, y), fill=WHITE)
         d.rectangle((ex + (1 if look > 0 else -1), y - 2, ex + (1 if look > 0 else -1), y - 1), fill=PUPIL)
+
+
+def eyes(d, x, y, look=-1):
+    """Just a ghost's eyes (after it's been eaten), looking the way they travel."""
+    for ex in (x - 3, x + 2):
+        d.rectangle((ex - 1, y - 3, ex + 1, y), fill=WHITE)
+        px = ex + (1 if look > 0 else -1)
+        d.rectangle((px, y - 2, px, y - 1), fill=PUPIL)
 
 
 def cherries(d, x, y):
@@ -233,7 +244,62 @@ def sweethearts():
     return Animation("sweethearts", frames)
 
 
-SCENES = [chase, power_pellet, cherry_bonus, sweethearts]
+def ghost_snack():
+    """The chomper catches a blue ghost: "200" pops up, then the ghost's eyes race home."""
+    frames = []
+    caught_at, pause = None, 14
+    gspeed = 0.55
+    for t in range(104):
+        img, d = _frame()
+        maze(d)
+        if caught_at is None:
+            x, gx = t - 7, 18 + int(t * gspeed)
+            if x + 4 >= gx - 4:                       # mouth reaches the ghost
+                caught_at = t
+        if caught_at is None:
+            ghost(d, gx, LANE - 1, t, None, look=1, scared=True, blink=t > 24 and t // 3 % 2 == 0)
+            chomper(d, x, LANE, t, 1)
+        else:
+            k = t - caught_at
+            cx = caught_at - 7
+            spot = 18 + int(caught_at * gspeed)
+            if k < pause:                             # the classic freeze: score where the ghost was
+                tiny_number(img, spot, LANE + 3, "200", (0, 255, 255) if k // 3 % 2 == 0 else WHITE)
+            else:
+                m = k - pause
+                if spot - int(m * 2.5) > -10:         # eyes zip back home to the left, fast
+                    eyes(d, spot - int(m * 2.5), LANE, look=-1)
+                if cx + m < W + 8:
+                    chomper(d, cx + m, LANE, t, 1)
+        frames.append(img)
+    return Animation("snack", frames)
+
+
+def giant():
+    """Intermission: a red ghost chases the chomper off to the left, then a giant chomper
+    comes back the other way after a frightened blue ghost."""
+    frames = []
+    for t in range(56):                               # part 1: right to left, the ghost chasing
+        img, d = _frame()
+        maze(d)
+        x = W + 8 - int(t * 1.6)
+        chomper(d, x, LANE, t, -1)
+        ghost(d, x + 16, LANE - 1, t, GHOSTS["red"], look=-1)
+        frames.append(img)
+    for t in range(74):                               # part 2: left to right, the tables turned
+        img, d = _frame()
+        maze(d)
+        gx = -8 + int(t * 1.25)
+        bx = -32 + int(t * 1.45)
+        if gx < W + 8:
+            ghost(d, gx, LANE - 1, t, None, look=1, scared=True)
+        if bx < W + 14:
+            chomper(d, bx, LANE, t // 2, 1, r=12)     # chomps at half speed: it's big
+        frames.append(img)
+    return Animation("giant", frames)
+
+
+SCENES = [chase, power_pellet, cherry_bonus, sweethearts, ghost_snack, giant]
 
 
 class Arcade:
