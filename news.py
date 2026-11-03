@@ -188,6 +188,8 @@ class News(Feed):
         self._lock = threading.Lock()
 
     def fetch(self):
+        if not self.urls:  # every news group switched off: nothing to fetch, nothing to report
+            return []
         errors = []
         for url in self.urls:
             try:

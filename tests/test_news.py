@@ -339,3 +339,8 @@ def test_page_saves_politics_group(tmp_path):
     assert saved["NEWS_POLITICS"] == "on"
     assert saved["NEWS_POLITICS_FEEDS"].split(",") == DEFAULT_POLITICS_FEEDS
     assert app.settings()["news_politics_feeds"] == DEFAULT_POLITICS_FEEDS
+
+
+def test_no_feeds_switched_on_is_not_an_error():
+    from news import News
+    assert News([]).fetch() == []
