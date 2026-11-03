@@ -31,6 +31,7 @@ from prices import CoinGecko, DataError, NetworkError, PriceError, RateLimitErro
 from render import Renderer
 from retry import backoff_delay
 from news import DEFAULT_FEEDS, News
+from videos import TAG_COLOR as VIDEO_TAG, Videos, parse_entry as parse_channel
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
@@ -38,7 +39,7 @@ from usage import Usage
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
-SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "news", "sports", "coins")
+SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "news", "videos", "sports", "coins")
 DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
@@ -118,6 +119,10 @@ class Config:
     news_feeds: list = field(default_factory=lambda: list(DEFAULT_FEEDS))
     news_per_cycle: int = 3
     news_speed: str = "normal"     # slow, normal, fast (see scroller.SPEEDS)
+    videos_channels: list = field(default_factory=list)  # "UC..." ids or "@handles"
+    videos_per_cycle: int = 3
+    videos_max_age_days: int = 3
+    videos_skip_shorts: bool = True
     sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
     timezone: str = ""
     weather_lat: float = 26.3017   # Edinburg, TX
@@ -170,6 +175,10 @@ class Config:
         c.news_feeds = [u for u in feeds if u.lower().startswith(("http://", "https://"))][:8] or list(DEFAULT_FEEDS)
         c.news_per_cycle = env("NEWS_PER_CYCLE", c.news_per_cycle, int, lo=1, hi=10)
         c.news_speed = env("NEWS_SPEED", c.news_speed, str.lower, choices=tuple(SPEEDS))
+        c.videos_channels = channels_from_env(env("VIDEOS_CHANNELS", ""))
+        c.videos_per_cycle = env("VIDEOS_PER_CYCLE", c.videos_per_cycle, int, lo=1, hi=10)
+        c.videos_max_age_days = env("VIDEOS_MAX_AGE_DAYS", c.videos_max_age_days, int, lo=1, hi=30)
+        c.videos_skip_shorts = env("VIDEOS_SKIP_SHORTS", c.videos_skip_shorts, bool)
         c.sports = follow_from_env(os.environ)
         c.timezone = env("TIMEZONE", "")
         c.weather_lat = env("WEATHER_LAT", c.weather_lat, float, lo=-90.0, hi=90.0)
@@ -192,6 +201,22 @@ class Config:
         c.panel_type = env("LED_PANEL_TYPE", "")
         c.no_hardware_pulse = env("LED_NO_HARDWARE_PULSE", False, bool)
         return c
+
+
+def channels_from_env(raw):
+    """VIDEOS_CHANNELS -> canonical channel entries; a bad one is logged and skipped."""
+    out = []
+    for item in (x.strip() for x in raw.split(",")):
+        if not item:
+            continue
+        try:
+            entry = parse_channel(item)
+        except ValueError as exc:
+            log.warning("ignoring YouTube channel %r: %s", item, exc)
+            continue
+        if entry not in out:
+            out.append(entry)
+    return out[:10]
 
 
 def get_tz(name):
@@ -260,6 +285,7 @@ class Ticker:
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
         self.news = News(cfg.news_feeds)
+        self.videos = self._make_videos(cfg)
         self.sports = Sports(cfg.sports)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
@@ -276,6 +302,10 @@ class Ticker:
 
     def _cg_indices(self, cfg):
         return "indices" in cfg.screens and cfg.indices_source == "coingecko"
+
+    @staticmethod
+    def _make_videos(cfg):
+        return Videos(cfg.videos_channels, cfg.videos_max_age_days, cfg.videos_skip_shorts)
 
     def _make_api(self, cfg):
         symbols = list(cfg.symbols)
@@ -435,6 +465,11 @@ class Ticker:
             self.sports.next_fetch = 0  # fetch with the new teams right away
         if new.news_feeds != old.news_feeds:
             self.news = News(new.news_feeds)
+        if (new.videos_channels, new.videos_max_age_days, new.videos_skip_shorts) != \
+                (old.videos_channels, old.videos_max_age_days, old.videos_skip_shorts):
+            self.videos = self._make_videos(new)
+            if "videos" in new.screens:
+                self.videos.update()  # check the channels now, so the phone page can show it
         if new.indices != old.indices:
             self.yahoo = Indices(parse_indices(new.indices))
         self.cfg = new
@@ -591,6 +626,11 @@ class Ticker:
                     speed = SPEEDS[self.cfg.news_speed]
                     for item in self.news.next_batch(self.cfg.news_per_cycle):
                         out.append(lambda item=item: self.renderer.news(item, speed))
+            elif name == "videos":
+                if self.videos.update():  # last good uploads; refreshed in the background
+                    speed = SPEEDS[self.cfg.news_speed]
+                    for item in self.videos.next_batch(self.cfg.videos_per_cycle):
+                        out.append(lambda item=item: self.renderer.news(item, speed, tag_rgb=VIDEO_TAG))
             elif name == "sports":
                 self.sports.update()     # background refresh: 60 s while live, else 15 min
                 now_ts = time.time()

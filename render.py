@@ -552,16 +552,16 @@ class Renderer:
         m = max(0, int((now_ts - ts) // 60))
         return "NOW" if m < 1 else f"{m}M" if m < 60 else f"{m // 60}H" if m < 48 * 60 else f"{m // 1440}D"
 
-    def news(self, item, speed=30, now_ts=None, stale=False):
+    def news(self, item, speed=30, now_ts=None, stale=False, tag_rgb=None):
         """One headline: source tag and age on top, the headline scrolling right to left
-        below in a big bold font."""
+        below in a big bold font. The Videos screen reuses it with a red tag."""
         import time as _time
         from news import clean_text, tag_color
         from scroller import Lane, Scroller, text_strip
         f = self.fonts
         bg = Image.new("RGB", (self.w, self.h))
         top = (self.h - 32) // 2
-        self.tag(bg, 0, top, item.get("source", "NEWS")[:12], tag_color(item.get("source", "NEWS")))
+        self.tag(bg, 0, top, item.get("source", "NEWS")[:12], tag_rgb or tag_color(item.get("source", "NEWS")))
         age = self.age(item.get("at"), now_ts or _time.time())
         if age:
             f["4x6"].draw(bg, self.w - f["4x6"].width(age), top + 6, age, DIM_TEXT)

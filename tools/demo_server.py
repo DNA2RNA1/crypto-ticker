@@ -39,9 +39,20 @@ class DemoSports:
                 if q in t[2].lower() or q == t[1].lower()]
 
 
+class DemoVideos:
+    """Channel check results as the phone page shows them (no network)."""
+
+    def status_for(self, entries):
+        sample = {"@examplemarkets": {"ok": True, "name": "MARKET CYCLE"},
+                  "@examplecharts": {"ok": True, "name": "CHART TALK"},
+                  "@nosuchchannel": {"ok": False, "error": "no channel with that handle"}}
+        return {e: sample.get(e) for e in entries}
+
+
 class DemoTicker:
     def __init__(self):
         self.sports = DemoSports()
+        self.videos = DemoVideos()
         now = time.time()
         self.assets = sample_assets(SYMBOLS.split(","))
         self.usage = DemoUsage()
@@ -96,7 +107,8 @@ def main():
     with open(env, "w") as fh:
         fh.write(f"SYMBOLS={SYMBOLS}\nFEATURED=btc,snek\nFOCUS=on\nLIST_VIEW=4\nLIST_PAGE_SECONDS=6\n"
                  "LAYOUT=classic\nBRIGHTNESS=70\nSLEEP=5\nDIM_HOURS=22-7\nDIM_BRIGHTNESS=15\n"
-                 "SCREENS=clock,weather,news,sports,feargreed,indices,coins\nWEATHER_PLACE=Home\nWEATHER_LAT=40.0000\n"
+                 "SCREENS=clock,weather,news,videos,sports,feargreed,indices,coins\n"
+                 "VIDEOS_CHANNELS=@examplemarkets,@examplecharts,@nosuchchannel\nWEATHER_PLACE=Home\nWEATHER_LAT=40.0000\n"
                  "SPORTS_NFL_FAVORITES=2:BUF\nSPORTS_NCAAF_FAVORITES=333:ALA,57:FLA\nSPORTS_NBA_TOP=8\n"
                  "WEATHER_LON=-75.0000\nTEMP_UNIT=F\nREFRESH_RATE=auto\nWEB_PIN=2468\n")
     sysinfo.wifi = lambda path=None: {"interface": "wlan0", "dbm": -58.0, "quality": 74, "label": "good"}

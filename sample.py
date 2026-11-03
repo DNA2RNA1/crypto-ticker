@@ -57,6 +57,16 @@ def sample_news(now_ts, ages=(25 * 60, 2 * 3600, 5 * 3600)):
     return [dict(item, at=now_ts - age, link=None) for item, age in zip(SAMPLE_NEWS, ages)]
 
 
+SAMPLE_VIDEOS = [  # made-up channels and titles
+    {"title": "Bitcoin: The Risk Nobody Is Talking About", "source": "MARKET CYCLE"},
+    {"title": "Altcoin Season and the Business Cycle", "source": "CHART TALK"},
+]
+
+
+def sample_videos(now_ts, ages=(3 * 3600, 26 * 3600)):
+    return [dict(item, at=now_ts - age, link=None) for item, age in zip(SAMPLE_VIDEOS, ages)]
+
+
 def sample_weather(code=2, is_day=True):
     """Made-up conditions: 76.8 now, a warm afternoon then cooling into the evening."""
     hourly = [76.8, 79.1, 81.0, 82.4, 83.0, 82.1, 80.2, 77.5, 74.6, 72.0, 70.3, 69.1, 68.4]

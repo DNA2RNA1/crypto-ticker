@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">
+ <link rel="self" href="http://www.youtube.com/feeds/videos.xml?channel_id=UCaaaaaaaaaaaaaaaaaaaaaa"/>
+ <id>yt:channel:aaaaaaaaaaaaaaaaaaaaaa</id>
+ <yt:channelId>aaaaaaaaaaaaaaaaaaaaaa</yt:channelId>
+ <title>Example Market Channel</title>
+ <link rel="alternate" href="https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa"/>
+ <author>
+  <name>Example Market Channel</name>
+  <uri>https://www.youtube.com/channel/UCaaaaaaaaaaaaaaaaaaaaaa</uri>
+ </author>
+ <published>2019-01-01T00:00:00+00:00</published>
+ <entry>
+  <id>yt:video:vid0000001</id>
+  <yt:videoId>vid0000001</yt:videoId>
+  <yt:channelId>UCaaaaaaaaaaaaaaaaaaaaaa</yt:channelId>
+  <title>Bitcoin: The Risk Nobody Is Talking About</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=vid0000001"/>
+  <author><name>Example Market Channel</name></author>
+  <published>2026-11-02T14:00:00+00:00</published>
+  <updated>2026-11-02T15:00:00+00:00</updated>
+  <media:group><media:title>Bitcoin: The Risk Nobody Is Talking About</media:title></media:group>
+ </entry>
+ <entry>
+  <id>yt:video:vid0000002</id>
+  <yt:videoId>vid0000002</yt:videoId>
+  <title>Quick take on ETH #shorts</title>
+  <link rel="alternate" href="https://www.youtube.com/shorts/vid0000002"/>
+  <published>2026-11-02T10:00:00+00:00</published>
+ </entry>
+ <entry>
+  <id>yt:video:vid0000003</id>
+  <yt:videoId>vid0000003</yt:videoId>
+  <title>Altcoin Season &amp; the Business Cycle</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=vid0000003"/>
+  <published>2026-11-01T12:00:00+00:00</published>
+ </entry>
+ <entry>
+  <id>yt:video:vid0000004</id>
+  <yt:videoId>vid0000004</yt:videoId>
+  <title>An Old Video From Last Month</title>
+  <link rel="alternate" href="https://www.youtube.com/watch?v=vid0000004"/>
+  <published>2026-10-01T12:00:00+00:00</published>
+ </entry>
+</feed>
