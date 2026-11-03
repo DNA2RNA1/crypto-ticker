@@ -66,6 +66,9 @@ EDITABLE = {  # key -> validator returning the string to store
     "WATCHLIST": lambda v: _watchlist(v),
     "WATCHLIST_REFRESH": lambda v: _choice(v.strip(), ("5", "10", "15", "30")),
     "WATCHLIST_PER_CYCLE": lambda v: _int(v, 1, 20),
+    "SPORTS_ODDS": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "ODDS_MARKETS": lambda v: _markets(v),
+    "ODDS_PER_CYCLE": lambda v: _int(v, 1, 10),
     "VIDEOS_MAX_AGE_DAYS": lambda v: _int(v, 1, 30),
     "VIDEOS_SKIP_SHORTS": lambda v: _choice(v.strip().lower(), ("on", "off")),
 }
@@ -94,6 +97,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "ARCADE_PER_CYCLE": "Arcade scenes per cycle",
           "WATCHLIST": "Watchlist", "WATCHLIST_REFRESH": "Watchlist refresh",
           "WATCHLIST_PER_CYCLE": "Watchlist symbols per cycle",
+          "SPORTS_ODDS": "Betting lines", "ODDS_MARKETS": "Prediction markets",
+          "ODDS_PER_CYCLE": "Markets per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts"}
 
 
@@ -173,8 +178,8 @@ def _tz(v):
     return v
 
 
-SCREENS = ("clock", "weather", "feargreed", "indices", "metals", "watchlist", "news", "videos", "sports", "arcade",
-           "coins")
+SCREENS = ("clock", "weather", "feargreed", "indices", "metals", "watchlist", "news", "videos", "sports", "odds",
+           "arcade", "coins")
 
 
 def _screens(v):
@@ -270,6 +275,12 @@ def _watchlist(v):
     Empty is allowed (nothing on the watchlist yet)."""
     from watchlist import format_entries, parse_entries
     return format_entries(parse_entries(v))
+
+
+def _markets(v):
+    """Polymarket / Kalshi links, one per line -> canonical entries, comma separated."""
+    from markets import parse_entries
+    return ",".join(parse_entries(v))
 
 
 def _default_feeds():
@@ -515,6 +526,10 @@ class WebApp:
             "watchlist_per_cycle": int(clean("WATCHLIST_PER_CYCLE", "5")),
             "watchlist_status": self._watchlist_status(clean),
             "watchlist_packs": self._watchlist_packs(),
+            "sports_odds": clean("SPORTS_ODDS", "off"),
+            "odds_markets": [e for e in clean("ODDS_MARKETS", "").split(",") if e],
+            "odds_per_cycle": int(clean("ODDS_PER_CYCLE", "3")),
+            "odds_status": self._odds_status(clean),
             "videos_max_age_days": int(clean("VIDEOS_MAX_AGE_DAYS", "3")),
             "videos_skip_shorts": clean("VIDEOS_SKIP_SHORTS", "on"),
             "videos_status": self._videos_status(clean),
@@ -539,6 +554,13 @@ class WebApp:
         if wl is None:
             return {sym: None for sym, _ in entries}
         return wl.status_for(entries)
+
+    def _odds_status(self, clean):
+        entries = [e for e in clean("ODDS_MARKETS", "").split(",") if e]
+        markets = getattr(self.ticker, "markets", None)
+        if markets is None:
+            return {e: None for e in entries}
+        return markets.status_for(entries)
 
     @staticmethod
     def _watchlist_packs():
@@ -893,7 +915,7 @@ function focusHint(){const h=$('#focushint');if(!h)return;
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
 const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',metals:'Gold, silver &amp; oil',
   news:'News headlines',videos:'YouTube videos',sports:'Sports scores',arcade:'Arcade animations',
-  watchlist:'Watchlist (stocks, funds, futures)'};
+  watchlist:'Watchlist (stocks, funds, futures)',odds:'Prediction markets'};
 function screenOrder(){  // enabled screens in their saved order, then the others
   const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
   const o=(S.screen_order||[]).filter(k=>all.includes(k));
@@ -906,6 +928,21 @@ function arcadeRows(){
   return `<h2>Arcade animations</h2><div class="card">
    <div class="row"><div class="grow">Scenes per cycle<div class="name" style="white-space:normal">Chase, power pellet, cherries and sweethearts take turns, about 5 seconds each.</div></div>
     <select id="arcn">${[1,2,3,4].map(n=>`<option ${S.arcade_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
+  </div>`;
+}
+function oddsRows(){
+  const st=S.odds_status||{};
+  const line=e=>{const x=st[e];
+    const msg=x==null?'<span class="name">Not checked yet</span>'
+      :x.ok?`<span style="color:#3ad07a">✓ ${esc(x.title)}${x.closed?' (closed)':''}</span>`
+      :`<span style="color:#ff6b5e">⚠ ${esc(x.error)}${x.had?' (showing the last good odds)':''}</span>`;
+    return `<div class="row"><div class="grow" style="min-width:0"><div style="overflow:hidden;text-overflow:ellipsis;font:13px ui-monospace,monospace">${esc(e)}</div><div style="font-size:13px">${msg}</div></div></div>`};
+  return `<h2>Prediction markets</h2><div class="card">
+   <div class="row" style="display:block"><div>Events<div class="name" style="white-space:normal">Paste Polymarket event links (polymarket.com/event/…) or Kalshi market links (kalshi.com/markets/…), one per line, up to 10. The panel shows the question and the two leading outcomes with their odds as a percentage. Display only.</div></div>
+    ${feedBox('omk',S.odds_markets)}</div>
+   ${(S.odds_markets||[]).map(line).join('')}
+   <div class="row"><div class="grow">Markets per cycle</div><select id="oper">${[1,2,3,4,5,6,8,10].map(k=>`<option ${S.odds_per_cycle==k?'selected':''}>${k}</option>`).join('')}</select></div>
+   <div class="row"><div class="name" style="white-space:normal">Checked every 5 minutes. Questions scroll at the news screen's speed.</div></div>
   </div>`;
 }
 function watchlistRows(){
@@ -969,7 +1006,10 @@ function newsRows(){
 const lg=k=>S.sports.find(l=>l.key==k);
 function sportsSection(){
   const on=(S.sports||[]).filter(l=>l.in_season), off=(S.sports||[]).filter(l=>!l.in_season);
-  return `<h2>Sports</h2>${on.map(l=>`<div class="card" style="margin-bottom:12px">
+  return `<h2>Sports</h2><div class="card" style="margin-bottom:12px">
+    <div class="row"><div class="grow">Betting lines<div class="name" style="white-space:normal">After each upcoming game: the spread for each team (the moneyline for baseball and hockey) and the over/under, from ESPN. Display only. Off by default.</div></div>
+     <label class="switch"><input type="checkbox" id="sodds" ${S.sports_odds=='on'?'checked':''}><span></span></label></div>
+   </div>${on.map(l=>`<div class="card" style="margin-bottom:12px">
     <div class="row"><div class="grow"><span class="sym">${esc(l.name)}</span></div>
      <label class="switch"><input type="checkbox" data-lg="${l.key}" ${l.on?'checked':''}><span></span></label></div>
     ${l.on?`<div class="row"><div class="grow">Top teams<div class="name" style="white-space:normal">${l.rankings?'From the AP poll':'Best records'}</div></div>
@@ -1024,6 +1064,7 @@ function render(){
   ${S.screens.includes('videos')?videosRows():''}
   ${S.screens.includes('arcade')?arcadeRows():''}
   ${S.screens.includes('watchlist')?watchlistRows():''}
+  ${S.screens.includes('odds')?oddsRows():''}
   <p class="hint">Shown in this order at the start of each cycle, then your coins (if Crypto prices is on). If everything is off, the coins show. The weather screen uses the location below.</p>
   ${S.screens.includes('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
@@ -1136,7 +1177,8 @@ function save(extra){
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,weather_extra:(S.weather_extra||[]).join(';'),timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,arcade_per_cycle:S.arcade_per_cycle,
-      watchlist:(S.watchlist||[]).join('\n'),watchlist_refresh:S.watchlist_refresh,watchlist_per_cycle:S.watchlist_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
+      watchlist:(S.watchlist||[]).join('\n'),watchlist_refresh:S.watchlist_refresh,watchlist_per_cycle:S.watchlist_per_cycle,
+      sports_odds:S.sports_odds,odds_markets:(S.odds_markets||[]).join('\n'),odds_per_cycle:S.odds_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
@@ -1189,6 +1231,9 @@ function bind(){
     const q=inp.value.trim(),box=$('#teams-'+inp.dataset.teamq);if(q.length<2){box.innerHTML='';return}
     inp._t=setTimeout(()=>teamSearch(inp.dataset.teamq,q,box),350)});
   if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
+  if($('#omk'))$('#omk').onchange=e=>{S.odds_markets=e.target.value.split(/[\s,]+/).filter(Boolean);save(0);setTimeout(load,1500);setTimeout(load,8000)};
+  if($('#oper'))$('#oper').onchange=e=>{S.odds_per_cycle=+e.target.value;save()};
+  if($('#sodds'))$('#sodds').onchange=e=>{S.sports_odds=e.target.checked?'on':'off';save()};
   if($('#wlist'))$('#wlist').onchange=e=>{S.watchlist=e.target.value.split(/[\s,]+/).filter(Boolean);save(0);setTimeout(load,1500);setTimeout(load,8000)};
   if($('#wpack'))$('#wpack').onchange=e=>{const p=(S.watchlist_packs||[])[+e.target.value];if(!p)return;
     const have=new Set((S.watchlist||[]).map(x=>x.split(':')[0].toUpperCase()));

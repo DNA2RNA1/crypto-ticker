@@ -610,6 +610,44 @@ class Renderer:
             self.stale_mark(bg)
         return Scroller(bg, [lane], speed=speed, min_hold=3.0)
 
+    # --- prediction markets (odds screen) ----------------------------------------
+    def market(self, m, speed=30, stale=False, hold=5.0):
+        """A prediction market: source tag with the question scrolling beside it, then the
+        two leading outcomes with their implied probability and a bar (display only)."""
+        from markets import TAG_COLORS
+        from news import clean_text
+        from scroller import Lane, Scroller, text_strip
+        f = self.fonts
+        bg = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        color = TAG_COLORS.get(m.get("source"), (120, 120, 120))
+        tag_w = self.tag(bg, 0, top, {"poly": "POLY", "kalshi": "KALSHI"}.get(m.get("source"), "ODDS"), color)
+        lanes = []
+        hf = f["5x8"]
+        title = clean_text(m.get("title", "") + (" (closed)" if m.get("closed") else ""),
+                           drawable=lambda ch: ord(ch) in hf.glyphs)
+        strip = text_strip(hf, title, PRICE)
+        lanes.append(Lane(strip, (tag_w + 2, top, self.w - 1, top + strip.height - 1)))
+        dim = tuple(c // 3 for c in color)
+        big = f["6x10"]
+        for i, (name, p) in enumerate((m.get("outcomes") or [])[:2]):
+            y = top + 9 + 12 * i
+            pct = "<1%" if p < 0.005 else ">99%" if p > 0.995 else f"{p * 100:.0f}%"
+            lead = i == 0
+            ImageDraw.Draw(bg).line((0, y + 10, max(0, round(p * self.w) - 1), y + 10), fill=dim if not lead else color)
+            big.draw(bg, self.w - big.width(pct), y + big.ascent - 1, pct, PRICE if lead else DIM_TEXT)
+            room = self.w - big.width(pct) - 3
+            name = clean_text(name.upper(), drawable=lambda ch: ord(ch) in big.glyphs) or "?"
+            font = big if big.width(name) <= room else f["5x8"]
+            ns = text_strip(font, name, PRICE if lead else DIM_TEXT, height=big.ascent + big.descent - 1)
+            if ns.width <= room:
+                bg.paste(ns, (0, y))
+            else:
+                lanes.append(Lane(ns, (0, y, room - 1, y + ns.height - 1)))
+        if stale:
+            self.stale_mark(bg)
+        return Scroller(bg, lanes, speed=speed, min_hold=hold)
+
     # --- sports screen ---------------------------------------------------------
     LIVE = (255, 60, 50)
     UPCOMING = (255, 200, 0)
@@ -710,6 +748,43 @@ class Renderer:
         if stale:
             self.stale_mark(bg)
         return Scroller(bg, lanes, speed=SPEEDS["normal"], min_hold=hold)
+
+    def game_odds(self, game, league, stale=False):
+        """The betting line for an upcoming game, shown after its normal screen (display
+        only): the total (O/U) on top, each team's spread on its row (the moneyline for
+        baseball and hockey, or when there's no spread). None if the game has no line."""
+        from sports import MONEYLINE_LEAGUES
+        odds = game.get("odds")
+        if not odds:
+            return None
+        f = self.fonts
+        use_ml = odds.get("ml") and (league.key in MONEYLINE_LEAGUES or not odds.get("spread"))
+        per_team = odds["ml"] if use_ml else odds.get("spread")
+        img = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        tag_w = self.tag(img, 0, top, league.name, league.color)
+        heads = []
+        if odds.get("total"):
+            heads.append(f"O/U {odds['total']}")
+        if use_ml:
+            heads = [f"ML {h}" for h in heads] + heads + ["MONEYLINE", "ML"]
+        elif per_team:
+            heads += ["SPREAD", "LINE"]
+        room = self.w - tag_w - 2
+        fits = [(font, h) for h in heads for font in (f["5x8"], f["4x6"]) if font.width(h) <= room]
+        if fits:  # the total first, in the bigger font if it fits
+            font, head = fits[0]
+            font.draw(img, self.w - font.width(head), top + (7 if font is f["5x8"] else 6), head, self.UPCOMING)
+        for y, side in ((top + 9, "away"), (top + 21, "home")):
+            left, _ = self.team_line(game[side], game.get("fav", {}).get(side), game)
+            text = (per_team or {}).get(side) or ""
+            font = f["6x10"] if left.width + 3 + f["6x10"].width(text) <= self.w else f["5x8"]
+            room = self.w - (font.width(text) + 3 if text else 0)
+            img.paste(left.crop((0, 0, min(left.width, room), left.height)), (0, y))
+            if text:
+                fav = text.startswith("-")
+                font.draw(img, self.w - font.width(text), y + f["6x10"].ascent, text, PRICE if fav else DIM_TEXT)
+        return self.stale_mark(img) if stale else img
 
     FG_ZONES = [(24, (230, 40, 30)), (44, (255, 120, 0)), (55, (230, 200, 0)),
                 (74, (120, 210, 60)), (100, (0, 210, 90))]

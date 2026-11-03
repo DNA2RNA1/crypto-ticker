@@ -115,7 +115,7 @@ def espn_competitor(team, home, score=None, rank=None, record=None, winner=False
 
 
 def espn_event(league, away, home, state, start, scores=(None, None), ranks=(None, None),
-               records=("6-2", "5-3"), detail=None, eid=None):
+               records=("6-2", "5-3"), detail=None, eid=None, odds=None):
     """One ESPN scoreboard event. ``start`` is a UTC datetime."""
     names = {"pre": ("STATUS_SCHEDULED", "Scheduled"), "in": ("STATUS_IN_PROGRESS", "In Progress"),
              "post": ("STATUS_FINAL", "Final")}
@@ -131,12 +131,39 @@ def espn_event(league, away, home, state, start, scores=(None, None), ranks=(Non
             "status": status,
             "competitors": [espn_competitor(home, True, sh, ranks[1], records[1], win == "home"),
                             espn_competitor(away, False, sa, ranks[0], records[0], win == "away")]}
+    if odds:
+        comp["odds"] = [odds]
     return {"id": comp["id"], "date": comp["date"], "name": f"{away[2]} at {home[2]}",
             "shortName": f"{away[1]} @ {home[1]}", "status": status, "competitions": [comp]}
 
 
 def espn_scoreboard(events):
     return {"leagues": [{"id": "1", "name": "League"}], "season": {"type": 2, "year": 2026}, "events": events}
+
+
+# made-up lines in ESPN's scoreboard format: (home spread, total, away ML, home ML)
+LINES = {"nfl": (-3.5, 47.5, 145, -170), "ncaaf": (-14, 55.5, 600, -900), "nba": (-6.5, 228.5, 210, -250),
+         "ncaam": (-8, 141.5, 320, -400), "mlb": (-1.5, 8.5, 120, -140), "nhl": (-1.5, 6.5, 110, -130)}
+
+
+def sample_odds(league, home):
+    spread, total, away_ml, home_ml = LINES[league]
+    return {"provider": {"id": "1", "name": "Sample"}, "details": f"{home[1]} {spread:g}", "overUnder": total,
+            "spread": spread, "awayTeamOdds": {"favorite": False, "moneyLine": away_ml},
+            "homeTeamOdds": {"favorite": True, "moneyLine": home_ml}}
+
+
+SAMPLE_MARKETS = [  # made-up questions and odds, for previews only
+    {"source": "poly", "title": "Which team wins the championship?", "closed": False,
+     "outcomes": [("Lakers", 0.31), ("Celtics", 0.24), ("Thunder", 0.18)]},
+    {"source": "kalshi", "title": "Will the Fed cut rates at the next meeting?", "closed": False,
+     "outcomes": [("Yes", 0.73), ("No", 0.27)]},
+]
+
+
+def sample_markets(now_ts):
+    return [dict(m, entry=f"{m['source']}:sample-{i}", fetched=now_ts, stale=False)
+            for i, m in enumerate(SAMPLE_MARKETS)]
 
 
 def sample_games(now=None):
@@ -154,7 +181,8 @@ def sample_games(now=None):
             espn_event(key, teams[2], teams[3], "post", now - timedelta(hours=6), SCORES[key][1],
                        ranks=(3, 12) if ranked else (None, None), detail="Final/OT" if key == "nba" else None),
             espn_event(key, teams[4] if len(teams) > 4 else teams[0], teams[5] if len(teams) > 5 else teams[1],
-                       "pre", now + timedelta(days=1, hours=2), ranks=(1, None) if ranked else (None, None)),
+                       "pre", now + timedelta(days=1, hours=2), ranks=(1, None) if ranked else (None, None),
+                       odds=sample_odds(key, teams[5] if len(teams) > 5 else teams[1])),
         ]
         out[key] = parse_scoreboard(espn_scoreboard(events), lg)
     return out

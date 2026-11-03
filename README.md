@@ -36,6 +36,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 4. [Configuration](#configuration)
 5. [Weather, news, videos and sports screens](#weather-news-videos-and-sports-screens)
    - [Watchlist: stocks, funds and futures](#watchlist-stocks-funds-and-futures)
+   - [Odds: betting lines and prediction markets](#odds-betting-lines-and-prediction-markets)
 6. [Phone settings page](#phone-settings-page)
 7. [Updating (and rolling back)](#updating-and-rolling-back)
 8. [iPhone widget](#iphone-widget)
@@ -349,6 +350,35 @@ Yahoo's chart data is free, needs no key, and is unofficial: it can change or ra
 notice (the ticker tries both Yahoo hosts, then curl, as for the indices). Futures quotes may be
 delayed by 10-30 minutes depending on the exchange. Not for trading.
 
+### Odds: betting lines and prediction markets
+
+Both are **display only and off by default**: the ticker shows numbers, nothing links to or
+places a bet.
+
+**Betting lines.** Turn on *Betting lines* at the top of the Sports section on the phone page
+(`SPORTS_ODDS=on`). After each upcoming game's screen, the panel flips in place to the line:
+the over/under (O/U) on top and each team's spread on its row (`-3.5` is the favorite, shown in
+white). Baseball and hockey show the moneyline instead (`-140` / `+120`), as their spreads are
+nearly always 1.5. The line comes from the same ESPN scoreboard as the scores (no extra requests)
+and disappears once the game starts. A game without a line just shows its normal screen.
+
+| Spread + O/U | Moneyline |
+|--|--|
+| ![](docs/screenshots/22-sports-odds-spread.png) | ![](docs/screenshots/22b-sports-odds-moneyline.png) |
+
+**Prediction markets** (`odds` screen). Paste links to events you want to follow on the phone
+page, one per line, up to 10: Polymarket event links (`polymarket.com/event/…`) or Kalshi market
+links (`kalshi.com/markets/…`). The panel shows the source, the question scrolling beside it,
+and the two leading outcomes with their implied probability (a Yes share trading at 62¢ = 62%)
+and a bar. Events with many outcomes (one per team or candidate) show the two most likely.
+Prices are checked every 5 minutes from each site's public, keyless data API; each event keeps
+its last good odds (with the red stale dot) if a check fails, and the phone page shows ✓ and the
+event's title, or what went wrong, under each link.
+
+| Polymarket | Kalshi |
+|--|--|
+| ![](docs/screenshots/23-odds-polymarket.png) | ![](docs/screenshots/23b-odds-kalshi.png) |
+
 ## Phone settings page
 
 1. On your phone (same Wi-Fi), open `http://<hostname>.local:8080`. `install.sh` prints the address.
@@ -574,9 +604,9 @@ Scriptable and is drawn as HTML (fonts, spacing and icons differ from iOS).
 
 | | |
 |--|--|
-| Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `21e-…`) |
+| Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `23b-…`) |
 | Animations | `../preview-scroll.gif`, `../preview-news.gif`, `../preview-sports.gif` |
-| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-screens`, `-news`, `-videos`, `-watchlist`, `-sports`, `-list-view`, `-indices`, `-status-update`, `-deploy-key` |
+| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-screens`, `-news`, `-videos`, `-watchlist`, `-odds`, `-sports`, `-list-view`, `-indices`, `-status-update`, `-deploy-key` |
 | iPhone widget | `widget-contact-sheet.png`, `widget-coins-*.png`, `widget-news-*.png` |
 
 ![Every panel screen](docs/screenshots/panel-contact-sheet.png)

@@ -17,7 +17,8 @@ from zoneinfo import ZoneInfo
 
 from display import MatrixDisplay
 from prices import NetworkError, RateLimitError
-from sample import apply_sample, sample_games, sample_news, sample_videos, sample_watchlist, sample_weather
+from sample import (apply_sample, sample_games, sample_markets, sample_news, sample_videos, sample_watchlist,
+                    sample_weather)
 from videos import TAG_COLOR as VIDEO_TAG
 from sports import BY_KEY
 from ticker import HERE, Config, Ticker
@@ -75,6 +76,11 @@ def main():
     news = sample_news(news_now)
     vids = sample_videos(news_now)
     watch = sample_watchlist(news_now)
+    markets = sample_markets(news_now)
+
+    def odds(key):
+        g = next(g for g in games[key] if g["state"] == "pre")
+        return r.game_odds(g, BY_KEY[key])
     watch_list = [{"symbol": w["label"], "price": w["price"], "change_24h": w["change"],
                    "currency": w["currency"]} for w in watch]
     games = sample_games(SPORTS_NOW)
@@ -139,6 +145,10 @@ def main():
         ("21c-watchlist-closed", lambda: r.quote(watch[2])),
         ("21d-watchlist-fund-nav", lambda: r.quote(watch[3])),
         ("21e-watchlist-list", lambda: r.list_page(watch_list, rows=5)),
+        ("22-sports-odds-spread", lambda: odds("nfl")),
+        ("22b-sports-odds-moneyline", lambda: odds("mlb")),
+        ("23-odds-polymarket", lambda: r.market(markets[0]).first_frame()),
+        ("23b-odds-kalshi", lambda: mid(r.market(markets[1]))),
     ]
     paths = []
     for name, make in shots:
@@ -254,6 +264,8 @@ LABELS = {
     "21-watchlist-stock": "Watchlist: stock", "21b-watchlist-future": "Watchlist: future (no $)",
     "21c-watchlist-closed": "Watchlist: market closed", "21d-watchlist-fund-nav": "Watchlist: fund NAV, 1 month",
     "21e-watchlist-list": "Watchlist: list view",
+    "22-sports-odds-spread": "Sports odds: spread + O/U", "22b-sports-odds-moneyline": "Sports odds: moneyline",
+    "23-odds-polymarket": "Prediction market (Polymarket)", "23b-odds-kalshi": "Prediction market (Kalshi)",
 }
 
 

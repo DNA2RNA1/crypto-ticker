@@ -15,6 +15,7 @@ games are dropped (or the screen is skipped) and nothing crashes.
 import json
 import logging
 import os
+import re
 import threading
 import time
 from dataclasses import dataclass, field
@@ -133,6 +134,69 @@ def parse_team(c):
             "home": c.get("homeAway") == "home", "winner": bool(c.get("winner"))}
 
 
+# Baseball and hockey are bet on the moneyline (their spreads are almost always 1.5)
+MONEYLINE_LEAGUES = ("mlb", "nhl")
+
+
+def _line(v):
+    """A spread or total as the panel shows it: -3.5, +3, 47.5 (None if not a number)."""
+    try:
+        f = float(str(v).strip())
+    except (TypeError, ValueError):
+        return None
+    if f != f or abs(f) > 999:
+        return None
+    return f"{f:g}"
+
+
+def _moneyline(side, odds, which):
+    """A moneyline like +145 / -170: ``homeTeamOdds.moneyLine`` (int), or the newer
+    ``moneyline.home.close.odds`` (string). None if neither is there."""
+    v = (odds.get(f"{which}TeamOdds") or {}).get("moneyLine")
+    if v is None:
+        node = (odds.get("moneyline") or {}).get(which) or {}
+        v = ((node.get("close") or node.get("open") or {}).get("odds"))
+    if isinstance(v, str):
+        v = v.strip().upper()
+        if v in ("EVEN", "EV"):
+            return "EVEN"
+        try:
+            v = float(v)
+        except ValueError:
+            return None
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v != v or abs(v) < 100 or abs(v) > 99999:
+        return None
+    return f"{int(v):+d}"
+
+
+def parse_odds(comp, away, home):
+    """The pre-game betting line from an ESPN competition's ``odds`` list, for display:
+    {"spread": {"away": "+3.5", "home": "-3.5"} or None, "total": "47.5" or None,
+     "ml": {"away": "+145", "home": "-170"} or None}. None if there's no line at all.
+
+    The spread comes from ``details`` ("KC -3.5", "EVEN"): the named team gets the
+    number, the other team the opposite. Odd formats give no spread rather than a wrong one."""
+    lines = comp.get("odds") or []
+    odds = next((o for o in lines if isinstance(o, dict)), None)
+    if not odds:
+        return None
+    spread = None
+    details = str(odds.get("details") or "").strip().upper()
+    m = re.fullmatch(r"([A-Z0-9&.]{1,6})\s+([+-]?\d{1,3}(?:\.\d)?)", details)
+    if details in ("EVEN", "PK", "PICK", "PICK'EM"):
+        spread = {"away": "PK", "home": "PK"}
+    elif m and m[1] in (away["abbr"], home["abbr"]):
+        n = float(m[2])
+        fav, dog = ("home", "away") if m[1] == home["abbr"] else ("away", "home")
+        spread = {fav: f"{n:+g}", dog: f"{-n:+g}"} if n else {"away": "PK", "home": "PK"}
+    total = _line(odds.get("overUnder"))
+    ml = {"away": _moneyline(away, odds, "away"), "home": _moneyline(home, odds, "home")}
+    ml = ml if ml["away"] and ml["home"] else None
+    if not (spread or total or ml):
+        return None
+    return {"spread": spread, "total": total, "ml": ml}
+
+
 def parse_event(ev, league):
     """One ESPN event -> game dict, or None if it doesn't look like a game."""
     try:
@@ -150,10 +214,14 @@ def parse_event(ev, league):
         start = _ts(ev.get("date") or comp.get("date"))
         if start is None:
             return None
+        try:
+            odds = parse_odds(comp, away, home) if state == "pre" else None
+        except (AttributeError, TypeError, ValueError):
+            odds = None
         return {"id": str(ev.get("id") or comp.get("id") or f"{away['id']}@{home['id']}:{start}"),
                 "league": league.key, "state": state, "start": start,
                 "detail": (stype.get("shortDetail") or stype.get("detail") or stype.get("description") or "").strip(),
-                "completed": bool(stype.get("completed")), "away": away, "home": home}
+                "completed": bool(stype.get("completed")), "away": away, "home": home, "odds": odds}
     except (AttributeError, TypeError, ValueError, KeyError) as exc:
         log.debug("skipping odd %s event: %s", league.key, exc)
         return None
