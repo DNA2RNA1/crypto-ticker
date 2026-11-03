@@ -33,6 +33,7 @@ from retry import backoff_delay
 from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, DEFAULT_POLITICS_FEEDS, News
 from videos import TAG_COLOR as VIDEO_TAG, Videos, parse_entry as parse_channel
 from arcade import Animation, Arcade
+from markets import Markets, entries_from_env as markets_from_env
 from watchlist import REFRESH_CHOICES as WATCHLIST_REFRESH, Watchlist, entries_from_env as watchlist_from_env
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
@@ -42,7 +43,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
 SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "metals", "watchlist", "news", "videos", "sports",
-                "arcade", "coins")
+                "odds", "arcade", "coins")
 DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
@@ -158,6 +159,9 @@ class Config:
     watchlist: list = field(default_factory=list)  # [(Yahoo symbol, panel label)]
     watchlist_refresh: int = 10    # minutes between watchlist refreshes
     watchlist_per_cycle: int = 5   # watchlist symbols per cycle (they rotate)
+    sports_odds: bool = False      # show the betting line after upcoming games (display only)
+    odds_markets: list = field(default_factory=list)  # "poly:<slug>" / "kalshi:<TICKER>"
+    odds_per_cycle: int = 3        # prediction markets per cycle (they rotate)
     videos_max_age_days: int = 3
     videos_skip_shorts: bool = True
     sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
@@ -230,6 +234,9 @@ class Config:
         c.watchlist_refresh = int(env("WATCHLIST_REFRESH", str(c.watchlist_refresh),
                                       choices=tuple(str(m) for m in WATCHLIST_REFRESH)))
         c.watchlist_per_cycle = env("WATCHLIST_PER_CYCLE", c.watchlist_per_cycle, int, lo=1, hi=20)
+        c.sports_odds = env("SPORTS_ODDS", False, bool)
+        c.odds_markets = markets_from_env(env("ODDS_MARKETS", ""))
+        c.odds_per_cycle = env("ODDS_PER_CYCLE", c.odds_per_cycle, int, lo=1, hi=10)
         c.videos_max_age_days = env("VIDEOS_MAX_AGE_DAYS", c.videos_max_age_days, int, lo=1, hi=30)
         c.videos_skip_shorts = env("VIDEOS_SKIP_SHORTS", c.videos_skip_shorts, bool)
         c.sports = follow_from_env(os.environ)
@@ -344,6 +351,7 @@ class Ticker:
         self.videos = self._make_videos(cfg)
         self.arcade = Arcade()
         self.watchlist = Watchlist(cfg.watchlist, cfg.watchlist_refresh)
+        self.markets = Markets(cfg.odds_markets)
         self.sports = Sports(cfg.sports)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
@@ -543,6 +551,10 @@ class Ticker:
                 self.videos.update()  # check the channels now, so the phone page can show it
         if new.indices != old.indices:
             self.yahoo = Indices(parse_indices(new.indices))
+        if new.odds_markets != old.odds_markets:
+            self.markets = Markets(new.odds_markets)
+            if "odds" in new.screens:
+                self.markets.update()  # check the links now, so the phone page can show it
         if (new.watchlist, new.watchlist_refresh) != (old.watchlist, old.watchlist_refresh):
             self.watchlist = Watchlist(new.watchlist, new.watchlist_refresh)
             if "watchlist" in new.screens:
@@ -768,6 +780,15 @@ class Ticker:
                     stale = age > (3 * LIVE_EVERY if g["state"] == "in" else 2 * IDLE_EVERY)
                     out.append(lambda g=g, stale=stale: self.renderer.game(
                         g, LEAGUE_BY_KEY[g["league"]], self.tz, time.time(), hold=sleep, stale=stale))
+                    if self.cfg.sports_odds and g["state"] == "pre" and g.get("odds"):
+                        # the line flips in place after the game's own screen
+                        out.append(lambda g=g, stale=stale: (self.renderer.game_odds(
+                            g, LEAGUE_BY_KEY[g["league"]], stale=stale), max(2.0, sleep * 0.8), False))
+            elif name == "odds":
+                self.markets.update()    # background refresh every 5 minutes
+                speed = SPEEDS[self.cfg.news_speed]
+                for m in self.markets.next_batch(self.markets.rows(), self.cfg.odds_per_cycle):
+                    out.append(lambda m=m: self.renderer.market(m, speed, stale=m["stale"], hold=sleep))
             elif name == "coins":
                 out += self.coin_screens()
         return out

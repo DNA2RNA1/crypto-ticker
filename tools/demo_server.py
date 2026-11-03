@@ -61,11 +61,20 @@ class DemoWatchlist:
         return {sym: sample.get(sym) for sym, _ in entries}
 
 
+class DemoMarkets:
+    def status_for(self, entries):
+        sample = {"poly:nba-champion-2027": {"ok": True, "title": "NBA Champion 2027", "closed": False},
+                  "kalshi:KXFEDDECISION-26DEC": {"ok": True, "title": "Fed decision in December", "closed": False},
+                  "poly:old-event": {"ok": False, "error": "no such Polymarket event", "had": False}}
+        return {e: sample.get(e) for e in entries}
+
+
 class DemoTicker:
     def __init__(self):
         self.sports = DemoSports()
         self.videos = DemoVideos()
         self.watchlist = DemoWatchlist()
+        self.markets = DemoMarkets()
         now = time.time()
         self.assets = sample_assets(SYMBOLS.split(","))
         self.usage = DemoUsage()
@@ -120,7 +129,8 @@ def main():
     with open(env, "w") as fh:
         fh.write(f"SYMBOLS={SYMBOLS}\nFEATURED=btc,snek\nFOCUS=on\nLIST_VIEW=4\nLIST_PAGE_SECONDS=6\n"
                  "LAYOUT=classic\nBRIGHTNESS=70\nSLEEP=5\nDIM_HOURS=22-7\nDIM_BRIGHTNESS=15\n"
-                 "SCREENS=clock,weather,news,videos,sports,feargreed,indices,watchlist,coins\n"
+                 "SCREENS=clock,weather,news,videos,sports,odds,feargreed,indices,watchlist,coins\n"
+                 "SPORTS_ODDS=on\nODDS_MARKETS=poly:nba-champion-2027,kalshi:KXFEDDECISION-26DEC,poly:old-event\n"
                  "WATCHLIST=AAPL,VTSAX,ES=F:S&P,CL=F:WTI,NOPE\nWATCHLIST_PER_CYCLE=3\n"
                  "VIDEOS_CHANNELS=@examplemarkets,@examplecharts,@nosuchchannel\nWEATHER_PLACE=Home\nWEATHER_LAT=40.0000\n"
                  "SPORTS_NFL_FAVORITES=2:BUF\nSPORTS_NCAAF_FAVORITES=333:ALA,57:FLA\nSPORTS_NBA_TOP=8\n"
