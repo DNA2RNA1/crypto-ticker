@@ -158,3 +158,34 @@ def sample_games(now=None):
         ]
         out[key] = parse_scoreboard(espn_scoreboard(events), lg)
     return out
+
+
+def sample_watchlist(now_ts):
+    """Made-up watchlist quotes (a stock, a future, a mutual fund, a closed market)."""
+    def day(start, end, n=60, wiggle=0.0012, seed=3):
+        rng = random.Random(seed)
+        walk, v = [], 0.0
+        for _ in range(n):
+            v += rng.gauss(0, wiggle)
+            walk.append(v)
+        # a random walk bent so it starts at ``start`` and ends exactly at ``end``
+        return [start + (end - start) * i / (n - 1) + start * (w - walk[-1] * i / (n - 1))
+                for i, w in enumerate(walk)]
+
+    def q(label, symbol, kind, price, prev, cur, pts, closed=False, span=None, name=""):
+        row = {"symbol": symbol, "label": label, "kind": kind, "name": name, "price": price,
+               "prev_close": prev, "change": (price - prev) / prev * 100, "points": price - prev,
+               "currency": cur, "intraday": pts, "traded": now_ts - (5 * 3600 if closed else 120),
+               "closed": closed, "fetched": now_ts, "stale": False}
+        if span:
+            row["span"] = span
+        return row
+
+    return [
+        q("AAPL", "AAPL", "EQUITY", 231.47, 228.12, "usd", day(228.4, 231.47, seed=1), name="Apple Inc."),
+        q("S&P", "ES=F", "FUTURE", 6012.25, 6031.50, "", day(6030, 6012.25, seed=2)),
+        q("WTI", "CL=F", "FUTURE", 71.38, 70.62, "", day(70.7, 71.38, seed=4), closed=True),
+        q("VTSAX", "VTSAX", "MUTUALFUND", 148.32, 147.61, "usd",
+          day(141.0, 148.32, n=22, wiggle=0.003, seed=5), span="1M"),
+        q("CORN", "ZC=F", "FUTURE", 428.75, 431.0, "", day(431, 428.75, seed=6)),
+    ]

@@ -35,6 +35,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
    - [Work Wi-Fi (WPA2-Enterprise)](#work-wi-fi-wpa2-enterprise)
 4. [Configuration](#configuration)
 5. [Weather, news, videos and sports screens](#weather-news-videos-and-sports-screens)
+   - [Watchlist: stocks, funds and futures](#watchlist-stocks-funds-and-futures)
 6. [Phone settings page](#phone-settings-page)
 7. [Updating (and rolling back)](#updating-and-rolling-back)
 8. [iPhone widget](#iphone-widget)
@@ -316,6 +317,38 @@ in the Screens list like any other.
 
 ![Arcade animations](docs/preview-arcade.gif)
 
+### Watchlist: stocks, funds and futures
+
+The **Watchlist** screen (`watchlist`, off by default) shows any Yahoo Finance symbols: stocks
+(`AAPL`), ETFs (`SPY`), mutual funds (`VTSAX`), futures (`ES=F`, `CL=F`, `GC=F`) and indices
+(`^VIX`, `^TNX`). Each gets one screen: its name and price, today's change in % and points, and
+today's chart against yesterday's close (dotted line), like the index charts.
+
+| Stock | Future | Market closed | Mutual fund | List view |
+|--|--|--|--|--|
+| ![](docs/screenshots/21-watchlist-stock.png) | ![](docs/screenshots/21b-watchlist-future.png) | ![](docs/screenshots/21c-watchlist-closed.png) | ![](docs/screenshots/21d-watchlist-fund-nav.png) | ![](docs/screenshots/21e-watchlist-list.png) |
+
+- **Names.** Write a short panel name after a colon (`CL=F:WTI`); otherwise the symbol is used
+  (`ES=F` shows as `ES`). Names are up to 6 characters.
+- **Packs.** On the phone page, **Add a pack** appends a ready-made group: stock index futures,
+  energy, metals, grains & softs, livestock, rates & dollar, crypto futures & VIX, popular index
+  funds, popular ETFs. Up to 20 symbols in total.
+- **Mutual funds** are priced once a day after the close, so they show **NAV** (net asset value)
+  and a one-month chart instead of an intraday one.
+- **CLOSED** replaces the point change when a symbol's last trade is more than 90 minutes old
+  (overnight, weekends, holidays). When every symbol is closed, the Pi checks every 30 minutes.
+- **$ or not.** Stocks, ETFs and funds priced in dollars show a `$`; futures and indices are plain
+  numbers (index points, cents per bushel, a yield in %), so they don't.
+- **Rotation.** *Symbols per cycle* sets how many show each cycle; they take turns. With List view
+  on, list pages of the whole watchlist follow (each row in its own currency).
+- **Failures.** One request per symbol, every 5-30 minutes (default 10). A bad symbol is skipped
+  and the phone page shows why under it; a symbol that loaded before keeps its last good price
+  with the red stale dot while Yahoo or the Wi-Fi is down.
+
+Yahoo's chart data is free, needs no key, and is unofficial: it can change or rate-limit without
+notice (the ticker tries both Yahoo hosts, then curl, as for the indices). Futures quotes may be
+delayed by 10-30 minutes depending on the exchange. Not for trading.
+
 ## Phone settings page
 
 1. On your phone (same Wi-Fi), open `http://<hostname>.local:8080`. `install.sh` prints the address.
@@ -541,9 +574,9 @@ Scriptable and is drawn as HTML (fonts, spacing and icons differ from iOS).
 
 | | |
 |--|--|
-| Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `19-…`) |
+| Every panel screen | `panel-contact-sheet.png` (individual screens: `01-…` to `21e-…`) |
 | Animations | `../preview-scroll.gif`, `../preview-news.gif`, `../preview-sports.gif` |
-| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-screens`, `-news`, `-sports`, `-list-view`, `-indices`, `-status-update`, `-deploy-key` |
+| Settings page (iPhone) | `settings-page-iphone-full.png`, `-top`, `-screens`, `-news`, `-videos`, `-watchlist`, `-sports`, `-list-view`, `-indices`, `-status-update`, `-deploy-key` |
 | iPhone widget | `widget-contact-sheet.png`, `widget-coins-*.png`, `widget-news-*.png` |
 
 ![Every panel screen](docs/screenshots/panel-contact-sheet.png)

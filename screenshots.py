@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from display import MatrixDisplay
 from prices import NetworkError, RateLimitError
-from sample import apply_sample, sample_games, sample_news, sample_videos, sample_weather
+from sample import apply_sample, sample_games, sample_news, sample_videos, sample_watchlist, sample_weather
 from videos import TAG_COLOR as VIDEO_TAG
 from sports import BY_KEY
 from ticker import HERE, Config, Ticker
@@ -74,6 +74,9 @@ def main():
     news_now = SPORTS_NOW.timestamp()
     news = sample_news(news_now)
     vids = sample_videos(news_now)
+    watch = sample_watchlist(news_now)
+    watch_list = [{"symbol": w["label"], "price": w["price"], "change_24h": w["change"],
+                   "currency": w["currency"]} for w in watch]
     games = sample_games(SPORTS_NOW)
 
     def mid(anim):
@@ -131,6 +134,11 @@ def main():
         ("20b-arcade-power-pellet", lambda: scene(1, 0.62)),
         ("20c-arcade-cherries", lambda: scene(2, 0.12)),
         ("20d-arcade-sweethearts", lambda: scene(3, 0.6)),
+        ("21-watchlist-stock", lambda: r.quote(watch[0])),
+        ("21b-watchlist-future", lambda: r.quote(watch[1])),
+        ("21c-watchlist-closed", lambda: r.quote(watch[2])),
+        ("21d-watchlist-fund-nav", lambda: r.quote(watch[3])),
+        ("21e-watchlist-list", lambda: r.list_page(watch_list, rows=5)),
     ]
     paths = []
     for name, make in shots:
@@ -243,6 +251,9 @@ LABELS = {
     "19-sports-row-scrolling": "Sports: long row scrolls",
     "20-arcade-chase": "Arcade: chase", "20b-arcade-power-pellet": "Arcade: power pellet",
     "20c-arcade-cherries": "Arcade: cherries", "20d-arcade-sweethearts": "Arcade: sweethearts",
+    "21-watchlist-stock": "Watchlist: stock", "21b-watchlist-future": "Watchlist: future (no $)",
+    "21c-watchlist-closed": "Watchlist: market closed", "21d-watchlist-fund-nav": "Watchlist: fund NAV, 1 month",
+    "21e-watchlist-list": "Watchlist: list view",
 }
 
 

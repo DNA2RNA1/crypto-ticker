@@ -49,10 +49,23 @@ class DemoVideos:
         return {e: sample.get(e) for e in entries}
 
 
+class DemoWatchlist:
+    """Symbol check results as the phone page shows them (no network)."""
+
+    def status_for(self, entries):
+        sample = {"AAPL": {"ok": True, "name": "Apple Inc.", "kind": "EQUITY"},
+                  "VTSAX": {"ok": True, "name": "Vanguard Total Stock Mkt Idx Adm", "kind": "MUTUALFUND"},
+                  "ES=F": {"ok": True, "name": "E-Mini S&P 500", "kind": "FUTURE"},
+                  "CL=F": {"ok": True, "name": "Crude Oil", "kind": "FUTURE"},
+                  "NOPE": {"ok": False, "error": "No data found, symbol may be delisted", "had": False}}
+        return {sym: sample.get(sym) for sym, _ in entries}
+
+
 class DemoTicker:
     def __init__(self):
         self.sports = DemoSports()
         self.videos = DemoVideos()
+        self.watchlist = DemoWatchlist()
         now = time.time()
         self.assets = sample_assets(SYMBOLS.split(","))
         self.usage = DemoUsage()
@@ -107,7 +120,8 @@ def main():
     with open(env, "w") as fh:
         fh.write(f"SYMBOLS={SYMBOLS}\nFEATURED=btc,snek\nFOCUS=on\nLIST_VIEW=4\nLIST_PAGE_SECONDS=6\n"
                  "LAYOUT=classic\nBRIGHTNESS=70\nSLEEP=5\nDIM_HOURS=22-7\nDIM_BRIGHTNESS=15\n"
-                 "SCREENS=clock,weather,news,videos,sports,feargreed,indices,coins\n"
+                 "SCREENS=clock,weather,news,videos,sports,feargreed,indices,watchlist,coins\n"
+                 "WATCHLIST=AAPL,VTSAX,ES=F:S&P,CL=F:WTI,NOPE\nWATCHLIST_PER_CYCLE=3\n"
                  "VIDEOS_CHANNELS=@examplemarkets,@examplecharts,@nosuchchannel\nWEATHER_PLACE=Home\nWEATHER_LAT=40.0000\n"
                  "SPORTS_NFL_FAVORITES=2:BUF\nSPORTS_NCAAF_FAVORITES=333:ALA,57:FLA\nSPORTS_NBA_TOP=8\n"
                  "WEATHER_LON=-75.0000\nTEMP_UNIT=F\nREFRESH_RATE=auto\nWEB_PIN=2468\n")
