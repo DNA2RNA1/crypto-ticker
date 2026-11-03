@@ -22,7 +22,7 @@ from PIL import Image
 
 from zoneinfo import ZoneInfo
 
-from feeds import FearGreed, Indices, Weather, parse_indices
+from feeds import FearGreed, Indices, Metals, Weather, parse_indices
 from session import session_change
 from cache import RequestCache
 from icons import IconStore
@@ -39,7 +39,7 @@ from usage import Usage
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
-SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "news", "videos", "sports", "coins")
+SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "metals", "news", "videos", "sports", "coins")
 DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
@@ -284,6 +284,7 @@ class Ticker:
                                "celsius" if cfg.temp_unit == "C" else "fahrenheit")
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
+        self.metals = Metals()
         self.news = News(cfg.news_feeds)
         self.videos = self._make_videos(cfg)
         self.sports = Sports(cfg.sports)
@@ -621,6 +622,10 @@ class Ticker:
                     if flip:  # % first, then flip in place to the $ / point change
                         out.append(lambda rows=rows: (
                             self.renderer.indices(rows, tag=None, mode="abs", stale=stale), hold, False))
+            elif name == "metals":
+                rows = self.metals.update()
+                if rows:
+                    out.append(lambda rows=rows: (self.renderer.metals(rows), sleep))
             elif name == "news":
                 if self.news.update():  # last good headlines; refreshed in the background
                     speed = SPEEDS[self.cfg.news_speed]

@@ -133,30 +133,65 @@ DEFAULT_INDICES = [("^GSPC", "S&P"), ("^DJI", "DOW"), ("^IXIC", "NAS")]
 
 
 class Indices(Feed):
-    URL = "https://query1.finance.yahoo.com/v8/finance/chart/{}"
+    # query2 first: on some networks query1 answers every request with 429 (seen 2026-11),
+    # while query2 serves the same data. Each request falls through to the other host.
+    HOSTS = ("query2", "query1")
+    URL = "https://{}.finance.yahoo.com/v8/finance/chart/{}"
     refresh_every = 300
 
     def __init__(self, indices=None):
         super().__init__()
         self.indices = indices or DEFAULT_INDICES
 
+    def chart(self, symbol):
+        """One symbol's latest price, previous close and today's 5-minute closes."""
+        last = None
+        for host in self.HOSTS:
+            try:
+                r = self.session.get(self.URL.format(host, symbol),
+                                     params={"range": "1d", "interval": "5m"}, timeout=15)
+                r.raise_for_status()
+                res = r.json()["chart"]["result"][0]
+                break
+            except Exception as exc:  # try the other host before giving up
+                last = exc
+        else:
+            raise last
+        meta = res["meta"]
+        price = meta.get("regularMarketPrice")
+        prev = meta.get("chartPreviousClose") or meta.get("previousClose")
+        closes = [c for c in (res.get("indicators", {}).get("quote", [{}])[0].get("close") or [])
+                  if c is not None]
+        if price is None or not prev:
+            raise ValueError(f"incomplete data for {symbol}")
+        return {"price": float(price), "change": (price - prev) / prev * 100,
+                "points": price - prev, "prev_close": float(prev), "intraday": closes}
+
+    def fetch(self):
+        return [{"label": label, **self.chart(symbol)} for symbol, label in self.indices]
+
+
+# Gold and silver: spot first, futures (very close to spot) if Yahoo has no spot quote.
+METALS = [(("XAUUSD=X", "GC=F"), "GOLD"), (("XAGUSD=X", "SI=F"), "SILVER")]
+
+
+class Metals(Indices):
+    """Gold and silver prices from Yahoo. One metal failing doesn't hide the other."""
+
+    def __init__(self):
+        super().__init__([])
+
     def fetch(self):
         out = []
-        for symbol, label in self.indices:
-            r = self.session.get(self.URL.format(symbol),
-                                 params={"range": "1d", "interval": "5m"}, timeout=15)
-            r.raise_for_status()
-            res = r.json()["chart"]["result"][0]
-            meta = res["meta"]
-            price = meta.get("regularMarketPrice")
-            prev = meta.get("chartPreviousClose") or meta.get("previousClose")
-            closes = [c for c in (res.get("indicators", {}).get("quote", [{}])[0].get("close") or [])
-                      if c is not None]
-            if price is None or not prev:
-                raise ValueError(f"incomplete data for {symbol}")
-            out.append({"label": label, "price": float(price),
-                        "change": (price - prev) / prev * 100, "points": price - prev,
-                        "prev_close": float(prev), "intraday": closes})
+        for symbols, label in METALS:
+            for symbol in symbols:
+                try:
+                    out.append({"label": label, "symbol": symbol, **self.chart(symbol)})
+                    break
+                except Exception as exc:
+                    log.info("metals: %s unavailable (%s)", symbol, exc)
+        if not out:
+            raise ValueError("no gold or silver price")
         return out
 
 
