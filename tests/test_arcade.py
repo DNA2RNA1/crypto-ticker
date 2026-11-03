@@ -144,3 +144,24 @@ def test_frame_build_is_cheap():
     for make in ar.SCENES:
         make()
     assert time.perf_counter() - t0 < 2.0
+
+
+@pytest.mark.parametrize("facing,bow", [(1, False), (-1, False), (1, True), (-1, True)])
+@pytest.mark.parametrize("t", [0, 2, 4])
+def test_chomper_eye(facing, t, bow):
+    """A 2x2 dark pupil with a white glint on the side it faces, in every mouth position;
+    yellow around it (on Ms., her bow may touch the back of the pupil, never the front)."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGB", (24, 18))
+    ar.chomper(ImageDraw.Draw(img), 12, 9, t, facing, bow=bow)
+    ex, ey = (13, 5) if facing > 0 else (10, 5)
+    glint = (ex + 1, ey) if facing > 0 else (ex, ey)
+    pupil = [(ex + dx, ey + dy) for dx in (0, 1) for dy in (0, 1) if (ex + dx, ey + dy) != glint]
+    assert img.getpixel(glint) == ar.WHITE
+    assert all(img.getpixel(p) == ar.PUPIL_DARK for p in pupil)
+    behind = (ex - 1, ey + 1) if facing > 0 else (ex + 2, ey + 1)     # the side away from the mouth
+    above = (ex, ey - 1)
+    ok = (ar.YELLOW, ar.BOW) if bow else (ar.YELLOW,)        # Ms.: the bow sits just behind the eye
+    assert img.getpixel(behind) in ok and img.getpixel(above) in ok
+    front = (glint[0] + 1, ey) if facing > 0 else (glint[0] - 1, ey)  # in front of the glint: her face
+    assert img.getpixel(front) != ar.BOW

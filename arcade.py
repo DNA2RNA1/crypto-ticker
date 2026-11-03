@@ -20,6 +20,7 @@ YELLOW = (255, 214, 0)
 MAZE = (33, 33, 222)
 DOT = (255, 184, 151)
 WHITE = (255, 255, 255)
+PUPIL_DARK = (0, 0, 0)        # the chomper's pupil
 PUPIL = (33, 33, 222)
 GHOSTS = {"red": (255, 0, 0), "pink": (255, 160, 200), "cyan": (0, 230, 230), "orange": (255, 160, 40)}
 SCARED = (40, 40, 255)
@@ -58,12 +59,18 @@ def chomper(d, x, y, t, facing=1, r=6, color=YELLOW, bow=False):
         d.pieslice((x - r, y - r, x + r, y + r), start, end, fill=color)
     else:
         d.ellipse((x - r, y - r, x + r, y + r), fill=color)
-    if bow:                                                # Ms. version: a red bow on top
-        bx = x - 2 * facing
+    if bow:                                                # Ms. version: a red bow on the back of the head
+        bx = x - 4 * facing                                # far enough back to leave room for the eye
         d.polygon([(bx - 4, y - r - 1), (bx, y - r + 2), (bx - 4, y - r + 4)], fill=BOW)
         d.polygon([(bx + 4, y - r - 1), (bx, y - r + 2), (bx + 4, y - r + 4)], fill=BOW)
         d.point((bx, y - r + 2), fill=BOW)
         d.point((x + 3 * facing, y + 2), fill=BOW)        # a touch of lipstick
+    # the eye: a 2x2 dark pupil just behind the upper lip, with a white glint on the side
+    # it's facing (a black eye alone is just unlit LEDs; the white LED makes it read)
+    ex = x + 1 if facing > 0 else x - 2
+    ey = y - 4
+    d.rectangle((ex, ey, ex + 1, ey + 1), fill=PUPIL_DARK)
+    d.point((ex + 1 if facing > 0 else ex, ey), fill=WHITE)
 
 
 def ghost(d, x, y, t, color, look=1, scared=False, blink=False):
