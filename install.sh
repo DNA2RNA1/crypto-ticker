@@ -203,6 +203,18 @@ if [ "$BUILD" -eq 1 ]; then
     else
         git -C "$LIB_DIR" pull --ff-only || warn "could not update $LIB_DIR; using the copy that's there"
     fi
+    # The library's Pillow shim includes Pillow's C header Imaging.h, which Pillow's
+    # prebuilt wheels don't ship and the library's build doesn't locate (seen 2026-11:
+    # "pillow.c: fatal error: Imaging.h"). Fetch the headers for the exact Pillow
+    # version installed above and point the compiler at them.
+    PIL_VER="$("$VENV/bin/python" -c 'import PIL; print(PIL.__version__)')"
+    PIL_SRC="$(dirname "$HERE")/pillow-src-$PIL_VER"
+    if [ ! -f "$PIL_SRC/src/libImaging/Imaging.h" ]; then
+        rm -rf "$PIL_SRC"
+        git clone --depth 1 --branch "$PIL_VER" https://github.com/python-pillow/Pillow.git "$PIL_SRC" \
+            || warn "could not fetch Pillow $PIL_VER headers; the LED library build may fail"
+    fi
+    export CPATH="$PIL_SRC/src/libImaging${CPATH:+:$CPATH}"
     "$VENV/bin/pip" install "$LIB_DIR"
 fi
 "$VENV/bin/python" -c 'import rgbmatrix' 2>/dev/null \
