@@ -43,6 +43,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "WEATHER_LAT": lambda v: _float(v, -90, 90),
     "WEATHER_LON": lambda v: _float(v, -180, 180),
     "WEATHER_PLACE": lambda v: _text(v, 60),
+    "WEATHER_EXTRA": lambda v: _weather_extra(v),
     "TEMP_UNIT": lambda v: _choice(v.strip().upper(), ("F", "C")),
     "TIMEZONE": lambda v: _tz(v),
     "INDICES_SOURCE": lambda v: _choice(v.strip().lower(), ("coingecko", "yahoo")),
@@ -79,7 +80,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "SLEEP": "Time per coin", "DIM_HOURS": "Dim hours", "DIM_BRIGHTNESS": "Night brightness",
           "CURRENCY": "Currency", "REFRESH_RATE": "Refresh rate", "FEATURED": "Featured coins",
           "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
-          "WEATHER_PLACE": "Place name", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
+          "WEATHER_PLACE": "Place name", "WEATHER_EXTRA": "More weather cities", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
           "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "INDICES_STYLE": "Index layout", "FOCUS": "Focus", "LIST_VIEW": "List view",
           "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "Crypto news feeds", "NEWS_GENERAL_FEEDS": "General news feeds",
           "NEWS_CRYPTO": "Crypto news", "NEWS_GENERAL": "General news",
@@ -130,6 +131,25 @@ def _text(v, maxlen):
     v = re.sub(r"\s", " ", str(v))
     v = re.sub(r"[^\w ,.'()-]", "", v, flags=re.UNICODE)
     return re.sub(r"\s+", " ", v).strip()[:maxlen]
+
+
+def _weather_extra(v):
+    """Extra weather cities: 'Place|lat|lon;...' (up to 4), place names cleaned like
+    WEATHER_PLACE. An empty value removes them all."""
+    out = []
+    for part in str(v).split(";"):
+        if not part.strip():
+            continue
+        bits = part.split("|")
+        if len(bits) != 3:
+            raise ValueError("expected place|lat|lon")
+        place = _text(bits[0], 60)
+        if not place:
+            raise ValueError("a city needs a name")
+        out.append(f"{place}|{_float(bits[1], -90, 90)}|{_float(bits[2], -180, 180)}")
+    if len(out) > 4:
+        raise ValueError("4 extra cities max")
+    return ";".join(out)
 
 
 def _tz(v):
@@ -454,6 +474,7 @@ class WebApp:
             "indices_view": clean("INDICES_VIEW", "percent"),
             "indices_style": clean("INDICES_STYLE", "charts"),
             "weather_place": clean("WEATHER_PLACE", "") or ("Edinburg, Texas, US" if not s.get("WEATHER_LAT") else ""),
+            "weather_extra": [p for p in clean("WEATHER_EXTRA", "").split(";") if p],
             "weather_lat": clean("WEATHER_LAT", "26.3017"),
             "weather_lon": clean("WEATHER_LON", "-98.1633"),
             "temp_unit": clean("TEMP_UNIT", "F"),
@@ -945,6 +966,12 @@ function render(){
      <input id="zip" type="search" inputmode="text" placeholder="ZIP code or city" autocomplete="postal-code" style="flex:1">
      <button class="btn" id="zipgo" style="width:auto;padding:0 14px">Find</button></div>
    <div id="places"></div>
+   <div class="row"><div class="grow">More cities<div class="name" style="white-space:normal">Each gets its own weather screen after the main one (up to 4).</div></div></div>
+   ${(S.weather_extra||[]).map((e,i)=>`<div class="row" style="border-top:0"><div class="grow">${esc(e.split('|')[0])}</div><button class="btn" data-xdel="${i}" style="width:auto;padding:0 12px">Remove</button></div>`).join('')}
+   ${(S.weather_extra||[]).length<4?`<div class="row" style="border-top:0;padding-top:0;gap:8px">
+     <input id="xzip" type="search" inputmode="text" placeholder="Add a city or ZIP" style="flex:1">
+     <button class="btn" id="xzipgo" style="width:auto;padding:0 14px">Add</button></div>
+   <div id="xplaces"></div>`:''}
    <div class="row"><div class="grow">Temperature</div><div style="width:120px">${seg('temp_unit',[['F','°F'],['C','°C']])}</div></div>
   </div>
   <h2>Display</h2><div class="card">
@@ -1040,7 +1067,7 @@ function save(extra){
   saveTimer=setTimeout(async()=>{
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
       screens:S.screens.join(','),indices_source:S.indices_source,indices_style:S.indices_style,indices_view:S.indices_view,temp_unit:S.temp_unit,
-      weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
+      weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,weather_extra:(S.weather_extra||[]).join(';'),timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
@@ -1109,6 +1136,21 @@ function bind(){
     }catch(e){if(e.message!='login')box.innerHTML=`<div class="row"><div class="grow err">${esc(e.message)}</div></div>`}
   };
   $('#zipgo').onclick=findPlace;$('#zip').onkeydown=e=>{if(e.key=='Enter')findPlace()};
+  const addCity=async()=>{
+    const q=$('#xzip').value.trim();if(q.length<3)return toast('Enter a ZIP code or city',true);
+    const box=$('#xplaces');box.innerHTML='<div class="row"><div class="grow name">Looking up…</div></div>';
+    try{
+      const {places}=await api('/api/geocode?q='+encodeURIComponent(q));
+      if(!places.length){box.innerHTML='<div class="row"><div class="grow name">No match. Try a city name.</div></div>';return}
+      box.innerHTML=places.map((p,i)=>`<div class="row" data-p="${i}"><div class="grow">${esc(p.label)}</div><div class="add">＋</div></div>`).join('');
+      box.onclick=e=>{const r=e.target.closest('[data-p]');if(!r)return;const p=places[+r.dataset.p];
+        S.weather_extra=[...(S.weather_extra||[]),`${p.label.replace(/[|;]/g,' ')}|${p.lat}|${p.lon}`].slice(0,4);
+        toast('Added '+p.label);save(0);render()};
+    }catch(e){if(e.message!='login')box.innerHTML=`<div class="row"><div class="grow err">${esc(e.message)}</div></div>`}
+  };
+  if($('#xzipgo')){$('#xzipgo').onclick=addCity;$('#xzip').onkeydown=e=>{if(e.key=='Enter')addCity()}}
+  document.querySelectorAll('[data-xdel]').forEach(b=>b.onclick=()=>{
+    S.weather_extra=(S.weather_extra||[]).filter((_,i)=>i!=+b.dataset.xdel);save(0);render()});
   $('#bright').oninput=e=>{S.brightness=+e.target.value;$('#bv').textContent=S.brightness+'%';save()};
   $('#sleep').oninput=e=>{S.sleep=+e.target.value;$('#sv').textContent=S.sleep+'s';save()};
   $('#listview').onchange=e=>{S.list_view=e.target.checked?'4':'off';save();render()};

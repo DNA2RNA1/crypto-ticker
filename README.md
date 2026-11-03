@@ -235,6 +235,7 @@ value is logged as a warning and the default is used.
 | `INDICES_STYLE` | `charts` | `charts` = one screen per index: level, % and point change, and the day's chart against yesterday's close (dotted line; green above, red below). `compact` = all indices on one screen with small charts |
 | `TIMEZONE` | Pi's setting | Clock and night-dimming time zone, e.g. `Europe/London` |
 | `WEATHER_PLACE` / `WEATHER_LAT` / `WEATHER_LON` / `TEMP_UNIT` | example values | Weather on the clock; easiest to set by ZIP code or city on the phone page |
+| `WEATHER_EXTRA` | (none) | Up to 4 more cities, `Place|lat|lon;Place|lat|lon`. Each gets its own weather screen after the main one, labeled with the city and its forecast hours in the city's local time. Easiest from the phone page (More cities → Add) |
 | `BRIGHTNESS` | `70` | 1–100 |
 | `DIM_HOURS` / `DIM_BRIGHTNESS` | `22-7` / `15` | Night dimming window (24 h clock) and its brightness |
 | `DOWNLOAD_ICONS` | `true` | Fetch coin icons automatically |

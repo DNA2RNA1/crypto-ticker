@@ -130,7 +130,7 @@ def test_weather_screen_respects_unit():
     t = ticker_with(sample_weather())
     t.cfg.temp_unit = "C"
     seen = []
-    t.renderer.weather = lambda wx, unit, now: seen.append(unit) or Renderer().weather(wx, unit, now)
+    t.renderer.weather = lambda wx, unit, now, place="": seen.append(unit) or Renderer().weather(wx, unit, now, place)
     t.screens()[0]()
     assert seen == ["C"]
 
@@ -162,3 +162,50 @@ def test_clock_place_fits_and_drops_state_when_long():
     for place in ("Edinburg, Texas, US", "Rancho Santa Margarita, California, US"):
         img = r.clock(datetime(2026, 11, 2, 9, 5), None, "F", place)
         assert img.size == (64, 32)
+
+
+def test_weather_extra_parsing_and_page_validation(tmp_path):
+    from ticker import parse_weather_extra
+    assert parse_weather_extra("Santa Fe, New Mexico, US|35.687|-105.938;bad;X|999|0") == \
+        [("Santa Fe, New Mexico, US", 35.687, -105.938)]
+    assert parse_weather_extra("") == []
+    from webui import WebApp
+    env = tmp_path / "settings.env"
+    env.write_text("WEB_PIN=1234\n")
+    app = WebApp(str(env))
+    saved = app.save({"weather_extra": "Santa Fe, New Mexico, US|35.687|-105.938;Austin, Texas, US|30.27|-97.74"})
+    assert saved["WEATHER_EXTRA"] == "Santa Fe, New Mexico, US|35.6870|-105.9380;Austin, Texas, US|30.2700|-97.7400"
+    assert len(app.settings()["weather_extra"]) == 2
+    assert app.save({"weather_extra": ""})["WEATHER_EXTRA"] == ""
+    import pytest
+    with pytest.raises(ValueError):
+        app.save({"weather_extra": ";".join(f"C{i}|1|1" for i in range(5))})
+
+
+def test_one_weather_screen_per_city():
+    from sample import sample_weather
+    from test_ticker import FakeDisplay
+    from ticker import Config, Ticker
+    cfg = Config()
+    cfg.download_icons = False
+    cfg.screens = ["weather"]
+    cfg.weather_extra = [("Santa Fe, New Mexico, US", 35.687, -105.938), ("Austin, Texas, US", 30.27, -97.74)]
+    t = Ticker(cfg, FakeDisplay())
+    t.weather.data, t.weather.next_fetch = dict(sample_weather(), hour=14), float("inf")
+    for _, feed in t.extra_weather:
+        feed.data, feed.next_fetch = dict(sample_weather(), hour=13), float("inf")
+    shots = [s() for s in t.screens()]
+    assert len(shots) == 3 and all(img.size == (64, 32) for img, _ in shots)
+
+
+def test_forecast_row_uses_the_places_own_hour():
+    from datetime import datetime
+    from render import Renderer
+    from sample import sample_weather
+    r = Renderer()
+    font = r.fonts["4x6"]
+    drawn = []
+    real = font.draw
+    font.draw = lambda img, x, b, t, c: (drawn.append(t), real(img, x, b, t, c))[1]
+    r.weather(dict(sample_weather(), hour=23), "F", datetime(2026, 11, 3, 0, 0), "Santa Fe, New Mexico, US")
+    assert "SANTA FE" in drawn and ["2A", "5A", "8A", "11A"] == [t for t in drawn if t[-1] in "AP" and t[:-1].isdigit()]

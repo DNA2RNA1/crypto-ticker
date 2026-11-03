@@ -500,7 +500,7 @@ class Renderer:
     HIGH = (255, 140, 40)
     LOW = (80, 170, 255)
 
-    def weather(self, wx, unit="F", now=None):
+    def weather(self, wx, unit="F", now=None, place=""):
         """Big current temperature with a large condition icon, today's high/low, and the
         forecast for +3, +6, +9 and +12 hours along the bottom."""
         from datetime import datetime
@@ -516,7 +516,8 @@ class Renderer:
         # biggest layout that fits: large icon first, then the clock-size icon;
         # the small unit letter goes last
         layout = None
-        for scale, x in ((2, 27), (1, 15)):
+        city = place_label(place).split(",")[0] if place else ""
+        for scale, x in (((1, 15),) if city else ((2, 27), (1, 15))):
             for font in (f["9x18B"], f["7x13B"], f["6x13B"]):
                 for unit_w in (f["5x8"].width(unit) + 1, 0):
                     if x + font.width(temp) + unit_w <= right:
@@ -531,11 +532,19 @@ class Renderer:
         self.weather_icon(icon, 0, 0, wx, now)
         if scale == 2:  # twice the clock's size, so it reads from across the room
             img.paste(icon.resize((26, 20), Image.NEAREST), (0, 0))
+        elif city:  # several cities: the city's name over a small icon
+            img.paste(icon, (0, 8))
+            small = f["4x6"]
+            name = city
+            while name and small.width(name) > right - 2:
+                name = name[:-1]
+            small.draw(img, 0, 5, name, DIM_TEXT)
         else:
             img.paste(icon, (0, 4))
-        font.draw(img, x, 16, temp, PRICE)
+        tb = 18 if city else 16  # room for the city name above
+        font.draw(img, x, tb, temp, PRICE)
         if unit_w:
-            f["5x8"].draw(img, x + font.width(temp), 9, unit, DIM_TEXT)
+            f["5x8"].draw(img, x + font.width(temp), tb - 7, unit, DIM_TEXT)
         # today's high (orange) and low (blue), right column, labeled H and L
         for y, t, color, letter in zip((7, 15), hl, (self.HIGH, self.LOW), ("H", "L")):
             x_num = 64 - f["5x8"].width(t)
@@ -551,8 +560,9 @@ class Renderer:
             lo_v, hi_v = min(pts), max(pts)
             span = (hi_v - lo_v) or 1.0
             slot = 64 // len(steps)
+            start_hour = wx.get("hour", now.hour)
             for i, (h, v) in enumerate(zip(steps, vals)):
-                hour = (now.hour + h) % 24
+                hour = (start_hour + h) % 24
                 label = f"{hour % 12 or 12}{'A' if hour < 12 else 'P'}"
                 t = (v - lo_v) / span
                 color = tuple(int(self.LOW[j] + (self.HIGH[j] - self.LOW[j]) * t) for j in range(3))

@@ -93,6 +93,10 @@ def parse_weather(js):
         raise ValueError("no current temperature")
     out = {"temp": temp, "code": int(_finite(cur.get("weather_code")) or 0),
            "is_day": bool(cur.get("is_day", 1)), "high": None, "low": None, "hourly": []}
+    try:  # the place's own local hour, so another city's forecast row is labeled in its time
+        out["hour"] = int(str(cur.get("time", ""))[11:13])
+    except ValueError:
+        pass
     try:
         daily = js.get("daily") or {}
         out["high"] = _finite((daily.get("temperature_2m_max") or [None])[0])

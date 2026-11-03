@@ -97,6 +97,22 @@ def env(name, default, cast=str, lo=None, hi=None, choices=None):
     return value
 
 
+def parse_weather_extra(spec):
+    """'Santa Fe, New Mexico, US|35.687|-105.938;...' -> [(place, lat, lon)], up to 4."""
+    out = []
+    for part in (spec or "").split(";"):
+        bits = part.split("|")
+        if len(bits) != 3:
+            continue
+        try:
+            lat, lon = float(bits[1]), float(bits[2])
+        except ValueError:
+            continue
+        if -90 <= lat <= 90 and -180 <= lon <= 180 and bits[0].strip():
+            out.append((bits[0].strip(), lat, lon))
+    return out[:4]
+
+
 def news_urls(cfg):
     """The feeds the news screen reads: crypto, general and politics, each switchable."""
     urls = (list(cfg.news_feeds) if cfg.news_crypto else []) + \
@@ -143,6 +159,7 @@ class Config:
     weather_lon: float = -98.1633
     temp_unit: str = "F"
     weather_place: str = "Edinburg, Texas, US"
+    weather_extra: list = field(default_factory=list)  # [(place, lat, lon)] extra weather cities
     brightness: int = 70
     dim_hours: str = ""
     dim_brightness: int = 15
@@ -209,6 +226,7 @@ class Config:
         c.weather_lon = env("WEATHER_LON", c.weather_lon, float, lo=-180.0, hi=180.0)
         c.temp_unit = "C" if env("TEMP_UNIT", "F").upper().startswith("C") else "F"
         c.weather_place = env("WEATHER_PLACE", c.weather_place)
+        c.weather_extra = parse_weather_extra(env("WEATHER_EXTRA", ""))
         c.brightness = env("BRIGHTNESS", c.brightness, int, lo=1, hi=100)
         c.dim_hours = env("DIM_HOURS", "")
         c.dim_brightness = env("DIM_BRIGHTNESS", c.dim_brightness, int, lo=1, hi=100)
@@ -306,6 +324,7 @@ class Ticker:
         self.fear_greed = FearGreed()
         self.weather = Weather(cfg.weather_lat, cfg.weather_lon,
                                "celsius" if cfg.temp_unit == "C" else "fahrenheit")
+        self.extra_weather = self._make_extra_weather(cfg)
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
         self.metals = Metals()
@@ -324,6 +343,11 @@ class Ticker:
         self.current = None
         self._fetching = None       # background fetch thread, if one is running
         self.frame_times = deque(maxlen=2000)  # seconds to build + push each scroll frame
+
+    @staticmethod
+    def _make_extra_weather(cfg):
+        unit = "celsius" if cfg.temp_unit == "C" else "fahrenheit"
+        return [(place, Weather(lat, lon, unit)) for place, lat, lon in cfg.weather_extra]
 
     def _cg_indices(self, cfg):
         return "indices" in cfg.screens and cfg.indices_source == "coingecko"
@@ -491,6 +515,8 @@ class Ticker:
                 (old.weather_lat, old.weather_lon, old.temp_unit):
             self.weather = Weather(new.weather_lat, new.weather_lon,
                                    "celsius" if new.temp_unit == "C" else "fahrenheit")
+        if (new.weather_extra, new.temp_unit) != (old.weather_extra, old.temp_unit):
+            self.extra_weather = self._make_extra_weather(new)
         if new.sports != old.sports:
             self.sports.follow = new.sports
             self.sports.next_fetch = 0  # fetch with the new teams right away
@@ -626,8 +652,16 @@ class Ticker:
                     self.now(), wx, self.cfg.temp_unit, self.cfg.weather_place), sleep))
             elif name == "weather":
                 wx = self.weather.update()
+                # with extra cities, every weather screen is labeled with its city
+                label = self.cfg.weather_place if self.extra_weather else ""
                 if wx:  # no location or no data yet: skip the screen
-                    out.append(lambda wx=wx: (self.renderer.weather(wx, self.cfg.temp_unit, self.now()), sleep))
+                    out.append(lambda wx=wx, label=label: (
+                        self.renderer.weather(wx, self.cfg.temp_unit, self.now(), label), sleep))
+                for place, feed in self.extra_weather:
+                    xwx = feed.update()
+                    if xwx:
+                        out.append(lambda xwx=xwx, place=place: (
+                            self.renderer.weather(xwx, self.cfg.temp_unit, self.now(), place), sleep))
             elif name == "feargreed":
                 fg = self.fear_greed.update()
                 if fg:
