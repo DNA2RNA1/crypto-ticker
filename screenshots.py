@@ -88,6 +88,11 @@ def main():
         g["away"] = dict(g["away"], abbr="WASH", rank=25, score=105)
         return r.game(g, BY_KEY["ncaam"], SPORTS_TZ, SPORTS_NOW.timestamp())
 
+    def scene(i, at):
+        import arcade
+        frames = arcade.SCENES[i]().frames
+        return frames[int(len(frames) * at)]
+
     def chart(sym, stale=False):
         r.layout = "chart"
         try:
@@ -122,6 +127,10 @@ def main():
         ("17-sports-final", lambda: game("nba", 1)),
         ("18-sports-upcoming", lambda: game("mlb", 2, fav="home")),
         ("19-sports-row-scrolling", lambda: mid(long_game())),
+        ("20-arcade-chase", lambda: scene(0, 0.45)),
+        ("20b-arcade-power-pellet", lambda: scene(1, 0.62)),
+        ("20c-arcade-cherries", lambda: scene(2, 0.12)),
+        ("20d-arcade-sweethearts", lambda: scene(3, 0.6)),
     ]
     paths = []
     for name, make in shots:
@@ -133,7 +142,8 @@ def main():
     print("wrote", os.path.relpath(sheet))
     gif = transition_gif(os.path.join(HERE, "docs", "preview-scroll.gif"), args.rows, args.cols)
     print("wrote", os.path.relpath(gif))
-    for gif in (news_gif(os.path.join(HERE, "docs", "preview-news.gif")),
+    for gif in (arcade_gif(os.path.join(HERE, "docs", "preview-arcade.gif")),
+                news_gif(os.path.join(HERE, "docs", "preview-news.gif")),
                 sports_gif(os.path.join(HERE, "docs", "preview-sports.gif"))):
         print("wrote", os.path.relpath(gif))
 
@@ -155,6 +165,18 @@ def news_gif(out):
     for item in items[:2]:
         t.play(t.renderer.news(item, now_ts=now))
     t.play(t.renderer.news(items[0], now_ts=now))   # back to the start so it loops
+    gif.save(out)
+    return out
+
+
+def arcade_gif(out):
+    """All four arcade scenes with the scroll transition, via the real Ticker.play_frames()."""
+    import arcade
+    t, gif = _gif_ticker()
+    scenes = arcade.Arcade().next_scenes(4)
+    for anim in scenes:
+        t.play_frames(anim)
+    t.play_frames(scenes[0])          # back to the start so the loop is seamless
     gif.save(out)
     return out
 
@@ -219,6 +241,8 @@ LABELS = {
     "15-sports-live": "Sports: live, favorite", "16-sports-college-ranked": "Sports: college, ranked",
     "17-sports-final": "Sports: final (OT)", "18-sports-upcoming": "Sports: upcoming",
     "19-sports-row-scrolling": "Sports: long row scrolls",
+    "20-arcade-chase": "Arcade: chase", "20b-arcade-power-pellet": "Arcade: power pellet",
+    "20c-arcade-cherries": "Arcade: cherries", "20d-arcade-sweethearts": "Arcade: sweethearts",
 }
 
 
