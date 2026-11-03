@@ -40,7 +40,10 @@ def apply_sample(ticker):
                          {"label": "NAS", "change": -0.31, "abs": -2.31, "unit": "$", "spark": down}]
     for feed in (ticker.yahoo_dow, ticker.yahoo, ticker.fear_greed, ticker.weather):
         feed.next_fetch = float("inf")
-    ticker.yahoo_dow.data = [{"label": "DOW", "change": 0.18, "points": 81.4, "intraday": up}]
+    dow = [45140 * v / 100 for v in up]
+    ticker.yahoo_dow.data = [{"label": "DOW", "change": (dow[-1] - 45140) / 45140 * 100,
+                              "points": dow[-1] - 45140, "intraday": dow,
+                              "price": dow[-1], "prev_close": 45140.0}]
     ticker.fear_greed.data = {"value": 70, "label": "Greed", "yesterday": 65,
                               "history": [60, 58, 62, 66, 64, 63, 65, 70]}
     ticker.weather.data = sample_weather(code=0, is_day=False)  # the clock screenshots are at night

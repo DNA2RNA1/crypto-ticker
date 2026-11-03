@@ -123,6 +123,7 @@ class Config:
     indices_source: str = "coingecko"
     indices: str = ""
     indices_view: str = "percent"  # percent, or both (% then the $ / point change)
+    indices_style: str = "charts"  # charts = one big chart per index; compact = all three on one
     news_feeds: list = field(default_factory=lambda: list(DEFAULT_FEEDS))
     news_per_cycle: int = 3
     news_crypto: bool = True       # the crypto feeds (NEWS_FEEDS)
@@ -181,6 +182,7 @@ class Config:
         c.indices_source = env("INDICES_SOURCE", c.indices_source, str.lower, choices=("coingecko", "yahoo"))
         c.indices = env("INDICES", "")
         c.indices_view = env("INDICES_VIEW", c.indices_view, str.lower, choices=("percent", "both"))
+        c.indices_style = env("INDICES_STYLE", c.indices_style, str.lower, choices=("charts", "compact"))
         feeds = [u.strip() for u in env("NEWS_FEEDS", ",".join(DEFAULT_FEEDS)).split(",") if u.strip()]
         c.news_feeds = [u for u in feeds if u.lower().startswith(("http://", "https://"))][:8] or list(DEFAULT_FEEDS)
         c.news_per_cycle = env("NEWS_PER_CYCLE", c.news_per_cycle, int, lo=1, hi=10)
@@ -627,15 +629,22 @@ class Ticker:
                 if self.cfg.indices_source == "yahoo":
                     data = self.yahoo.update()
                     rows = [{"label": r["label"], "change": r["change"], "spark": r["intraday"],
-                             "abs": r["points"], "unit": ""} for r in (data or [])]
+                             "abs": r["points"], "unit": "", "price": r.get("price"),
+                             "prev_close": r.get("prev_close")} for r in (data or [])]
                 else:
                     rows = list(self.index_rows)
                     dow = self.yahoo_dow.update()
                     if rows and dow:  # S&P, DOW, NAS order
                         rows.insert(1, {"label": "DOW", "change": dow[0]["change"],
                                         "abs": dow[0]["points"], "unit": "",
-                                        "spark": dow[0]["intraday"]})
-                if rows:
+                                        "spark": dow[0]["intraday"], "price": dow[0].get("price"),
+                                        "prev_close": dow[0].get("prev_close")})
+                if rows and self.cfg.indices_style == "charts":
+                    stale = self.stale and self.cfg.indices_source == "coingecko"
+                    for row in rows:  # one screen per index
+                        out.append(lambda row=row, stale=stale: (
+                            self.renderer.index_chart(row, stale=stale), sleep))
+                elif rows:
                     stale = self.stale and self.cfg.indices_source == "coingecko"
                     flip = self.cfg.indices_view == "both" and any(r.get("abs") is not None for r in rows)
                     hold = max(2.0, sleep / 2) if flip else sleep

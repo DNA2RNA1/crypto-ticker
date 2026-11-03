@@ -231,6 +231,7 @@ value is logged as a warning and the default is used.
 | `SPORTS_<LEAGUE>_TOP` | `25` college, `8` pro | Follow the AP Top `10`/`25` (college) or the top `4`/`8`/`12`/`16` by record (pro); `0` = off |
 | `SPORTS_<LEAGUE>_FAVORITES` | (none) | Favorite teams as ESPN `id:ABBR` pairs, e.g. `2:BUF`; easiest to pick on the phone page |
 | `INDICES_VIEW` | `percent` | `percent`, or `both` to flip to the $ / point change halfway through. With `coingecko`, S&P and Nasdaq are fund prices ($ per share), not index points |
+| `INDICES_STYLE` | `charts` | `charts` = one screen per index: level, % and point change, and the day's chart against yesterday's close (dotted line; green above, red below). `compact` = all indices on one screen with small charts |
 | `TIMEZONE` | Pi's setting | Clock and night-dimming time zone, e.g. `Europe/London` |
 | `WEATHER_PLACE` / `WEATHER_LAT` / `WEATHER_LON` / `TEMP_UNIT` | example values | Weather on the clock; easiest to set by ZIP code or city on the phone page |
 | `BRIGHTNESS` | `70` | 1–100 |

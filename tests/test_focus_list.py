@@ -222,7 +222,7 @@ def test_punctuation_on_the_baseline_in_every_redrawn_font(name):
         assert max(rows(ch)) == bottom, (name, ch)        # nothing hangs below the digits
 
 
-def make_index_ticker(view="percent", source="coingecko"):
+def make_index_ticker(view="percent", source="coingecko", style="compact"):
     from sample import apply_sample
     from test_ticker import FakeDisplay
     from ticker import Config, Ticker
@@ -231,6 +231,7 @@ def make_index_ticker(view="percent", source="coingecko"):
     cfg.download_icons = False
     cfg.screens = ["indices"]
     cfg.indices_view, cfg.indices_source, cfg.sleep = view, source, 8
+    cfg.indices_style = style
     t = Ticker(cfg, FakeDisplay())
     apply_sample(t)
     return t
@@ -322,3 +323,36 @@ def test_coingecko_indices_still_fetch_with_coins_off():
     assert t._needs_prices(t.cfg)
     t.cfg.indices_source = "yahoo"
     assert not t._needs_prices(t.cfg)
+
+
+def test_index_charts_one_screen_per_index():
+    t = make_index_ticker(style="charts")
+    shots = [s() for s in t.screens()]
+    assert len(shots) == 3 and all(h == 8 for _, h in shots)   # S&P, DOW, NAS
+    for img, _ in shots:
+        assert img.size == (64, 32)
+
+
+def test_index_chart_shows_level_and_reference_line():
+    from render import DOWN, UP, Renderer
+    r = Renderer()
+    pts = [100.0, 101.0, 99.0, 98.5, 100.5, 101.5]          # crosses yesterday's close (100)
+    img = r.index_chart({"label": "DOW", "change": 1.5, "abs": 1.5, "unit": "",
+                         "spark": pts, "price": 51983.98, "prev_close": 100.0})
+    colors = {img.getpixel((x, y)) for x in range(64) for y in range(18, 32)}
+    assert UP in colors and DOWN in colors                  # green above, red below the close
+    assert (120, 120, 130) in colors                        # dotted close line
+
+
+def test_index_chart_without_level_or_close():
+    from render import Renderer
+    img = Renderer().index_chart({"label": "S&P", "change": -0.4, "abs": -3.1, "unit": "$",
+                                  "spark": [5, 4.9, 4.8]})
+    assert img.size == (64, 32)
+
+
+def test_indices_style_setting(monkeypatch):
+    from ticker import Config
+    assert Config.from_env().indices_style == "charts"
+    monkeypatch.setenv("INDICES_STYLE", "compact")
+    assert Config.from_env().indices_style == "compact"

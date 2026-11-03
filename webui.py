@@ -54,6 +54,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "NEWS_PER_CYCLE": lambda v: _int(v, 1, 10),
     "NEWS_SPEED": lambda v: _choice(v.strip().lower(), ("slow", "normal", "fast")),
     "FOCUS": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "INDICES_STYLE": lambda v: _choice(v.strip().lower(), ("charts", "compact")),
     "LIST_VIEW": lambda v: _choice(v.strip().lower(), ("off", "5", "4")),
     "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
     "VIDEOS_CHANNELS": lambda v: _channels(v),
@@ -77,7 +78,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "CURRENCY": "Currency", "REFRESH_RATE": "Refresh rate", "FEATURED": "Featured coins",
           "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
           "WEATHER_PLACE": "Place name", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
-          "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "FOCUS": "Focus", "LIST_VIEW": "List view",
+          "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "INDICES_STYLE": "Index layout", "FOCUS": "Focus", "LIST_VIEW": "List view",
           "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "Crypto news feeds", "NEWS_GENERAL_FEEDS": "General news feeds",
           "NEWS_CRYPTO": "Crypto news", "NEWS_GENERAL": "General news",
           "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed",
@@ -443,6 +444,7 @@ class WebApp:
             "screen_names": list(SCREENS),
             "indices_source": clean("INDICES_SOURCE", "coingecko"),
             "indices_view": clean("INDICES_VIEW", "percent"),
+            "indices_style": clean("INDICES_STYLE", "charts"),
             "weather_place": clean("WEATHER_PLACE", "") or ("Edinburg, Texas, US" if not s.get("WEATHER_LAT") else ""),
             "weather_lat": clean("WEATHER_LAT", "26.3017"),
             "weather_lon": clean("WEATHER_LON", "-98.1633"),
@@ -912,10 +914,12 @@ function render(){
      <label class="switch"><input type="checkbox" data-screen="coins" ${S.screens.includes('coins')?'checked':''}><span></span></label></div>
    ${S.screens.includes('indices')?`<div class="row"><div class="grow">Indices from<div class="name" style="white-space:normal">${S.indices_source=='yahoo'?'Real index values incl. the Dow. Unofficial source; may stop working.':'Tokenized S&amp;P 500 and Nasdaq funds. No extra CoinGecko calls.'}</div></div>
      <select id="isrc"><option value="coingecko" ${S.indices_source!='yahoo'?'selected':''}>CoinGecko</option><option value="yahoo" ${S.indices_source=='yahoo'?'selected':''}>Yahoo</option></select></div>
-   <div class="row"><div class="grow">Also show $ / point change<div class="name" style="white-space:normal">${S.indices_source=='yahoo'
+   <div class="row"><div class="grow">Layout<div class="name" style="white-space:normal">${S.indices_style=='compact'?'All indices on one screen, small charts.':'One screen per index: level, change, and the day\'s chart against yesterday\'s close.'}</div></div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('indices_style',[['charts','Big charts'],['compact','Compact']])}</div>
+   ${S.indices_style=='compact'?`<div class="row"><div class="grow">Also show $ / point change<div class="name" style="white-space:normal">${S.indices_source=='yahoo'
      ?'Flips from % to the change in index points halfway through.'
      :'Flips from % to the $ change halfway through. S&amp;P and Nasdaq are tokenized-fund prices ($ per share, not index points); switch the source to Yahoo for real points. The Dow is always points.'}</div></div>
-     <label class="switch"><input type="checkbox" id="iview" ${S.indices_view=='both'?'checked':''}><span></span></label></div>`:''}
+     <label class="switch"><input type="checkbox" id="iview" ${S.indices_view=='both'?'checked':''}><span></span></label></div>`:''}`:''}
   </div>
   ${S.screens.includes('news')?newsRows():''}
   ${S.screens.includes('videos')?videosRows():''}
@@ -1021,7 +1025,7 @@ function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
-      screens:S.screens.join(','),indices_source:S.indices_source,indices_view:S.indices_view,temp_unit:S.temp_unit,
+      screens:S.screens.join(','),indices_source:S.indices_source,indices_style:S.indices_style,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
@@ -1051,7 +1055,7 @@ function bind(){
     searchTimer=setTimeout(()=>search(q),350)};
   document.querySelectorAll('[data-seg]').forEach(s=>s.onclick=e=>{const b=e.target.closest('button');if(!b)return;
     S[s.dataset.seg]=b.dataset.v;s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x==b));save();
-    if(s.dataset.seg=='list_view')render()});
+    if(['list_view','indices_style'].includes(s.dataset.seg))render()});
   document.querySelectorAll('[data-screen]').forEach(cb=>cb.onchange=()=>{
     const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);
     saveScreens(screenOrder(),on)});

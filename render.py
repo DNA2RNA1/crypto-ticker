@@ -795,6 +795,76 @@ class Renderer:
         img = self._place(img)
         return self.stale_mark(img) if stale else img
 
+    def index_chart(self, r, stale=False):
+        """One index per screen: name and level, today's change in % and points, and a big
+        chart of the day against yesterday's close (dotted line). The chart is green
+        above the close and red below it, so the day's crossings show at a glance."""
+        img = self._base()
+        f = self.fonts
+        color = trend_color(r["change"])
+        pts = list(r.get("spark") or [])
+        base = r.get("prev_close")
+        if not base and pts and r.get("change") is not None:
+            base = pts[-1] / (1 + r["change"] / 100)  # same close the % change is measured from
+        # line 1: name (white) and level (or % if the level isn't known)
+        f["5x8"].draw(img, 1, 7, r["label"], PRICE)
+        pct = change_text(r["change"])
+        level = r.get("price")
+        if level:
+            ltxt = f"{level:,.0f}" if level >= 1000 else f"{level:,.2f}"
+            f["5x8"].draw(img, 64 - f["5x8"].width(ltxt), 7, ltxt, PRICE)
+            line2 = [(pct, color)]
+        else:
+            f["5x8"].draw(img, 64 - f["5x8"].width(pct), 7, pct, color)
+            line2 = []
+        # line 2: % change left (if not above), points or $ change right
+        absv = r.get("abs")
+        atxt = self.abs_text(absv, r.get("unit", "")) if absv is not None else ""
+        if line2:
+            f["5x8"].draw(img, 1, 15, line2[0][0], color)
+        elif atxt:
+            f["4x6"].draw(img, 1, 14, "TODAY", DIM_TEXT)
+        if atxt:
+            f["5x8"].draw(img, 64 - f["5x8"].width(atxt), 15, atxt, color)
+        if len(pts) >= 2 and base:
+            self._day_chart(img, pts, base, (0, 18, 63, 31))
+        img = self._place(img)
+        return self.stale_mark(img) if stale else img
+
+    def _day_chart(self, img, points, base, box):
+        """Intraday chart against a reference level: dotted reference line, the area
+        between line and reference filled green (above) or red (below)."""
+        x0, y0, x1, y1 = box
+        width, height = x1 - x0 + 1, y1 - y0 + 1
+        step = (len(points) - 1) / (width - 1)
+        cols = [points[min(len(points) - 1, round(i * step))] for i in range(width)]
+        lo, hi = min(cols + [base]), max(cols + [base])
+        pad = (hi - lo) * 0.08 or abs(base) * 0.001 or 1.0
+        lo, hi = lo - pad, hi + pad
+        def y_of(v):
+            return y1 - round((v - lo) / (hi - lo) * (height - 1))
+        yb = y_of(base)
+        px = img.load()
+        draw = ImageDraw.Draw(img)
+        prev = None
+        for i, v in enumerate(cols):
+            x = x0 + i
+            y = y_of(v)
+            up = v >= base
+            line = UP if up else DOWN
+            fill = tuple(c // 4 for c in line)
+            a, b = (y + 1, yb) if up else (yb + 1, y - 1)
+            if a <= b:
+                draw.line((x, a, x, b), fill=fill)
+            if prev is not None:
+                py, pup = prev
+                draw.line((x - 1, py, x, y), fill=line if up == pup else (200, 200, 200))
+            prev = (y, up)
+        for x in range(x0, x1 + 1, 2):  # yesterday's close, dotted, drawn over the fill
+            if px[x, yb] == (0, 0, 0) or px[x, yb] in (tuple(c // 4 for c in UP), tuple(c // 4 for c in DOWN)):
+                px[x, yb] = (120, 120, 130)
+        px[x1, prev[0]] = (255, 255, 255)  # latest
+
     def metals(self, rows, stale=False):
         """Gold and silver: name and price (green/red by today's change), chart underneath."""
         img = self._base()
