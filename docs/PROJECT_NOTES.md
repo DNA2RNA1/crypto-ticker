@@ -143,6 +143,27 @@ Gotcha: CoinGecko's `midnight` ID is an unrelated Polygon meme token. Midnight N
 - iOS decides when widgets refresh (roughly every 15–30 minutes). Scriptable can't do Live Activities.
 - The settings page only works on home Wi-Fi (Tailscale would be needed for outside access).
 
+## Follow-ups (from the 2026-11 code review)
+- **Pillow and the LED library.** The LED library's C code is compiled against the installed
+  Pillow version's internals (install.sh fetches that version's headers, now a ~2 MB sparse
+  checkout instead of a 100+ MB clone). If Pillow is upgraded later, the panel can stop drawing
+  until `./install.sh` rebuilds the library. `doctor.sh` now warns when the versions differ
+  (installs built from this change on). Consider pinning Pillow in requirements.txt to the
+  version that built cleanly on the Pi.
+- **Missing screenshots:** screenshots.py has no image of the default "Big charts" indices screen,
+  the Gold, silver & oil screen, or an extra weather city. The two indices images show the
+  Compact layout.
+- **Lint:** pyflakes flags two unused variables: `sign` in `render.py` (list_page) and `img` in
+  `tests/test_metals.py`. Harmless; remove when next touching those files.
+- **Yahoo is unofficial.** Indices and metals fall back to curl when Yahoo refuses Python's
+  requests. Fine at this low rate, but it can break without notice; when Yahoo is down, one
+  update can take about a minute per symbol (in the background, so the panel isn't affected).
+- **tools/settings_screenshots.mjs** finds sections by element ids and headings; update it when
+  the phone page's layout changes (it broke once when the indices `$ / point` switch moved into
+  the Compact layout).
+- **Not verified on the Pi yet:** the sparse header fetch (needs git 2.25+; Bookworm has 2.39)
+  and doctor.sh's new LED library check.
+
 ## Ideas for later
 1. Clock/date screen (no network needed)
 2. Weather via Open-Meteo (free, no key): current temp, icon, high/low, 24h chart

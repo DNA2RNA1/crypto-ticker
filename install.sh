@@ -209,13 +209,29 @@ if [ "$BUILD" -eq 1 ]; then
     # version installed above and point the compiler at them.
     PIL_VER="$("$VENV/bin/python" -c 'import PIL; print(PIL.__version__)')"
     PIL_SRC="$(dirname "$HERE")/pillow-src-$PIL_VER"
+    PIL_URL=https://github.com/python-pillow/Pillow.git
     if [ ! -f "$PIL_SRC/src/libImaging/Imaging.h" ]; then
         rm -rf "$PIL_SRC"
-        git clone --depth 1 --branch "$PIL_VER" https://github.com/python-pillow/Pillow.git "$PIL_SRC" \
-            || warn "could not fetch Pillow $PIL_VER headers; the LED library build may fail"
+        # Only src/libImaging (about 2 MB) instead of the whole repository (over 100 MB);
+        # a full shallow clone is the fallback if this git or network can't do a sparse one.
+        if ! { git clone -q --depth 1 --filter=blob:none --sparse --branch "$PIL_VER" "$PIL_URL" "$PIL_SRC" \
+               && git -C "$PIL_SRC" sparse-checkout set --no-cone /src/libImaging/; }; then
+            rm -rf "$PIL_SRC"
+            git clone -q --depth 1 --branch "$PIL_VER" "$PIL_URL" "$PIL_SRC" \
+                || warn "could not fetch Pillow $PIL_VER headers; the LED library build may fail"
+        fi
     fi
+    # headers for other Pillow versions aren't needed any more
+    for old in "$(dirname "$HERE")"/pillow-src-*; do
+        if [ -d "$old" ] && [ "$old" != "$PIL_SRC" ]; then
+            rm -rf "$old"
+        fi
+    done
     export CPATH="$PIL_SRC/src/libImaging${CPATH:+:$CPATH}"
     "$VENV/bin/pip" install "$LIB_DIR"
+    # The LED library is compiled against this Pillow version's internals; doctor.sh
+    # warns if Pillow changes later (the library then needs rebuilding: ./install.sh).
+    echo "$PIL_VER" > "$VENV/.led-built-with-pillow"
 fi
 "$VENV/bin/python" -c 'import rgbmatrix' 2>/dev/null \
     || warn "The rgbmatrix module isn't importable yet. Run again without --skip-build."
