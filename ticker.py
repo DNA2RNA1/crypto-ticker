@@ -229,7 +229,7 @@ class Config:
         c.news_speed = env("NEWS_SPEED", c.news_speed, str.lower, choices=tuple(SPEEDS))
         c.videos_channels = channels_from_env(env("VIDEOS_CHANNELS", ""))
         c.videos_per_cycle = env("VIDEOS_PER_CYCLE", c.videos_per_cycle, int, lo=1, hi=10)
-        c.arcade_per_cycle = env("ARCADE_PER_CYCLE", c.arcade_per_cycle, int, lo=1, hi=4)
+        c.arcade_per_cycle = env("ARCADE_PER_CYCLE", c.arcade_per_cycle, int, lo=1, hi=6)
         c.watchlist = watchlist_from_env(env("WATCHLIST", ""))
         c.watchlist_refresh = int(env("WATCHLIST_REFRESH", str(c.watchlist_refresh),
                                       choices=tuple(str(m) for m in WATCHLIST_REFRESH)))
