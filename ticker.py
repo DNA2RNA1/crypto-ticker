@@ -30,7 +30,7 @@ from logsetup import setup_logging
 from prices import CoinGecko, DataError, NetworkError, PriceError, RateLimitError
 from render import Renderer
 from retry import backoff_delay
-from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, News
+from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, DEFAULT_POLITICS_FEEDS, News
 from videos import TAG_COLOR as VIDEO_TAG, Videos, parse_entry as parse_channel
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
@@ -98,9 +98,10 @@ def env(name, default, cast=str, lo=None, hi=None, choices=None):
 
 
 def news_urls(cfg):
-    """The feeds the news screen reads: crypto and/or general, each switchable."""
+    """The feeds the news screen reads: crypto, general and politics, each switchable."""
     urls = (list(cfg.news_feeds) if cfg.news_crypto else []) + \
-        (list(cfg.news_general_feeds) if cfg.news_general else [])
+        (list(cfg.news_general_feeds) if cfg.news_general else []) + \
+        (list(cfg.news_politics_feeds) if cfg.news_politics else [])
     return list(dict.fromkeys(urls))
 
 
@@ -129,6 +130,8 @@ class Config:
     news_crypto: bool = True       # the crypto feeds (NEWS_FEEDS)
     news_general: bool = False     # general news feeds (NEWS_GENERAL_FEEDS)
     news_general_feeds: list = field(default_factory=lambda: list(DEFAULT_GENERAL_FEEDS))
+    news_politics: bool = False    # politics feeds (NEWS_POLITICS_FEEDS)
+    news_politics_feeds: list = field(default_factory=lambda: list(DEFAULT_POLITICS_FEEDS))
     news_speed: str = "normal"     # slow, normal, fast (see scroller.SPEEDS)
     videos_channels: list = field(default_factory=list)  # "UC..." ids or "@handles"
     videos_per_cycle: int = 3
@@ -191,6 +194,10 @@ class Config:
         general = [u.strip() for u in env("NEWS_GENERAL_FEEDS", ",".join(DEFAULT_GENERAL_FEEDS)).split(",")
                    if u.strip()]
         c.news_general_feeds = [u for u in general if u.lower().startswith(("http://", "https://"))][:8]
+        c.news_politics = env("NEWS_POLITICS", False, bool)
+        politics = [u.strip() for u in env("NEWS_POLITICS_FEEDS", ",".join(DEFAULT_POLITICS_FEEDS)).split(",")
+                    if u.strip()]
+        c.news_politics_feeds = [u for u in politics if u.lower().startswith(("http://", "https://"))][:8]
         c.news_speed = env("NEWS_SPEED", c.news_speed, str.lower, choices=tuple(SPEEDS))
         c.videos_channels = channels_from_env(env("VIDEOS_CHANNELS", ""))
         c.videos_per_cycle = env("VIDEOS_PER_CYCLE", c.videos_per_cycle, int, lo=1, hi=10)

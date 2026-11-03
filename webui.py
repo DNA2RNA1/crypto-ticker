@@ -49,6 +49,8 @@ EDITABLE = {  # key -> validator returning the string to store
     "INDICES_VIEW": lambda v: _choice(v.strip().lower(), ("percent", "both")),
     "NEWS_FEEDS": lambda v: _feeds(v),
     "NEWS_GENERAL_FEEDS": lambda v: _feeds(v, allow_empty=True),
+    "NEWS_POLITICS_FEEDS": lambda v: _feeds(v, allow_empty=True),
+    "NEWS_POLITICS": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "NEWS_CRYPTO": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "NEWS_GENERAL": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "NEWS_PER_CYCLE": lambda v: _int(v, 1, 10),
@@ -81,6 +83,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "INDICES_STYLE": "Index layout", "FOCUS": "Focus", "LIST_VIEW": "List view",
           "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "Crypto news feeds", "NEWS_GENERAL_FEEDS": "General news feeds",
           "NEWS_CRYPTO": "Crypto news", "NEWS_GENERAL": "General news",
+          "NEWS_POLITICS": "Politics news", "NEWS_POLITICS_FEEDS": "Politics news feeds",
           "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed",
           "VIDEOS_CHANNELS": "YouTube channels", "VIDEOS_PER_CYCLE": "Videos per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts"}
@@ -242,6 +245,11 @@ def _default_feeds():
 def _default_general_feeds():
     from news import DEFAULT_GENERAL_FEEDS
     return DEFAULT_GENERAL_FEEDS
+
+
+def _default_politics_feeds():
+    from news import DEFAULT_POLITICS_FEEDS
+    return DEFAULT_POLITICS_FEEDS
 
 
 def _sports_keys():
@@ -459,6 +467,9 @@ class WebApp:
             "news_general": clean("NEWS_GENERAL", "off"),
             "news_general_feeds": [u for u in clean("NEWS_GENERAL_FEEDS",
                                                     ",".join(_default_general_feeds())).split(",") if u],
+            "news_politics": clean("NEWS_POLITICS", "off"),
+            "news_politics_feeds": [u for u in clean("NEWS_POLITICS_FEEDS",
+                                                     ",".join(_default_politics_feeds())).split(",") if u],
             "news_speed": clean("NEWS_SPEED", "normal"),
             "videos_channels": [c for c in clean("VIDEOS_CHANNELS", "").split(",") if c],
             "videos_per_cycle": int(clean("VIDEOS_PER_CYCLE", "3")),
@@ -853,7 +864,7 @@ function videosRows(){
 function feedBox(id,list){return `<textarea id="${id}" rows="${Math.max(3,(list||[]).length)}" wrap="off" autocapitalize="off" autocorrect="off" spellcheck="false"
      style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f1216;color:var(--text);font:13px ui-monospace,monospace">${esc((list||[]).join('\n'))}</textarea>`}
 function newsRows(){
-  const none=S.news_crypto!='on'&&S.news_general!='on';
+  const none=S.news_crypto!='on'&&S.news_general!='on'&&S.news_politics!='on';
   return `<h2>News headlines</h2><div class="card">
    <div class="row"><div class="grow">Crypto news<div class="name" style="white-space:normal">CoinDesk, Cointelegraph and the like.</div></div>
      <label class="switch"><input type="checkbox" id="ncrypto" ${S.news_crypto=='on'?'checked':''}><span></span></label></div>
@@ -861,7 +872,10 @@ function newsRows(){
    <div class="row"><div class="grow">General news<div class="name" style="white-space:normal">Top stories, politics, business and world (NPR, BBC by default).</div></div>
      <label class="switch"><input type="checkbox" id="ngeneral" ${S.news_general=='on'?'checked':''}><span></span></label></div>
    ${S.news_general=='on'?`<div class="row" style="display:block;border-top:0;padding-top:0"><div class="name" style="white-space:normal">RSS or Atom URLs, one per line. Each feed is checked every 15 minutes.</div>${feedBox('gfeeds',S.news_general_feeds)}</div>`:''}
-   ${none?'<p class="hint err" style="margin:8px 0">Both are off, so the news screen is skipped.</p>':''}
+   <div class="row"><div class="grow">Politics<div class="name" style="white-space:normal">AP, Reuters, NPR, Politico, MS NOW and Fox News by default.</div></div>
+     <label class="switch"><input type="checkbox" id="npolitics" ${S.news_politics=='on'?'checked':''}><span></span></label></div>
+   ${S.news_politics=='on'?`<div class="row" style="display:block;border-top:0;padding-top:0"><div class="name" style="white-space:normal">RSS or Atom URLs, one per line, up to 8.</div>${feedBox('pfeeds',S.news_politics_feeds)}</div>`:''}
+   ${none?'<p class="hint err" style="margin:8px 0">All news groups are off, so the news screen is skipped.</p>':''}
    <div class="row"><div class="grow">Headlines per cycle</div><select id="nper">${[1,2,3,4,5,6,8,10].map(n=>`<option ${S.news_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
    <div class="row"><div class="grow">Scroll speed</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('news_speed',[['slow','Slow'],['normal','Normal'],['fast','Fast']])}</div>
@@ -1027,7 +1041,7 @@ function save(extra){
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
       screens:S.screens.join(','),indices_source:S.indices_source,indices_style:S.indices_style,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
-      sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
+      sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
@@ -1066,6 +1080,8 @@ function bind(){
   if($('#gfeeds'))$('#gfeeds').onchange=e=>{S.news_general_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
   if($('#ncrypto'))$('#ncrypto').onchange=e=>{S.news_crypto=e.target.checked?'on':'off';save();render()};
   if($('#ngeneral'))$('#ngeneral').onchange=e=>{S.news_general=e.target.checked?'on':'off';save();render()};
+  if($('#npolitics'))$('#npolitics').onchange=e=>{S.news_politics=e.target.checked?'on':'off';save();render()};
+  if($('#pfeeds'))$('#pfeeds').onchange=e=>{S.news_politics_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
   if($('#nper'))$('#nper').onchange=e=>{S.news_per_cycle=+e.target.value;save()};
   if($('#ytch'))$('#ytch').onchange=e=>{S.videos_channels=e.target.value.split(/\s+/).filter(Boolean);save(0);setTimeout(load,1500);setTimeout(load,7000)};
   if($('#vper'))$('#vper').onchange=e=>{S.videos_per_cycle=+e.target.value;save()};

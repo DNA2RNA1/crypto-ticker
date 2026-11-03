@@ -221,6 +221,7 @@ value is logged as a warning and the default is used.
 | `NEWS_FEEDS` | three crypto/business feeds | RSS or Atom URLs, comma separated (one per line on the phone page), up to 8 |
 | `NEWS_CRYPTO` / `NEWS_GENERAL` | `on` / `off` | Switch the crypto feeds (`NEWS_FEEDS`) and the general news feeds (`NEWS_GENERAL_FEEDS`) on or off separately |
 | `NEWS_GENERAL_FEEDS` | NPR top stories, politics, business; BBC World | General news RSS/Atom URLs, up to 8 (AP and CNN have no working public feeds) |
+| `NEWS_POLITICS` / `NEWS_POLITICS_FEEDS` | `off` / AP, Reuters, NPR, Politico, MS NOW, Fox News | Politics headlines, switchable on their own. AP comes via its Flipboard magazine and Reuters via a Google News search (neither publishes RSS any more) |
 | `NEWS_PER_CYCLE` | `3` | Headlines shown each cycle (1–10); the next cycle continues where this one stopped |
 | `NEWS_SPEED` | `normal` | Headline scroll speed: `slow` (20), `normal` (30) or `fast` (45 pixels/s); video titles use it too |
 | `VIDEOS_CHANNELS` | (none) | YouTube channels as `UC…` ids or `@handles`, comma separated, up to 10. Paste channel links on the phone page and it converts them |

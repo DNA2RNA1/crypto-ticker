@@ -34,6 +34,27 @@ DEFAULT_GENERAL_FEEDS = [
     "https://feeds.npr.org/1006/rss.xml",      # NPR business
     "https://feeds.bbci.co.uk/news/world/rss.xml",
 ]
+# Politics (NEWS_POLITICS_FEEDS; off by default), from across the spectrum. AP and Reuters
+# no longer publish RSS: AP's politics picks come via its Flipboard magazine, and Reuters'
+# US stories via a Google News search limited to reuters.com.
+DEFAULT_POLITICS_FEEDS = [
+    "https://flipboard.com/@associatedpress/politics-h8vn14lnz.rss",
+    "https://news.google.com/rss/search?q=when:24h+site:reuters.com/world/us&hl=en-US&gl=US&ceid=US:en",
+    "https://feeds.npr.org/1014/rss.xml",
+    "https://rss.politico.com/politics-news.xml",
+    "https://www.ms.now/category/politics/feed",
+    "https://moxie.foxnews.com/google-publisher/politics.xml",
+]
+# Tag names for feeds whose own titles don't say who they are
+KNOWN_SOURCES = (
+    ("flipboard.com/@associatedpress", "AP"),
+    ("site:reuters.com", "REUTERS"),
+    ("site:apnews.com", "AP"),
+    ("ms.now/", "MS NOW"),
+    ("foxnews.com/", "FOX NEWS"),
+    ("politico.com/", "POLITICO"),
+    ("npr.org/", "NPR"),
+)
 MAX_BYTES = 2_000_000       # a feed bigger than this is ignored (the Pi Zero has 512 MB)
 MAX_PER_FEED = 15           # newest headlines kept per feed
 MAX_TITLE = 160
@@ -92,6 +113,13 @@ def _date(text):
 
 def source_name(title, url):
     """Short label for the colored tag: "CoinDesk: Bitcoin, Ethereum, ..." -> "COINDESK"."""
+    low = (url or "").lower()
+    for marker, known in KNOWN_SOURCES:
+        if marker in low:
+            return known
+    m = re.search(r"site:(?:www\.)?([a-z0-9-]+)\.", low)  # other Google News site searches
+    if m and "news.google." in low:
+        return m.group(1)[:12].upper()
     name = clean_text(title or "")
     name = re.split(r"\s*(?:[:|]|\s-\s|\s–\s)\s*", name)[0] if name else ""
     if name.upper().startswith("BBC NEWS"):
@@ -112,11 +140,14 @@ def parse_feed(content, url):
         raise ValueError(f"not XML: {exc}") from None
     channel = next((el for el in root.iter() if _local(el.tag) == "channel"), root)
     feed_title = _child_text(channel, "title") or _child_text(root, "title")
+    google = "news.google." in (url or "").lower()
     items = []
     for el in root.iter():
         if _local(el.tag) not in ("item", "entry"):
             continue
         title = clean_text(_child_text(el, "title") or "")
+        if google:  # "Headline - Reuters": the source is already on the tag
+            title = re.sub(r"\s+-\s+[^-]{2,40}$", "", title)
         if not title:
             continue
         link = None

@@ -309,3 +309,33 @@ def test_page_saves_news_groups(tmp_path):
     s = app.settings()
     assert s["news_crypto"] == "off" and s["news_general"] == "on"
     assert app.save({"news_general_feeds": ""})["NEWS_GENERAL_FEEDS"] == ""
+
+
+def test_politics_group_and_source_tags(monkeypatch):
+    from news import DEFAULT_POLITICS_FEEDS, parse_feed, source_name
+    from ticker import Config, news_urls
+    for k in ("NEWS_FEEDS", "NEWS_GENERAL_FEEDS", "NEWS_POLITICS_FEEDS", "NEWS_CRYPTO",
+              "NEWS_GENERAL", "NEWS_POLITICS"):
+        monkeypatch.delenv(k, raising=False)
+    monkeypatch.setenv("NEWS_CRYPTO", "off")
+    monkeypatch.setenv("NEWS_POLITICS", "on")
+    assert news_urls(Config.from_env()) == DEFAULT_POLITICS_FEEDS
+    tags = [source_name("whatever", u) for u in DEFAULT_POLITICS_FEEDS]
+    assert tags == ["AP", "REUTERS", "NPR", "POLITICO", "MS NOW", "FOX NEWS"]
+    gn = b"""<rss><channel><title>"when:24h site:reuters.com" - Google News</title>
+      <item><title>Senate passes funding bill - Reuters</title><link>https://news.google.com/x</link>
+      <pubDate>Mon, 02 Nov 2026 20:00:00 GMT</pubDate></item></channel></rss>"""
+    src, items = parse_feed(gn, DEFAULT_POLITICS_FEEDS[1])
+    assert src == "REUTERS" and items[0]["title"] == "Senate passes funding bill"
+
+
+def test_page_saves_politics_group(tmp_path):
+    from webui import WebApp
+    env = tmp_path / "settings.env"
+    env.write_text("WEB_PIN=1234\n")
+    app = WebApp(str(env))
+    from news import DEFAULT_POLITICS_FEEDS
+    saved = app.save({"news_politics": "on", "news_politics_feeds": "\n".join(DEFAULT_POLITICS_FEEDS)})
+    assert saved["NEWS_POLITICS"] == "on"
+    assert saved["NEWS_POLITICS_FEEDS"].split(",") == DEFAULT_POLITICS_FEEDS
+    assert app.settings()["news_politics_feeds"] == DEFAULT_POLITICS_FEEDS
