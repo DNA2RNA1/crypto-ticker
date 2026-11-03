@@ -32,6 +32,7 @@ from render import Renderer
 from retry import backoff_delay
 from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, DEFAULT_POLITICS_FEEDS, News
 from videos import TAG_COLOR as VIDEO_TAG, Videos, parse_entry as parse_channel
+from arcade import Animation, Arcade
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
@@ -39,7 +40,8 @@ from usage import Usage
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
-SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "metals", "news", "videos", "sports", "coins")
+SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "metals", "news", "videos", "sports", "arcade",
+                "coins")
 DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
@@ -151,6 +153,7 @@ class Config:
     news_speed: str = "normal"     # slow, normal, fast (see scroller.SPEEDS)
     videos_channels: list = field(default_factory=list)  # "UC..." ids or "@handles"
     videos_per_cycle: int = 3
+    arcade_per_cycle: int = 1      # arcade animation scenes per cycle (they rotate)
     videos_max_age_days: int = 3
     videos_skip_shorts: bool = True
     sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
@@ -218,6 +221,7 @@ class Config:
         c.news_speed = env("NEWS_SPEED", c.news_speed, str.lower, choices=tuple(SPEEDS))
         c.videos_channels = channels_from_env(env("VIDEOS_CHANNELS", ""))
         c.videos_per_cycle = env("VIDEOS_PER_CYCLE", c.videos_per_cycle, int, lo=1, hi=10)
+        c.arcade_per_cycle = env("ARCADE_PER_CYCLE", c.arcade_per_cycle, int, lo=1, hi=4)
         c.videos_max_age_days = env("VIDEOS_MAX_AGE_DAYS", c.videos_max_age_days, int, lo=1, hi=30)
         c.videos_skip_shorts = env("VIDEOS_SKIP_SHORTS", c.videos_skip_shorts, bool)
         c.sports = follow_from_env(os.environ)
@@ -330,6 +334,7 @@ class Ticker:
         self.metals = Metals()
         self.news = News(news_urls(cfg))
         self.videos = self._make_videos(cfg)
+        self.arcade = Arcade()
         self.sports = Sports(cfg.sports)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
@@ -594,6 +599,34 @@ class Ticker:
         self.display.show(last, max(0.0, anim.duration - anim.scroll_end))
         self.current = last
 
+    def play_frames(self, anim):
+        """Show a frame-by-frame animation (the arcade scenes). It comes in with the normal
+        transition and its last frame is where the next transition starts. On a real panel
+        frames follow the clock: if the Pi falls behind, a frame is skipped rather than the
+        animation slowing down."""
+        step = 1.0 / anim.fps
+        self.show(anim.first_frame(), step)
+        frames = anim.frames
+        realtime = getattr(self.display, "realtime", True)
+        clock = time.monotonic
+        start = clock()
+        for i, frame in enumerate(frames[1:], 1):
+            if self.reload_pending:
+                break
+            if not realtime:
+                self.display.show(frame, step)
+                continue
+            due = start + i * step
+            if clock() > due + step and i < len(frames) - 1:
+                continue                        # running late: drop this frame, keep the pace
+            t0 = clock()
+            self.display.show(frame, 0)
+            self.frame_times.append(clock() - t0)
+            wait = due + step - clock()
+            if wait > 0:
+                time.sleep(wait)
+        self.current = frames[-1]
+
     def transition(self, old, new, vertical=False, frames=14, duration=0.45):
         """Move the old screen out and the new one in over ``duration`` seconds with an
         ease-out curve: up and out the top (scroll) or left and out the side (slide)."""
@@ -631,6 +664,8 @@ class Ticker:
                 continue
             if isinstance(result, Scroller):
                 self.play(result)
+            elif isinstance(result, Animation):
+                self.play_frames(result)
             else:
                 image, hold, *opts = result
                 self.show(image, hold, slide=opts[0] if opts else True)
@@ -707,6 +742,9 @@ class Ticker:
                     speed = SPEEDS[self.cfg.news_speed]
                     for item in self.videos.next_batch(self.cfg.videos_per_cycle):
                         out.append(lambda item=item: self.renderer.news(item, speed, tag_rgb=VIDEO_TAG))
+            elif name == "arcade":
+                for anim in self.arcade.next_scenes(self.cfg.arcade_per_cycle):
+                    out.append(lambda anim=anim: anim)
             elif name == "sports":
                 self.sports.update()     # background refresh: 60 s while live, else 15 min
                 now_ts = time.time()

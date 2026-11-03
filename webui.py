@@ -62,6 +62,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
     "VIDEOS_CHANNELS": lambda v: _channels(v),
     "VIDEOS_PER_CYCLE": lambda v: _int(v, 1, 10),
+    "ARCADE_PER_CYCLE": lambda v: _int(v, 1, 4),
     "VIDEOS_MAX_AGE_DAYS": lambda v: _int(v, 1, 30),
     "VIDEOS_SKIP_SHORTS": lambda v: _choice(v.strip().lower(), ("on", "off")),
 }
@@ -87,6 +88,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "NEWS_POLITICS": "Politics news", "NEWS_POLITICS_FEEDS": "Politics news feeds",
           "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed",
           "VIDEOS_CHANNELS": "YouTube channels", "VIDEOS_PER_CYCLE": "Videos per cycle",
+          "ARCADE_PER_CYCLE": "Arcade scenes per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts"}
 
 
@@ -166,7 +168,7 @@ def _tz(v):
     return v
 
 
-SCREENS = ("clock", "weather", "feargreed", "indices", "metals", "news", "videos", "sports", "coins")
+SCREENS = ("clock", "weather", "feargreed", "indices", "metals", "news", "videos", "sports", "arcade", "coins")
 
 
 def _screens(v):
@@ -494,6 +496,7 @@ class WebApp:
             "news_speed": clean("NEWS_SPEED", "normal"),
             "videos_channels": [c for c in clean("VIDEOS_CHANNELS", "").split(",") if c],
             "videos_per_cycle": int(clean("VIDEOS_PER_CYCLE", "3")),
+            "arcade_per_cycle": int(clean("ARCADE_PER_CYCLE", "1")),
             "videos_max_age_days": int(clean("VIDEOS_MAX_AGE_DAYS", "3")),
             "videos_skip_shorts": clean("VIDEOS_SKIP_SHORTS", "on"),
             "videos_status": self._videos_status(clean),
@@ -856,7 +859,7 @@ function focusHint(){const h=$('#focushint');if(!h)return;
   const syms=S.coins.map(c=>c.entry.split(':')[0]);
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
 const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',metals:'Gold, silver &amp; oil',
-  news:'News headlines',videos:'YouTube videos',sports:'Sports scores'};
+  news:'News headlines',videos:'YouTube videos',sports:'Sports scores',arcade:'Arcade animations'};
 function screenOrder(){  // enabled screens in their saved order, then the others
   const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
   const o=(S.screen_order||[]).filter(k=>all.includes(k));
@@ -865,6 +868,12 @@ function screenOrder(){  // enabled screens in their saved order, then the other
   return S.screen_order=o;
 }
 function saveScreens(order,on){S.screens=[...order.filter(k=>on.has(k)),...(on.has('coins')?['coins']:[])];save();render()}
+function arcadeRows(){
+  return `<h2>Arcade animations</h2><div class="card">
+   <div class="row"><div class="grow">Scenes per cycle<div class="name" style="white-space:normal">Chase, power pellet, cherries and sweethearts take turns, about 5 seconds each.</div></div>
+    <select id="arcn">${[1,2,3,4].map(n=>`<option ${S.arcade_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
+  </div>`;
+}
 function videosRows(){
   const st=S.videos_status||{};
   const line=c=>{const x=st[c];
@@ -958,6 +967,7 @@ function render(){
   </div>
   ${S.screens.includes('news')?newsRows():''}
   ${S.screens.includes('videos')?videosRows():''}
+  ${S.screens.includes('arcade')?arcadeRows():''}
   <p class="hint">Shown in this order at the start of each cycle, then your coins (if Crypto prices is on). If everything is off, the coins show. The weather screen uses the location below.</p>
   ${S.screens.includes('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
@@ -1069,7 +1079,7 @@ function save(extra){
       screens:S.screens.join(','),indices_source:S.indices_source,indices_style:S.indices_style,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,weather_extra:(S.weather_extra||[]).join(';'),timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
-      videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
+      videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,arcade_per_cycle:S.arcade_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
@@ -1122,6 +1132,7 @@ function bind(){
     const q=inp.value.trim(),box=$('#teams-'+inp.dataset.teamq);if(q.length<2){box.innerHTML='';return}
     inp._t=setTimeout(()=>teamSearch(inp.dataset.teamq,q,box),350)});
   if($('#isrc'))$('#isrc').onchange=e=>{S.indices_source=e.target.value;save();render()};
+  if($('#arcn'))$('#arcn').onchange=e=>{S.arcade_per_cycle=+e.target.value;save()};
   if($('#iview'))$('#iview').onchange=e=>{S.indices_view=e.target.checked?'both':'percent';save()};
   const findPlace=async()=>{
     const q=$('#zip').value.trim();if(q.length<3)return toast('Enter a ZIP code or city',true);
