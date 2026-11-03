@@ -912,7 +912,7 @@ function render(){
    <div class="row" style="border-top:0;padding-top:0"><input type="range" id="bright" min="5" max="100" value="${S.brightness}"></div>
    <div class="row"><div class="grow">Seconds per coin</div><div class="val" id="sv">${S.sleep}s</div></div>
    <div class="row" style="border-top:0;padding-top:0"><input type="range" id="sleep" min="2" max="30" value="${S.sleep}"></div>
-   <div class="row"><div class="grow">List view<div class="name" style="white-space:normal">Several coins per screen: symbol and price, green if up for the day, red if down.</div></div>
+   <div class="row"><div class="grow">List view<div class="name" style="white-space:normal">Adds a summary list after the coins each cycle: symbol and price, green if up for the day, red if down.</div></div>
     <label class="switch"><input type="checkbox" id="listview" ${S.list_view!='off'?'checked':''}><span></span></label></div>
    ${S.list_view!='off'?`<div class="row" style="border-top:0;padding-top:0">${seg('list_view',[['4','4 coins'],['5','5 coins (smaller)']])}</div>
    <div class="row"><div class="grow">Seconds per page</div><div class="val" id="lpv">${S.list_page_seconds}s</div></div>

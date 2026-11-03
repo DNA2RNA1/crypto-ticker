@@ -75,20 +75,26 @@ def test_focus_keeps_other_screens():
                                      (4, [("BTC", "ETH", "ADA", "SOL"), ("PEPE", "DOGE", "LINK")])])
 def test_list_view_pages(monkeypatch, n, pages):
     calls = kinds(ticker(list_view=n, featured=["eth"]), monkeypatch)
-    assert all(c[0] == "list" for c in calls)  # list pages only, even with a starred coin
-    assert [c[1] for c in calls] == pages
+    # every coin full screen first (ETH starred: big + regular), then the list pages last
+    singles = [c[1] for c in calls if c[0] == "coin"]
+    assert singles == [s.upper() for s in SYMS]
+    assert ("big", "ETH") in calls
+    first_list = next(i for i, c in enumerate(calls) if c[0] == "list")
+    assert all(c[0] == "list" for c in calls[first_list:])
+    assert [c[1] for c in calls[first_list:]] == pages
 
 
 def test_list_view_with_focus_lists_only_starred(monkeypatch):
     calls = kinds(ticker(list_view=5, focus=True, featured=["doge", "btc"]), monkeypatch)
-    assert [c for c in calls if c[0] == "list"] == [("list", ("BTC", "DOGE"))]
+    assert calls == [("big", "BTC"), ("big", "DOGE"), ("list", ("BTC", "DOGE"))]
 
 
 def test_list_page_seconds_used():
     t = ticker(list_view=5)
     t.cfg.list_page_seconds = 9
+    t.cfg.sleep = 4
     holds = [s()[1] for s in t.coin_screens()]
-    assert holds == [9, 9]
+    assert holds == [4] * len(SYMS) + [9, 9]  # coins at sleep, then 2 list pages
 
 
 @pytest.mark.parametrize("rows", [5, 4])

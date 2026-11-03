@@ -669,19 +669,18 @@ class Ticker:
             out.append(lambda a=asset: (self.renderer.featured(a, stale=self.stale), max(2.0, sleep * 0.6)))
             out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
 
+        # the normal rotation: every coin full screen (starred ones with their big screen)
+        for asset in coins:
+            if asset["id"] in starred_ids:
+                big(asset)
+            else:
+                out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
+        # List view adds the list pages at the end of each cycle, as a summary
         if self.cfg.list_view:
-            # List view is list pages only (no big or single-coin screens); Focus still
-            # narrows the list to starred coins.
             n = self.cfg.list_view
             for i in range(0, len(coins), n):
                 out.append(lambda page=coins[i:i + n]: (
                     self.renderer.list_page(page, rows=n, stale=self.stale), self.cfg.list_page_seconds))
-        else:
-            for asset in coins:
-                if asset["id"] in starred_ids:
-                    big(asset)
-                else:
-                    out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
         return out
 
     def run(self):
