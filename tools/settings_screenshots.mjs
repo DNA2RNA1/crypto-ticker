@@ -50,6 +50,8 @@ try {
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-indices.png") })
     await toHeading("News headlines")
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-news.png") })
+    await toHeading("YouTube videos")
+    await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-videos.png") })
     await toHeading("Sports")
     await pg.fill('[data-teamq="nfl"]', "chiefs")
     await pg.waitForSelector("#teams-nfl [data-ti]")
@@ -60,7 +62,7 @@ try {
     await pg.screenshot({ path: path.join(OUT, "settings-page-iphone-status-update.png") })
     shots.push("settings-page-iphone-full.png", "settings-page-iphone-top.png",
                "settings-page-iphone-list-view.png", "settings-page-iphone-screens.png",
-               "settings-page-iphone-indices.png", "settings-page-iphone-news.png", "settings-page-iphone-sports.png",
+               "settings-page-iphone-indices.png", "settings-page-iphone-news.png", "settings-page-iphone-videos.png", "settings-page-iphone-sports.png",
                "settings-page-iphone-status-update.png")
     if (errors.length) throw new Error("page errors: " + errors.join("; "))
   } finally { srv.kill() }

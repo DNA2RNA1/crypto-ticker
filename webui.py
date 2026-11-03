@@ -53,6 +53,10 @@ EDITABLE = {  # key -> validator returning the string to store
     "FOCUS": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "LIST_VIEW": lambda v: _choice(v.strip().lower(), ("off", "5", "4")),
     "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
+    "VIDEOS_CHANNELS": lambda v: _channels(v),
+    "VIDEOS_PER_CYCLE": lambda v: _int(v, 1, 10),
+    "VIDEOS_MAX_AGE_DAYS": lambda v: _int(v, 1, 30),
+    "VIDEOS_SKIP_SHORTS": lambda v: _choice(v.strip().lower(), ("on", "off")),
 }
 
 MAX_FAILS = 5
@@ -72,7 +76,9 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "WEATHER_PLACE": "Place name", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
           "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "FOCUS": "Focus", "LIST_VIEW": "List view",
           "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "News feeds",
-          "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed"}
+          "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed",
+          "VIDEOS_CHANNELS": "YouTube channels", "VIDEOS_PER_CYCLE": "Videos per cycle",
+          "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts"}
 
 
 def _int(v, lo, hi):
@@ -132,7 +138,7 @@ def _tz(v):
     return v
 
 
-SCREENS = ("clock", "weather", "feargreed", "indices", "news", "sports", "coins")
+SCREENS = ("clock", "weather", "feargreed", "indices", "news", "videos", "sports", "coins")
 
 
 def _screens(v):
@@ -212,6 +218,13 @@ def _favorites(v):
     if len(out) > 20:
         raise ValueError("20 favorites max")
     return ",".join(out)
+
+
+def _channels(v):
+    """YouTube channel links / @handles / ids, one per line -> canonical, comma separated.
+    Empty is allowed (no channels yet)."""
+    from videos import parse_entries
+    return ",".join(parse_entries(v))
 
 
 def _default_feeds():
@@ -430,8 +443,22 @@ class WebApp:
             "news_feeds": clean("NEWS_FEEDS", ",".join(_default_feeds())).split(","),
             "news_per_cycle": int(clean("NEWS_PER_CYCLE", "3")),
             "news_speed": clean("NEWS_SPEED", "normal"),
+            "videos_channels": [c for c in clean("VIDEOS_CHANNELS", "").split(",") if c],
+            "videos_per_cycle": int(clean("VIDEOS_PER_CYCLE", "3")),
+            "videos_max_age_days": int(clean("VIDEOS_MAX_AGE_DAYS", "3")),
+            "videos_skip_shorts": clean("VIDEOS_SKIP_SHORTS", "on"),
+            "videos_status": self._videos_status(clean),
             "sports": self._sports(clean),
         }
+
+    def _videos_status(self, clean):
+        """Per channel: {"ok": True, "name"} once fetched, {"ok": False, "error"} if it
+        failed, None if not checked yet (the screen off, or the first fetch pending)."""
+        entries = [c for c in clean("VIDEOS_CHANNELS", "").split(",") if c]
+        videos = getattr(self.ticker, "videos", None)
+        if videos is None:
+            return {e: None for e in entries}
+        return videos.status_for(entries)
 
     def _sports(self, clean):
         """One entry per league for the Sports cards (out-of-season ones flagged)."""
@@ -780,7 +807,7 @@ function focusHint(){const h=$('#focushint');if(!h)return;
   const syms=S.coins.map(c=>c.entry.split(':')[0]);
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
 const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',
-  news:'News headlines',sports:'Sports scores'};
+  news:'News headlines',videos:'YouTube videos',sports:'Sports scores'};
 function screenOrder(){  // enabled screens in their saved order, then the others
   const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
   const o=(S.screen_order||[]).filter(k=>all.includes(k));
@@ -789,6 +816,23 @@ function screenOrder(){  // enabled screens in their saved order, then the other
   return S.screen_order=o;
 }
 function saveScreens(order,on){S.screens=[...order.filter(k=>on.has(k)),'coins'];save();render()}
+function videosRows(){
+  const st=S.videos_status||{};
+  const line=c=>{const x=st[c];
+    const msg=x==null?'<span class="name">Not checked yet</span>'
+      :x.ok?`<span style="color:#3ad07a">✓ ${esc(x.name)}</span>`:`<span style="color:#ff6b5e">⚠ ${esc(x.error)}</span>`;
+    return `<div class="row"><div class="grow" style="min-width:0"><div style="overflow:hidden;text-overflow:ellipsis;font:13px ui-monospace,monospace">${esc(c)}</div><div style="font-size:13px">${msg}</div></div></div>`};
+  return `<h2>YouTube videos</h2><div class="card">
+   <div class="row" style="display:block"><div>Channels<div class="name" style="white-space:normal">Paste channel links (youtube.com/@name), one per line. New uploads are checked every 30 minutes.</div></div>
+    <textarea id="ytch" rows="${Math.max(3,(S.videos_channels||[]).length+1)}" wrap="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="https://www.youtube.com/@channel"
+     style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f1216;color:var(--text);font:13px ui-monospace,monospace">${esc((S.videos_channels||[]).join('\n'))}</textarea></div>
+   ${(S.videos_channels||[]).map(line).join('')}
+   <div class="row"><div class="grow">Videos per cycle</div><select id="vper">${[1,2,3,4,5,6,8,10].map(n=>`<option ${S.videos_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Only videos from the last</div><select id="vage">${[1,2,3,5,7,14,30].map(n=>`<option value="${n}" ${S.videos_max_age_days==n?'selected':''}>${n} day${n>1?'s':''}</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Skip Shorts</div><label class="switch"><input type="checkbox" id="vshorts" ${S.videos_skip_shorts!='off'?'checked':''}><span></span></label></div>
+   <div class="row"><div class="name" style="white-space:normal">Titles scroll at the news screen's speed.</div></div>
+  </div>`;
+}
 function newsRows(){
   return `<h2>News headlines</h2><div class="card">
    <div class="row" style="display:block"><div>Feeds<div class="name" style="white-space:normal">RSS or Atom URLs, one per line. Each is checked every 15 minutes.</div></div>
@@ -850,6 +894,7 @@ function render(){
      <label class="switch"><input type="checkbox" id="iview" ${S.indices_view=='both'?'checked':''}><span></span></label></div>`:''}
   </div>
   ${S.screens.includes('news')?newsRows():''}
+  ${S.screens.includes('videos')?videosRows():''}
   <p class="hint">Shown in this order at the start of each cycle, then your coins. The weather screen uses the location below.</p>
   ${S.screens.includes('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
@@ -955,6 +1000,7 @@ function save(extra){
       screens:S.screens.join(','),indices_source:S.indices_source,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
+      videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
@@ -990,6 +1036,10 @@ function bind(){
     [o[i],o[j]]=[o[j],o[i]];S.screen_order=o;saveScreens(o,new Set(S.screens))});
   if($('#feeds'))$('#feeds').onchange=e=>{S.news_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
   if($('#nper'))$('#nper').onchange=e=>{S.news_per_cycle=+e.target.value;save()};
+  if($('#ytch'))$('#ytch').onchange=e=>{S.videos_channels=e.target.value.split(/\s+/).filter(Boolean);save(0);setTimeout(load,1500);setTimeout(load,7000)};
+  if($('#vper'))$('#vper').onchange=e=>{S.videos_per_cycle=+e.target.value;save()};
+  if($('#vage'))$('#vage').onchange=e=>{S.videos_max_age_days=+e.target.value;save()};
+  if($('#vshorts'))$('#vshorts').onchange=e=>{S.videos_skip_shorts=e.target.checked?'on':'off';save()};
   document.querySelectorAll('[data-lg]').forEach(cb=>cb.onchange=()=>{lg(cb.dataset.lg).on=cb.checked;save();render()});
   document.querySelectorAll('[data-lgtop]').forEach(sel=>sel.onchange=()=>{lg(sel.dataset.lgtop).top=+sel.value;save()});
   document.querySelectorAll('[data-unfav]').forEach(b=>b.onclick=()=>{const [k,id]=b.dataset.unfav.split('/');

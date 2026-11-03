@@ -17,7 +17,8 @@ from zoneinfo import ZoneInfo
 
 from display import MatrixDisplay
 from prices import NetworkError, RateLimitError
-from sample import apply_sample, sample_games, sample_news, sample_weather
+from sample import apply_sample, sample_games, sample_news, sample_videos, sample_weather
+from videos import TAG_COLOR as VIDEO_TAG
 from sports import BY_KEY
 from ticker import HERE, Config, Ticker
 
@@ -72,6 +73,7 @@ def main():
 
     news_now = SPORTS_NOW.timestamp()
     news = sample_news(news_now)
+    vids = sample_videos(news_now)
     games = sample_games(SPORTS_NOW)
 
     def mid(anim):
@@ -114,6 +116,7 @@ def main():
         ("13b-weather-rain", lambda: r.weather(sample_weather(61), "F", FIXED_TIME.replace(hour=14))),
         ("14-news", lambda: r.news(news[0], now_ts=news_now).first_frame()),
         ("14b-news-scrolling", lambda: mid(r.news(news[0], now_ts=news_now))),
+        ("14c-videos", lambda: r.news(vids[0], now_ts=news_now, tag_rgb=VIDEO_TAG).first_frame()),
         ("15-sports-live", lambda: game("nfl", 0, fav="away")),
         ("16-sports-college-ranked", lambda: game("ncaaf", 0)),
         ("17-sports-final", lambda: game("nba", 1)),
@@ -212,6 +215,7 @@ LABELS = {
     "12-no-data-rate-limit": "Rate limited, no cached prices",
     "13-weather": "Weather: temp, high/low, next 12 h", "13b-weather-rain": "Weather: rain",
     "14-news": "News headline (tag + age)", "14b-news-scrolling": "News: scrolling",
+    "14c-videos": "YouTube videos (red tag)",
     "15-sports-live": "Sports: live, favorite", "16-sports-college-ranked": "Sports: college, ranked",
     "17-sports-final": "Sports: final (OT)", "18-sports-upcoming": "Sports: upcoming",
     "19-sports-row-scrolling": "Sports: long row scrolls",

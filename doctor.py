@@ -172,6 +172,11 @@ def check_sources(settings, fetch=fetch):
     out = []
     feeds = [u for u in (settings or {}).get("NEWS_FEEDS", ",".join(DEFAULT_FEEDS)).split(",") if u.strip()]
     targets = SERVICES + [(f"News feed {u.split('/')[2]}", u.strip()) for u in feeds]
+    channels = [c.strip() for c in (settings or {}).get("VIDEOS_CHANNELS", "").split(",") if c.strip()]
+    if channels:  # Videos screen: one request is enough to know YouTube is reachable
+        ids = [c for c in channels if re.fullmatch(r"UC[A-Za-z0-9_-]{22}", c)]
+        targets.append(("YouTube", "https://www.youtube.com/feeds/videos.xml?channel_id=" + ids[0]
+                        if ids else "https://www.youtube.com/"))
     for name, url in targets:
         t0 = time.monotonic()
         code, err = fetch(url)

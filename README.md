@@ -22,9 +22,9 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 |--|--|--|--|--|--|
 | ![](docs/screenshots/07-coin-classic.png) | ![](docs/screenshots/06-featured.png) | ![](docs/screenshots/10d-list-view-4.png) | ![](docs/screenshots/10c-list-view-5.png) | ![](docs/screenshots/10-coin-stale.png) | ![](docs/screenshots/11-no-data-offline.png) |
 
-| Weather | News | Sports: live | Sports: college | Sports: final | Sports: upcoming |
-|--|--|--|--|--|--|
-| ![](docs/screenshots/13-weather.png) | ![](docs/screenshots/14-news.png) | ![](docs/screenshots/15-sports-live.png) | ![](docs/screenshots/16-sports-college-ranked.png) | ![](docs/screenshots/17-sports-final.png) | ![](docs/screenshots/18-sports-upcoming.png) |
+| Weather | News | Videos | Sports: live | Sports: college | Sports: final | Sports: upcoming |
+|--|--|--|--|--|--|--|
+| ![](docs/screenshots/13-weather.png) | ![](docs/screenshots/14-news.png) | ![](docs/screenshots/14c-videos.png) | ![](docs/screenshots/15-sports-live.png) | ![](docs/screenshots/16-sports-college-ranked.png) | ![](docs/screenshots/17-sports-final.png) | ![](docs/screenshots/18-sports-upcoming.png) |
 
 ## Contents
 
@@ -34,7 +34,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
    - [Other Wi-Fi networks (phone hotspot)](#other-wi-fi-networks-phone-hotspot)
    - [Work Wi-Fi (WPA2-Enterprise)](#work-wi-fi-wpa2-enterprise)
 4. [Configuration](#configuration)
-5. [Weather, news and sports screens](#weather-news-and-sports-screens)
+5. [Weather, news, videos and sports screens](#weather-news-videos-and-sports-screens)
 6. [Phone settings page](#phone-settings-page)
 7. [Updating (and rolling back)](#updating-and-rolling-back)
 8. [iPhone widget](#iphone-widget)
@@ -216,11 +216,15 @@ value is logged as a warning and the default is used.
 | `FOCUS` | `off` | `on` = coin rotation shows only starred coins (clock, Fear & Greed and indices keep running). With nothing starred, all coins show |
 | `LIST_VIEW` | `off` | `off`, `4` (pages of 4: price + % change; the phone page's switch turns this on) or `5` (pages of 5 coins: ▲/▼ + price). Starred coins keep their big screens |
 | `LIST_PAGE_SECONDS` | `6` | Seconds per list page (2–60) |
-| `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle, in order (coins always last). Also `weather`, `news`, `sports` (off by default) |
+| `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle, in order (coins always last). Also `weather`, `news`, `videos`, `sports` (off by default) |
 | `INDICES_SOURCE` | `coingecko` | `coingecko` (tokenized funds, no extra calls) or `yahoo` (real index values; unofficial) |
 | `NEWS_FEEDS` | three crypto/business feeds | RSS or Atom URLs, comma separated (one per line on the phone page), up to 8 |
 | `NEWS_PER_CYCLE` | `3` | Headlines shown each cycle (1–10); the next cycle continues where this one stopped |
-| `NEWS_SPEED` | `normal` | Headline scroll speed: `slow` (20), `normal` (30) or `fast` (45 pixels/s) |
+| `NEWS_SPEED` | `normal` | Headline scroll speed: `slow` (20), `normal` (30) or `fast` (45 pixels/s); video titles use it too |
+| `VIDEOS_CHANNELS` | (none) | YouTube channels as `UC…` ids or `@handles`, comma separated, up to 10. Paste channel links on the phone page and it converts them |
+| `VIDEOS_PER_CYCLE` | `3` | Video titles shown each cycle (1–10) |
+| `VIDEOS_MAX_AGE_DAYS` | `3` | Only uploads from the last N days (1–30) |
+| `VIDEOS_SKIP_SHORTS` | `on` | Leave out YouTube Shorts (detected by their `/shorts/` link) |
 | `SPORTS_<LEAGUE>` | `on` (`off` for NHL) | `SPORTS_NFL`, `SPORTS_NCAAF`, `SPORTS_NBA`, `SPORTS_NCAAM`, `SPORTS_MLB`, `SPORTS_NHL`: `on`/`off` |
 | `SPORTS_<LEAGUE>_TOP` | `25` college, `8` pro | Follow the AP Top `10`/`25` (college) or the top `4`/`8`/`12`/`16` by record (pro); `0` = off |
 | `SPORTS_<LEAGUE>_FAVORITES` | (none) | Favorite teams as ESPN `id:ABBR` pairs, e.g. `2:BUF`; easiest to pick on the phone page |
@@ -244,7 +248,7 @@ value is logged as a warning and the default is used.
 **Custom icons:** tap a coin's picture on the phone page and choose a photo, or copy a PNG to
 `icons/<symbol>.png`. Your pictures stay on the Pi (they're not committed to git).
 
-## Weather, news and sports screens
+## Weather, news, videos and sports screens
 
 Turn them on in the phone page's **Screens** list and move them with ↑/↓. Each one comes in and
 goes out with your Transition setting, and each is skipped (never an error screen) when it has
@@ -260,6 +264,16 @@ each feed keeps its last good headlines, so a broken feed or no Wi-Fi never empt
 HTML, entities and characters the LED font can't draw are cleaned up.
 
 ![News scroll](docs/preview-news.gif)
+
+**Videos** shows new uploads from YouTube channels you pick, the same way as news: the title scrolls
+with the channel name in a red tag and the video's age. On the phone page, turn on **YouTube
+videos** under Screens, then paste channel links (`youtube.com/@name`, `/channel/UC…` or a feed
+URL), one per line. The Pi turns each into the channel's free feed
+(`youtube.com/feeds/videos.xml?channel_id=…`); an `@handle` is looked up once on the channel's page
+and remembered in `cache/youtube_channels.json`. Under each channel the page shows ✓ and its name
+once it has been read, or what went wrong. Channels are checked every 30 minutes; each keeps its
+last good uploads, and uploads older than the age limit drop off even while YouTube is unreachable.
+Shorts are skipped by default.
 
 Scrolling moves one pixel per frame, and the position follows the clock, so a late frame never
 slows the text down. Building a frame is a copy plus a crop-and-paste of a pre-rendered strip:
@@ -462,6 +476,7 @@ and never prints passwords, the PIN or API keys. If it can't read the log, run `
 | SD card filling up | `du -sh logs cache`; lower `LOG_MAX_KB` / `LOG_BACKUPS` |
 | Weather screen never shows | It needs weather data: check the location on the phone page and the log for "Weather fetch failed" |
 | News screen never shows | No feed has worked yet: open a feed URL in a browser to check it, and look for "news feed … failed" in the log |
+| Videos screen never shows | No upload in the age window, or no channel has worked yet: the phone page shows a ⚠ under a channel that failed; look for "videos:" in the log. A wider "Only videos from the last" setting helps for channels that post rarely |
 | Sports screen never shows | No followed game in the last 24 h or upcoming, the sport is out of season, or ESPN failed ("sports … failed" in the log). Add a favorite to always see its next game |
 | Focus on but every coin shows | No coin is starred; tap ★ on the phone page (the page shows a hint) |
 
@@ -475,7 +490,7 @@ node --test tests/widget/widget.test.mjs   # iPhone widget tests (also run by py
 
 The tests mock CoinGecko responses: normal data, timeouts, HTTP 429, HTTP 5xx, malformed JSON,
 Wi-Fi loss, cold start offline, plus settings-page validation, Focus/List view, log rotation and
-the emulator. Weather, news and sports have their own mocked-data tests (normal, empty, malformed,
+the emulator. Weather, news, videos and sports have their own mocked-data tests (normal, empty, malformed,
 offline; for sports also live/final/upcoming for every league), plus scroll timing and transitions. The widget tests run the Scriptable script against a small stand-in for
 Scriptable's API (`tests/widget/scriptable_stub.mjs`), not the real app.
 
@@ -487,7 +502,7 @@ Scriptable's API (`tests/widget/scriptable_stub.mjs`), not the real app.
 | `render.py` | Draws every screen as a Pillow image |
 | `display.py` | Real panel, emulator (with screenshots) or GIF recorder |
 | `webui.py` | Phone settings page with input validation |
-| `news.py`, `sports.py`, `scroller.py` | News feeds, ESPN scores and the league table, scrolling text |
+| `news.py`, `videos.py`, `sports.py`, `scroller.py` | News feeds, YouTube uploads, ESPN scores and the league table, scrolling text |
 | `feeds.py`, `session.py`, `usage.py`, `icons.py`, `bdf.py` | Weather/F&G/indices, market sessions, API budget, icons, fonts |
 | `install.sh`, `crypto-ticker.service` | Install and auto-start |
 | `wifi_enterprise.py` | Extra Wi-Fi profiles for `install.sh --enterprise-wifi`, `--add-wifi`, `--list-wifi` |
