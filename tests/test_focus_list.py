@@ -44,7 +44,19 @@ def test_focus_off_shows_everything(monkeypatch):
 
 def test_focus_on_shows_only_starred(monkeypatch):
     calls = kinds(ticker(focus=True, featured=["sol", "btc"]), monkeypatch)
-    assert calls == [("big", "BTC"), ("coin", "BTC"), ("big", "SOL"), ("coin", "SOL")]
+    assert calls == [("big", "BTC"), ("big", "SOL")]  # big screen only, no doubling
+
+
+def test_focus_big_screen_gets_full_time():
+    t = ticker(focus=True, featured=["btc"])
+    t.cfg.sleep = 7
+    holds = [s()[1] for s in t.coin_screens()]
+    assert holds == [7]
+
+
+def test_starred_outside_focus_still_get_both_screens(monkeypatch):
+    calls = kinds(ticker(featured=["btc"]), monkeypatch)
+    assert calls[:2] == [("big", "BTC"), ("coin", "BTC")]
 
 
 def test_focus_on_with_nothing_starred_shows_all(monkeypatch):
@@ -56,7 +68,7 @@ def test_focus_keeps_other_screens():
     t = ticker(focus=True, featured=["btc"])
     t.cfg.screens = ["clock", "coins"]
     t.weather.next_fetch = float("inf")
-    assert len(t.screens()) == 1 + 2  # clock + BTC's big screen + BTC
+    assert len(t.screens()) == 1 + 1  # clock + BTC's big screen
 
 
 @pytest.mark.parametrize("n,pages", [(5, [("BTC", "ETH", "ADA", "SOL", "PEPE"), ("DOGE", "LINK")]),

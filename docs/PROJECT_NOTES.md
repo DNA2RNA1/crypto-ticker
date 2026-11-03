@@ -96,7 +96,7 @@ on) plug into the same rotation and transitions.
 - **Clock:** big white time, AM/PM (no seconds), a weather icon top-right (sun, partly cloudy, cloudy, rain, storm, snow,
   fog; a silver moon showing the real phase on clear nights), and a bottom row with the outdoor
   temperature as "77°F" (green) and day/date (orange, shortens to fit). No humidity
-  and no standalone moon (a full moon looked like a sun). The city name shows small under the time.
+  and no standalone moon (a full moon looked like a sun). The place shows small under the time as "CITY, ST" (US states abbreviated), centered on the panel.
   Weather from Open-Meteo (free, no key, every 15 min). Location is set on the phone page by
   **ZIP code or city** (Open-Meteo geocoding), which saves `WEATHER_PLACE/LAT/LON` and also sets
   `TIMEZONE` from the place. °F/°C toggle (`TEMP_UNIT`). If weather fails,

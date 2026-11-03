@@ -95,6 +95,38 @@ def change_text(change):
     return f"{arrow}{abs(change):.1f}%" if abs(change) < 100 else f"{arrow}{abs(change):.0f}%"
 
 
+
+US_STATES = {
+    "alabama": "AL", "alaska": "AK", "arizona": "AZ", "arkansas": "AR", "california": "CA",
+    "colorado": "CO", "connecticut": "CT", "delaware": "DE", "district of columbia": "DC",
+    "florida": "FL", "georgia": "GA", "hawaii": "HI", "idaho": "ID", "illinois": "IL",
+    "indiana": "IN", "iowa": "IA", "kansas": "KS", "kentucky": "KY", "louisiana": "LA",
+    "maine": "ME", "maryland": "MD", "massachusetts": "MA", "michigan": "MI", "minnesota": "MN",
+    "mississippi": "MS", "missouri": "MO", "montana": "MT", "nebraska": "NE", "nevada": "NV",
+    "new hampshire": "NH", "new jersey": "NJ", "new mexico": "NM", "new york": "NY",
+    "north carolina": "NC", "north dakota": "ND", "ohio": "OH", "oklahoma": "OK", "oregon": "OR",
+    "pennsylvania": "PA", "rhode island": "RI", "south carolina": "SC", "south dakota": "SD",
+    "tennessee": "TN", "texas": "TX", "utah": "UT", "vermont": "VT", "virginia": "VA",
+    "washington": "WA", "west virginia": "WV", "wisconsin": "WI", "wyoming": "WY",
+    "puerto rico": "PR",
+}
+
+
+def place_label(place):
+    """'Edinburg, Texas, US' -> 'EDINBURG, TX'. Non-US regions are kept as written;
+    a place with no region gives just the city."""
+    parts = [p.strip() for p in (place or "").split(",") if p.strip()]
+    if not parts:
+        return ""
+    city = parts[0]
+    if len(parts) >= 2:
+        region = parts[1]
+        region = US_STATES.get(region.lower(), region)
+        if region.lower() != city.lower():
+            return f"{city}, {region}".upper()
+    return city.upper()
+
+
 class Renderer:
     LAYOUTS = ("classic", "chart", "mix")
 
@@ -433,20 +465,21 @@ class Renderer:
         big = f["9x18B"]
         tw = big.width(t)
         big.draw(img, max(0, (45 - tw) // 2), 16, t, PRICE)
-        # city name, small, under the time
-        city = (place or "").split(",")[0].strip().upper()
+        # "CITY, ST", small, centered on the panel under the time
+        city = place_label(place)
         if city:
-            cf = f["4x6"] if f["4x6"].width(city) <= 45 else None
-            if cf is None:
-                while city and f["4x6"].width(city) > 45:
-                    city = city[:-1]
-                cf = f["4x6"]
-            cf.draw(img, max(0, (45 - cf.width(city)) // 2), 22, city, (130, 130, 140))
+            cf = f["4x6"]
+            if cf.width(city) > 64 and ", " in city:
+                city = city.split(", ")[0]  # drop the state before cutting the name
+            while city and cf.width(city) > 64:
+                city = city[:-1]
+            cf.draw(img, max(0, (64 - cf.width(city)) // 2), 22, city, (130, 130, 140))
         # right column: weather icon, AM/PM under it
         if weather:
             self.weather_icon(img, 51, 0, weather, now)
         ampm = "AM" if now.hour < 12 else "PM"
-        f["5x8"].draw(img, 63 - f["5x8"].width(ampm), 17, ampm, (170, 170, 170))
+        # one row up so it doesn't touch a centered "CITY, ST" underneath
+        f["5x8"].draw(img, 63 - f["5x8"].width(ampm), 16, ampm, (170, 170, 170))
         # bottom row
         font = f["5x8"]
         temp = f"{round(weather['temp'])}°{unit}" if weather else None

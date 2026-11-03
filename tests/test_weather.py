@@ -144,3 +144,21 @@ def test_screen_in_settings(monkeypatch):
 
 def test_fixture_is_valid_json():
     json.dumps(load_fixture("open_meteo.json"))
+
+
+def test_place_label_city_and_state():
+    from render import place_label
+    assert place_label("Edinburg, Texas, US") == "EDINBURG, TX"
+    assert place_label("Santa Fe, New Mexico, US") == "SANTA FE, NM"
+    assert place_label("Paris, Île-de-France, France") == "PARIS, ÎLE-DE-FRANCE"
+    assert place_label("Edinburg") == "EDINBURG"
+    assert place_label("") == ""
+
+
+def test_clock_place_fits_and_drops_state_when_long():
+    from datetime import datetime
+    from render import Renderer
+    r = Renderer()
+    for place in ("Edinburg, Texas, US", "Rancho Santa Margarita, California, US"):
+        img = r.clock(datetime(2026, 11, 2, 9, 5), None, "F", place)
+        assert img.size == (64, 32)

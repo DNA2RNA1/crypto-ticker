@@ -658,7 +658,14 @@ class Ticker:
         starred_ids = {a["id"] for a in starred}
         out = []
 
+        # In Focus mode every coin shown is starred, so big + regular screens doubled each
+        # coin; there the big screen stands alone and gets the full time per coin.
+        focus_only = bool(self.cfg.focus and starred)
+
         def big(asset):  # starred coins keep their big screens in every mode
+            if focus_only:
+                out.append(lambda a=asset: (self.renderer.featured(a, stale=self.stale), sleep))
+                return
             out.append(lambda a=asset: (self.renderer.featured(a, stale=self.stale), max(2.0, sleep * 0.6)))
             out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
 
