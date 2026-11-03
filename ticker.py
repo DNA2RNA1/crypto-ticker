@@ -30,7 +30,7 @@ from logsetup import setup_logging
 from prices import CoinGecko, DataError, NetworkError, PriceError, RateLimitError
 from render import Renderer
 from retry import backoff_delay
-from news import DEFAULT_FEEDS, News
+from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, News
 from videos import TAG_COLOR as VIDEO_TAG, Videos, parse_entry as parse_channel
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
@@ -97,6 +97,13 @@ def env(name, default, cast=str, lo=None, hi=None, choices=None):
     return value
 
 
+def news_urls(cfg):
+    """The feeds the news screen reads: crypto and/or general, each switchable."""
+    urls = (list(cfg.news_feeds) if cfg.news_crypto else []) + \
+        (list(cfg.news_general_feeds) if cfg.news_general else [])
+    return list(dict.fromkeys(urls))
+
+
 @dataclass
 class Config:
     symbols: list = field(default_factory=lambda: ["btc", "eth"])
@@ -118,6 +125,9 @@ class Config:
     indices_view: str = "percent"  # percent, or both (% then the $ / point change)
     news_feeds: list = field(default_factory=lambda: list(DEFAULT_FEEDS))
     news_per_cycle: int = 3
+    news_crypto: bool = True       # the crypto feeds (NEWS_FEEDS)
+    news_general: bool = False     # general news feeds (NEWS_GENERAL_FEEDS)
+    news_general_feeds: list = field(default_factory=lambda: list(DEFAULT_GENERAL_FEEDS))
     news_speed: str = "normal"     # slow, normal, fast (see scroller.SPEEDS)
     videos_channels: list = field(default_factory=list)  # "UC..." ids or "@handles"
     videos_per_cycle: int = 3
@@ -174,6 +184,11 @@ class Config:
         feeds = [u.strip() for u in env("NEWS_FEEDS", ",".join(DEFAULT_FEEDS)).split(",") if u.strip()]
         c.news_feeds = [u for u in feeds if u.lower().startswith(("http://", "https://"))][:8] or list(DEFAULT_FEEDS)
         c.news_per_cycle = env("NEWS_PER_CYCLE", c.news_per_cycle, int, lo=1, hi=10)
+        c.news_crypto = env("NEWS_CRYPTO", True, bool)
+        c.news_general = env("NEWS_GENERAL", False, bool)
+        general = [u.strip() for u in env("NEWS_GENERAL_FEEDS", ",".join(DEFAULT_GENERAL_FEEDS)).split(",")
+                   if u.strip()]
+        c.news_general_feeds = [u for u in general if u.lower().startswith(("http://", "https://"))][:8]
         c.news_speed = env("NEWS_SPEED", c.news_speed, str.lower, choices=tuple(SPEEDS))
         c.videos_channels = channels_from_env(env("VIDEOS_CHANNELS", ""))
         c.videos_per_cycle = env("VIDEOS_PER_CYCLE", c.videos_per_cycle, int, lo=1, hi=10)
@@ -285,7 +300,7 @@ class Ticker:
         self.yahoo = Indices(parse_indices(cfg.indices))
         self.yahoo_dow = Indices([("^DJI", "DOW")])  # no Dow token exists on CoinGecko
         self.metals = Metals()
-        self.news = News(cfg.news_feeds)
+        self.news = News(news_urls(cfg))
         self.videos = self._make_videos(cfg)
         self.sports = Sports(cfg.sports)
         self.tz = get_tz(cfg.timezone)
@@ -470,8 +485,8 @@ class Ticker:
         if new.sports != old.sports:
             self.sports.follow = new.sports
             self.sports.next_fetch = 0  # fetch with the new teams right away
-        if new.news_feeds != old.news_feeds:
-            self.news = News(new.news_feeds)
+        if news_urls(new) != news_urls(old):
+            self.news = News(news_urls(new))
         if (new.videos_channels, new.videos_max_age_days, new.videos_skip_shorts) != \
                 (old.videos_channels, old.videos_max_age_days, old.videos_skip_shorts):
             self.videos = self._make_videos(new)

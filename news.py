@@ -20,10 +20,19 @@ from feeds import Feed
 
 log = logging.getLogger("ticker.news")
 
+# Crypto headlines (NEWS_FEEDS)
 DEFAULT_FEEDS = [
     "https://www.coindesk.com/arc/outboundfeeds/rss/",
     "https://cointelegraph.com/rss",
     "https://feeds.bbci.co.uk/news/business/rss.xml",
+]
+# General news: top stories, politics, business, world (NEWS_GENERAL_FEEDS; off by default).
+# AP and CNN don't offer working public RSS feeds, so these are NPR and the BBC.
+DEFAULT_GENERAL_FEEDS = [
+    "https://feeds.npr.org/1001/rss.xml",      # NPR top stories
+    "https://feeds.npr.org/1014/rss.xml",      # NPR politics
+    "https://feeds.npr.org/1006/rss.xml",      # NPR business
+    "https://feeds.bbci.co.uk/news/world/rss.xml",
 ]
 MAX_BYTES = 2_000_000       # a feed bigger than this is ignored (the Pi Zero has 512 MB)
 MAX_PER_FEED = 15           # newest headlines kept per feed

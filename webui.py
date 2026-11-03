@@ -48,6 +48,9 @@ EDITABLE = {  # key -> validator returning the string to store
     "INDICES_SOURCE": lambda v: _choice(v.strip().lower(), ("coingecko", "yahoo")),
     "INDICES_VIEW": lambda v: _choice(v.strip().lower(), ("percent", "both")),
     "NEWS_FEEDS": lambda v: _feeds(v),
+    "NEWS_GENERAL_FEEDS": lambda v: _feeds(v, allow_empty=True),
+    "NEWS_CRYPTO": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "NEWS_GENERAL": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "NEWS_PER_CYCLE": lambda v: _int(v, 1, 10),
     "NEWS_SPEED": lambda v: _choice(v.strip().lower(), ("slow", "normal", "fast")),
     "FOCUS": lambda v: _choice(v.strip().lower(), ("on", "off")),
@@ -75,7 +78,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
           "WEATHER_PLACE": "Place name", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
           "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "FOCUS": "Focus", "LIST_VIEW": "List view",
-          "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "News feeds",
+          "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "Crypto news feeds", "NEWS_GENERAL_FEEDS": "General news feeds",
+          "NEWS_CRYPTO": "Crypto news", "NEWS_GENERAL": "General news",
           "NEWS_PER_CYCLE": "Headlines per cycle", "NEWS_SPEED": "Scroll speed",
           "VIDEOS_CHANNELS": "YouTube channels", "VIDEOS_PER_CYCLE": "Videos per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts"}
@@ -188,7 +192,7 @@ def _symbols(v):
     return ",".join(entries)
 
 
-def _feeds(v):
+def _feeds(v, allow_empty=False):
     """Feed URLs, one per line (or comma separated) -> comma-separated list."""
     urls = []
     for u in re.split(r"[\s,]+", str(v).strip()):
@@ -198,7 +202,7 @@ def _feeds(v):
             raise ValueError(f"not a feed URL: {u[:60]}")
         if u not in urls:
             urls.append(u)
-    if not urls:
+    if not urls and not allow_empty:
         raise ValueError("add at least one feed URL")
     if len(urls) > 8:
         raise ValueError("8 feeds max")
@@ -232,6 +236,11 @@ def _channels(v):
 def _default_feeds():
     from news import DEFAULT_FEEDS
     return DEFAULT_FEEDS
+
+
+def _default_general_feeds():
+    from news import DEFAULT_GENERAL_FEEDS
+    return DEFAULT_GENERAL_FEEDS
 
 
 def _sports_keys():
@@ -444,6 +453,10 @@ class WebApp:
             "list_page_seconds": int(clean("LIST_PAGE_SECONDS", "6")),
             "news_feeds": clean("NEWS_FEEDS", ",".join(_default_feeds())).split(","),
             "news_per_cycle": int(clean("NEWS_PER_CYCLE", "3")),
+            "news_crypto": clean("NEWS_CRYPTO", "on"),
+            "news_general": clean("NEWS_GENERAL", "off"),
+            "news_general_feeds": [u for u in clean("NEWS_GENERAL_FEEDS",
+                                                    ",".join(_default_general_feeds())).split(",") if u],
             "news_speed": clean("NEWS_SPEED", "normal"),
             "videos_channels": [c for c in clean("VIDEOS_CHANNELS", "").split(",") if c],
             "videos_per_cycle": int(clean("VIDEOS_PER_CYCLE", "3")),
@@ -835,11 +848,18 @@ function videosRows(){
    <div class="row"><div class="name" style="white-space:normal">Titles scroll at the news screen's speed.</div></div>
   </div>`;
 }
+function feedBox(id,list){return `<textarea id="${id}" rows="${Math.max(3,(list||[]).length)}" wrap="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+     style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f1216;color:var(--text);font:13px ui-monospace,monospace">${esc((list||[]).join('\n'))}</textarea>`}
 function newsRows(){
+  const none=S.news_crypto!='on'&&S.news_general!='on';
   return `<h2>News headlines</h2><div class="card">
-   <div class="row" style="display:block"><div>Feeds<div class="name" style="white-space:normal">RSS or Atom URLs, one per line. Each is checked every 15 minutes.</div></div>
-    <textarea id="feeds" rows="${Math.max(3,(S.news_feeds||[]).length)}" wrap="off" autocapitalize="off" autocorrect="off" spellcheck="false"
-     style="width:100%;margin-top:8px;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f1216;color:var(--text);font:13px ui-monospace,monospace">${esc((S.news_feeds||[]).join('\n'))}</textarea></div>
+   <div class="row"><div class="grow">Crypto news<div class="name" style="white-space:normal">CoinDesk, Cointelegraph and the like.</div></div>
+     <label class="switch"><input type="checkbox" id="ncrypto" ${S.news_crypto=='on'?'checked':''}><span></span></label></div>
+   ${S.news_crypto=='on'?`<div class="row" style="display:block;border-top:0;padding-top:0"><div class="name" style="white-space:normal">RSS or Atom URLs, one per line.</div>${feedBox('feeds',S.news_feeds)}</div>`:''}
+   <div class="row"><div class="grow">General news<div class="name" style="white-space:normal">Top stories, politics, business and world (NPR, BBC by default).</div></div>
+     <label class="switch"><input type="checkbox" id="ngeneral" ${S.news_general=='on'?'checked':''}><span></span></label></div>
+   ${S.news_general=='on'?`<div class="row" style="display:block;border-top:0;padding-top:0"><div class="name" style="white-space:normal">RSS or Atom URLs, one per line. Each feed is checked every 15 minutes.</div>${feedBox('gfeeds',S.news_general_feeds)}</div>`:''}
+   ${none?'<p class="hint err" style="margin:8px 0">Both are off, so the news screen is skipped.</p>':''}
    <div class="row"><div class="grow">Headlines per cycle</div><select id="nper">${[1,2,3,4,5,6,8,10].map(n=>`<option ${S.news_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
    <div class="row"><div class="grow">Scroll speed</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('news_speed',[['slow','Slow'],['normal','Normal'],['fast','Fast']])}</div>
@@ -1003,7 +1023,7 @@ function save(extra){
     const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
       screens:S.screens.join(','),indices_source:S.indices_source,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,timezone:S.timezone,transition:S.transition,brightness:S.brightness,
-      sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
+      sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
@@ -1039,6 +1059,9 @@ function bind(){
     const o=screenOrder(),k=b.dataset.sup||b.dataset.sdown,i=o.indexOf(k),j=b.dataset.sup?i-1:i+1;
     [o[i],o[j]]=[o[j],o[i]];S.screen_order=o;saveScreens(o,new Set(S.screens))});
   if($('#feeds'))$('#feeds').onchange=e=>{S.news_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
+  if($('#gfeeds'))$('#gfeeds').onchange=e=>{S.news_general_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
+  if($('#ncrypto'))$('#ncrypto').onchange=e=>{S.news_crypto=e.target.checked?'on':'off';save();render()};
+  if($('#ngeneral'))$('#ngeneral').onchange=e=>{S.news_general=e.target.checked?'on':'off';save();render()};
   if($('#nper'))$('#nper').onchange=e=>{S.news_per_cycle=+e.target.value;save()};
   if($('#ytch'))$('#ytch').onchange=e=>{S.videos_channels=e.target.value.split(/\s+/).filter(Boolean);save(0);setTimeout(load,1500);setTimeout(load,7000)};
   if($('#vper'))$('#vper').onchange=e=>{S.videos_per_cycle=+e.target.value;save()};

@@ -1,8 +1,17 @@
 """Gold & silver screen, and the Yahoo host fallback shared with the indices."""
 
+import json
+import subprocess
+
 import pytest
 
 import feeds
+
+
+@pytest.fixture(autouse=True)
+def no_real_curl(monkeypatch):
+    """Tests never reach the network: the curl fallback is off unless a test fakes it."""
+    monkeypatch.setattr(feeds.shutil, "which", lambda name: None)
 from feeds import Indices, Metals
 from render import DOWN, UP, Renderer
 
@@ -110,3 +119,21 @@ def test_metals_is_a_selectable_screen():
     from ticker import SCREEN_NAMES
     from webui import SCREENS
     assert "metals" in SCREEN_NAMES and "metals" in SCREENS
+
+
+def test_curl_fallback_when_python_is_refused(monkeypatch):
+    """What happened on the Pi: requests got 429 from both hosts, curl got the data."""
+    f = Indices([("GC=F", "GOLD")])
+    f.session = FakeSession({}, default=429)
+    calls = []
+
+    def fake_run(cmd, capture_output, timeout, check):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=json.dumps(chart_json(4012.5, 4000.0)).encode())
+
+    monkeypatch.setattr(feeds.shutil, "which", lambda name: "/usr/bin/curl")
+    monkeypatch.setattr(feeds.subprocess, "run", fake_run)
+    (row,) = f.fetch()
+    assert row["price"] == 4012.5
+    assert calls[0][0] == "curl" and "query2.finance.yahoo.com/v8/finance/chart/GC=F" in calls[0][-1]
+    assert "-A" in calls[0] and "Mozilla/5.0" in calls[0]

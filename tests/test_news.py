@@ -279,3 +279,33 @@ def test_reload_recreates_feed_when_urls_change(tmp_path):
     old = t.news
     t.reload()
     assert t.news is not old and t.news.urls == ["https://a.example.com/rss"]
+
+
+def test_news_groups_switch_independently(monkeypatch):
+    from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS
+    from ticker import Config, news_urls
+    for k in ("NEWS_FEEDS", "NEWS_GENERAL_FEEDS", "NEWS_CRYPTO", "NEWS_GENERAL"):
+        monkeypatch.delenv(k, raising=False)  # earlier tests may have loaded a settings file
+    c = Config.from_env()
+    assert news_urls(c) == DEFAULT_FEEDS                     # crypto on, general off by default
+    monkeypatch.setenv("NEWS_GENERAL", "on")
+    c = Config.from_env()
+    assert news_urls(c) == DEFAULT_FEEDS + DEFAULT_GENERAL_FEEDS
+    monkeypatch.setenv("NEWS_CRYPTO", "off")
+    assert news_urls(Config.from_env()) == DEFAULT_GENERAL_FEEDS
+    monkeypatch.setenv("NEWS_GENERAL", "off")
+    assert news_urls(Config.from_env()) == []
+
+
+def test_page_saves_news_groups(tmp_path):
+    from webui import WebApp
+    env = tmp_path / "settings.env"
+    env.write_text("WEB_PIN=1234\n")
+    app = WebApp(str(env))
+    saved = app.save({"news_crypto": "off", "news_general": "on",
+                      "news_general_feeds": "https://feeds.npr.org/1001/rss.xml\nhttps://example.com/feed"})
+    assert saved["NEWS_CRYPTO"] == "off" and saved["NEWS_GENERAL"] == "on"
+    assert saved["NEWS_GENERAL_FEEDS"] == "https://feeds.npr.org/1001/rss.xml,https://example.com/feed"
+    s = app.settings()
+    assert s["news_crypto"] == "off" and s["news_general"] == "on"
+    assert app.save({"news_general_feeds": ""})["NEWS_GENERAL_FEEDS"] == ""

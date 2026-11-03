@@ -4,7 +4,10 @@ Neither uses CoinGecko, so they don't count against the monthly CoinGecko budget
 Each keeps its last good data; if a source fails, its screen is skipped (never a crash).
 """
 
+import json
 import logging
+import shutil
+import subprocess
 import threading
 import time
 
@@ -139,19 +142,40 @@ class Indices(Feed):
     URL = "https://{}.finance.yahoo.com/v8/finance/chart/{}"
     refresh_every = 300
 
+    # Yahoo refuses (429) Python's requests from some networks even when curl, with this
+    # same short browser name, gets the data (seen on the Pi, 2026-11). So: requests first,
+    # then the same URL through curl, on each host.
+    UA = "Mozilla/5.0"
+
     def __init__(self, indices=None):
         super().__init__()
         self.indices = indices or DEFAULT_INDICES
+        self.session.headers["User-Agent"] = self.UA
+
+    def _get_json(self, url, params):
+        try:
+            r = self.session.get(url, params=params, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except Exception as first:
+            if not shutil.which("curl"):
+                raise
+            full = url + "?" + "&".join(f"{k}={v}" for k, v in params.items())
+            try:
+                out = subprocess.run(
+                    ["curl", "-sS", "--fail", "-m", "15", "-A", self.UA, full],
+                    capture_output=True, timeout=20, check=True).stdout
+                return json.loads(out)
+            except Exception as second:
+                raise RuntimeError(f"{first}; curl: {second}") from None
 
     def chart(self, symbol):
         """One symbol's latest price, previous close and today's 5-minute closes."""
         last = None
         for host in self.HOSTS:
             try:
-                r = self.session.get(self.URL.format(host, symbol),
-                                     params={"range": "1d", "interval": "5m"}, timeout=15)
-                r.raise_for_status()
-                res = r.json()["chart"]["result"][0]
+                data = self._get_json(self.URL.format(host, symbol), {"range": "1d", "interval": "5m"})
+                res = data["chart"]["result"][0]
                 break
             except Exception as exc:  # try the other host before giving up
                 last = exc

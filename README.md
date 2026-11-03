@@ -219,6 +219,8 @@ value is logged as a warning and the default is used.
 | `SCREENS` | `clock,feargreed,indices,coins` | Screens at the start of each cycle, in order (coins always last). Also `weather`, `metals` (gold and silver from Yahoo: spot, or futures if spot isn't available), `news`, `videos`, `sports` (off by default) |
 | `INDICES_SOURCE` | `coingecko` | `coingecko` (tokenized funds, no extra calls) or `yahoo` (real index values; unofficial) |
 | `NEWS_FEEDS` | three crypto/business feeds | RSS or Atom URLs, comma separated (one per line on the phone page), up to 8 |
+| `NEWS_CRYPTO` / `NEWS_GENERAL` | `on` / `off` | Switch the crypto feeds (`NEWS_FEEDS`) and the general news feeds (`NEWS_GENERAL_FEEDS`) on or off separately |
+| `NEWS_GENERAL_FEEDS` | NPR top stories, politics, business; BBC World | General news RSS/Atom URLs, up to 8 (AP and CNN have no working public feeds) |
 | `NEWS_PER_CYCLE` | `3` | Headlines shown each cycle (1–10); the next cycle continues where this one stopped |
 | `NEWS_SPEED` | `normal` | Headline scroll speed: `slow` (20), `normal` (30) or `fast` (45 pixels/s); video titles use it too |
 | `VIDEOS_CHANNELS` | (none) | YouTube channels as `UC…` ids or `@handles`, comma separated, up to 10. Paste channel links on the phone page and it converts them |
