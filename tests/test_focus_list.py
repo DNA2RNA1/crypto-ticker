@@ -368,7 +368,7 @@ def test_stale_prices_get_a_dated_notice_first(monkeypatch):
     monkeypatch.setattr(t.renderer, "asset", lambda a, stale=False: None)
     screens = t.coin_screens()
     screens[0]()
-    assert seen and seen[0][1] == "NO NETWORK?" and len(screens) == len(SYMS) + 1
+    assert seen and seen[0][1] == "NO NETWORK?" and len(screens) == len(SYMS) + 2  # before and after
 
 
 def test_no_header_before_the_first_fetch():
@@ -399,7 +399,9 @@ def test_live_prices_get_a_header_with_time_and_symbols(monkeypatch):
     monkeypatch.setattr(t.renderer, "asset", lambda a, stale=False: None)
     screens = t.coin_screens()
     screens[0]()
-    assert seen == [[s.upper() for s in SYMS]] and len(screens) == len(SYMS) + 1
+    assert seen == [[s.upper() for s in SYMS]] and len(screens) == len(SYMS) + 2  # before and after
+    screens[-1]()
+    assert len(seen) == 2
 
 
 def test_prices_header_fits_and_counts_the_rest():
@@ -412,9 +414,15 @@ def test_prices_header_fits_and_counts_the_rest():
     small.draw = lambda img, x, b, txt, c: (drawn.append((x, txt)), real(img, x, b, txt, c))[1]
     syms = ["BTC", "ETH", "ADA", "LINK", "HBAR", "PEPE", "DOGE", "SNEK", "SOL", "NIGHT", "XRP"]
     img = r.prices_header(datetime(2026, 11, 4, 8, 0), syms)
-    assert img.size == (64, 32) and len(drawn) == 3
+    assert img.size == (64, 32)
     assert all(x >= 0 and x + small.width(txt) <= 64 for x, txt in drawn)
-    shown = sum(len([w for w in txt.split() if not w.startswith("+")]) for _, txt in drawn)
-    more = int(drawn[-1][1].split("+")[-1])
-    assert shown + more == len(syms)
+    lines = [txt for _, txt in drawn[2:]]  # after the title's two parts
+    words = " ".join(lines).split()
+    assert [w for w in words if not w.startswith("+")] == syms  # all 11 fit in 4 lines
+    many = syms + ["AVAX", "DOT", "UNI", "AAVE", "SUI", "TAO", "ONDO", "ARB"]
+    drawn.clear()
+    r.prices_header(datetime(2026, 11, 4, 8, 0), many)
+    lines = [txt for _, txt in drawn[2:]]
+    shown = sum(len([w for w in t.split() if not w.startswith("+")]) for t in lines)
+    assert len(lines) == 4 and shown + int(lines[-1].split("+")[-1]) == len(many)
 

@@ -296,8 +296,8 @@ class Renderer:
             sx = max(end1, end2) + 2
             # smaller chart, top-right, so the left column breathes
             self._sparkline(img, asset.get("sparkline", []), (sx, 2, self.w - 2, 12))
-            # a size smaller than before, sitting lower: clear space under the change line
-            font, text = self._fit_text(prices, [f["6x12"], f["6x10"], f["5x8"]], self.w)
+            # price at full size, at the very bottom
+            font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w)
             font.draw(img, (self.w - font.width(text)) // 2, self.h - 1, text, PRICE)
         return img
 
@@ -1092,18 +1092,15 @@ class Renderer:
         return self.stale_mark(img) if stale else img
 
     def prices_header(self, when, symbols):
-        """Before the coins: when the prices were fetched and which coins follow, e.g.
-        PRICES @ 08:00 / BTC ETH ADA SNEK / PEPE NIGHT +3."""
+        """Before and after the coins: when the prices were fetched and which coins are in
+        the rotation, all in the small font, e.g. PRICES @ 08:00 / BTC ETH ADA SNEK / ..."""
         img = self._base()
-        f = self.fonts
-        label, stamp = "PRICES @", f"{when.hour:02d}:{when.minute:02d}"
-        tf = f["5x8"]
-        if tf.width(f"{label} {stamp}") > 64:
-            label = "PRICES"  # 5x8 has no room for the "@" too
-        x = (64 - tf.width(f"{label} {stamp}")) // 2
-        x = tf.draw(img, x, 8, label + " ", DIM_TEXT)
-        tf.draw(img, x, 8, stamp, PRICE)
-        small = f["4x6"]
+        small = self.fonts["4x6"]
+        label, stamp = "PRICES @ ", f"{when.hour:02d}:{when.minute:02d}"
+        x = (64 - small.width(label + stamp)) // 2
+        x = small.draw(img, x, 5, label, DIM_TEXT)
+        small.draw(img, x, 5, stamp, PRICE)
+        rows = 4  # 6-pixel lines under the title
         lines, line, shown = [], "", 0
         for sym in symbols:
             cand = f"{line} {sym}".strip()
@@ -1111,23 +1108,20 @@ class Renderer:
                 line, shown = cand, shown + 1
                 continue
             lines.append(line)
-            line = sym
-            shown += 1
-            if len(lines) == 3:
-                shown -= 1
+            if len(lines) == rows:
+                line = ""
                 break
-        if line and len(lines) < 3:
+            line, shown = sym, shown + 1
+        if line and len(lines) < rows:
             lines.append(line)
         left = len(symbols) - shown
         if left > 0:  # make room for "+N" on the last line
-            last, more = lines[-1], f"+{left}"
-            while last and small.width(f"{last} {more}") > 63:
-                last = last.rsplit(" ", 1)[0] if " " in last else ""
-                left += 1
-                more = f"+{left}"
-            lines[-1] = f"{last} {more}".strip()
-        for i, txt in enumerate(lines[:3]):
-            small.draw(img, (64 - small.width(txt)) // 2, 17 + i * 7, txt, SYMBOL)
+            last = lines[-1]
+            while last and small.width(f"{last} +{left}") > 63:
+                last, left = (last.rsplit(" ", 1)[0] if " " in last else ""), left + 1
+            lines[-1] = f"{last} +{left}".strip()
+        for i, txt in enumerate(lines):
+            small.draw(img, (64 - small.width(txt)) // 2, 12 + i * 6, txt, SYMBOL)
         return self._place(img)
 
     def stale_notice(self, when, reason=""):

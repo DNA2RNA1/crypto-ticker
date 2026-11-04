@@ -832,14 +832,17 @@ class Ticker:
         starred_ids = {a["id"] for a in starred}
         out = []
         # prices are old (offline or the API failing): say so, and from when, before the coins
+        summary = None  # shown before the coins and again after them
         if self.stale and self.stale_since and coins:
             when = datetime.fromtimestamp(self.stale_since, self.tz)
-            out.append(lambda when=when: (self.renderer.stale_notice(when, self.error_reason()),
-                                          max(3.0, sleep)))
-        elif coins and self.price_time():  # live: when they were fetched, and what follows
+            summary = lambda when=when: (self.renderer.stale_notice(when, self.error_reason()),
+                                         max(3.0, sleep))
+        elif coins and self.price_time():  # live: when they were fetched, and which coins
             syms = [a["symbol"] for a in coins]
-            out.append(lambda when=self.price_time(), syms=syms: (
-                self.renderer.prices_header(when, syms), max(3.0, sleep)))
+            summary = lambda when=self.price_time(), syms=syms: (
+                self.renderer.prices_header(when, syms), max(3.0, sleep))
+        if summary:
+            out.append(summary)
 
         # In Focus mode every coin shown is starred, so big + regular screens doubled each
         # coin; there the big screen stands alone and gets the full time per coin.
@@ -864,6 +867,8 @@ class Ticker:
             for i in range(0, len(coins), n):
                 out.append(lambda page=coins[i:i + n]: (
                     self.renderer.list_page(page, rows=n, stale=self.stale), self.cfg.list_page_seconds))
+        if summary:
+            out.append(summary)
         return out
 
     def run(self):
