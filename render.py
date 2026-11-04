@@ -1091,6 +1091,54 @@ class Renderer:
         img = self._place(img)
         return self.stale_mark(img) if stale else img
 
+    @staticmethod
+    def _signed_pct(v):
+        return f"{'+' if v >= 0 else '-'}{abs(v):.1f}%"
+
+    @staticmethod
+    def _signed_dollars(v):
+        a = abs(v)
+        body = f"{a:,.0f}" if a >= 100 else f"{a:,.2f}"
+        return f"{'+' if v >= 0 else '-'}${body}"
+
+    def portfolio(self, p, private=True, pct_mode="24h", page="day"):
+        """Portfolio screen. Private: no dollar amounts, just a big % (24-hour, or since cost
+        when a cost basis exists and pct_mode is "total"). Dollars: total value with the
+        24-hour change (page "day") or the gain since cost (page "cost").
+        Bottom row: today's top performer among the holdings."""
+        img = self._base()
+        f = self.fonts
+        small = f["4x6"]
+        small.draw(img, 1, 5, "PORTFOLIO", DIM_TEXT)
+        use_cost = p.get("gain_pct") is not None and (
+            (private and pct_mode == "total") or (not private and page == "cost"))
+        tag = "TOTAL" if use_cost else "24H"  # TOTAL = gain since cost basis
+        small.draw(img, 64 - small.width(tag), 5, tag, DIM_TEXT)
+        pct = p["gain_pct"] if use_cost else p["day_pct"]
+        color = trend_color(pct)
+        if private:
+            text = self._signed_pct(pct)
+            font = next((fn for fn in (f["9x18B"], f["7x13B"], f["6x13B"]) if fn.width(text) <= 64), f["5x8"])
+            font.draw(img, (64 - font.width(text)) // 2, 22, text, color)
+        else:
+            value = f"${p['value']:,.0f}" if p["value"] >= 100 else f"${p['value']:,.2f}"
+            font = next((fn for fn in (f["7x13B"], f["6x13B"], f["6x10"], f["5x8"]) if fn.width(value) <= 64), f["5x8"])
+            font.draw(img, (64 - font.width(value)) // 2, 17, value, PRICE)
+            change = p["gain"] if use_cost else p["day_change"]
+            left, right = self._signed_dollars(change), self._signed_pct(pct)
+            if small.width(left) + 3 + small.width(right) > 64:
+                left = ""
+            small.draw(img, 1, 24, left, color)
+            small.draw(img, 64 - small.width(right), 24, right, color)
+        top = p.get("top")
+        if top:
+            sym, ch = top
+            t1, t2 = f"TOP {sym[:6]} ", self._signed_pct(ch)
+            x = (64 - small.width(t1 + t2)) // 2
+            x = small.draw(img, x, 31, t1, DIM_TEXT)
+            small.draw(img, x, 31, t2, trend_color(ch))
+        return self._place(img)
+
     def prices_header(self, when, symbols):
         """Before and after the coins: when the prices were fetched and which coins are in
         the rotation, all in the small font, e.g. PRICES @ 08:00 / BTC ETH ADA SNEK / ..."""

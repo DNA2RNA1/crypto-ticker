@@ -57,6 +57,10 @@ EDITABLE = {  # key -> validator returning the string to store
     "NEWS_PER_CYCLE": lambda v: _int(v, 1, 10),
     "NEWS_SPEED": lambda v: _choice(v.strip().lower(), ("slow", "normal", "fast")),
     "FOCUS": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "PORTFOLIO": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "PORTFOLIO_PRIVATE": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "PORTFOLIO_PCT": lambda v: _choice(v.strip().lower(), ("24h", "total")),
+    "PORTFOLIO_HOLDINGS": lambda v: _holdings(v),
     "INDICES_STYLE": lambda v: _choice(v.strip().lower(), ("charts", "compact")),
     "LIST_VIEW": lambda v: _choice(v.strip().lower(), ("off", "5", "4")),
     "LIST_PAGE_SECONDS": lambda v: _int(v, 2, 60),
@@ -88,7 +92,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "CURRENCY": "Currency", "REFRESH_RATE": "Refresh rate", "FEATURED": "Featured coins",
           "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
           "WEATHER_PLACE": "Place name", "WEATHER_EXTRA": "More weather cities", "TEMP_UNIT": "Temperature unit", "TIMEZONE": "Time zone",
-          "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "INDICES_STYLE": "Index layout", "FOCUS": "Focus", "LIST_VIEW": "List view",
+          "INDICES_SOURCE": "Indices source", "INDICES_VIEW": "Index change view", "INDICES_STYLE": "Index layout", "FOCUS": "Focus", "PORTFOLIO": "Portfolio", "PORTFOLIO_PRIVATE": "Private mode",
+          "PORTFOLIO_PCT": "Portfolio %", "PORTFOLIO_HOLDINGS": "Holdings", "LIST_VIEW": "List view",
           "LIST_PAGE_SECONDS": "Seconds per page", "NEWS_FEEDS": "Crypto news feeds", "NEWS_GENERAL_FEEDS": "General news feeds",
           "NEWS_CRYPTO": "Crypto news", "NEWS_GENERAL": "General news",
           "NEWS_POLITICS": "Politics news", "NEWS_POLITICS_FEEDS": "Politics news feeds",
@@ -162,6 +167,11 @@ def _weather_extra(v):
     if len(out) > 4:
         raise ValueError("4 extra cities max")
     return ";".join(out)
+
+
+def _holdings(v):
+    from portfolio import format_holdings, parse_holdings
+    return format_holdings(parse_holdings(v, strict=True))
 
 
 def _tz(v):
@@ -494,6 +504,12 @@ class WebApp:
             "usage": (self.ticker.usage.summary(self.ticker.interval()) if self.ticker else None),
             "pin_set": bool(s.get("WEB_PIN")),
             "featured": [x for x in clean("FEATURED", "").split(",") if x],
+            "portfolio": clean("PORTFOLIO", "off"),
+            "portfolio_private": clean("PORTFOLIO_PRIVATE", "on"),
+            "portfolio_pct": clean("PORTFOLIO_PCT", "24h"),
+            # parsed quietly: a bad hand edit must not put holdings in a log line
+            "portfolio_holdings": {k: [q, c] for k, (q, c) in __import__("portfolio").parse_holdings(
+                s.get("PORTFOLIO_HOLDINGS", "")).items()},
             "screens": clean("SCREENS", "clock,feargreed,indices,coins").split(","),
             "screen_names": list(SCREENS),
             "indices_source": clean("INDICES_SOURCE", "coingecko"),
@@ -898,6 +914,26 @@ async function load(){
   try{S=await api('/api/settings')}catch(e){return}
   render();
 }
+function holdRow(c){const sym=c.entry.split(':')[0],h=(S.portfolio_holdings||{})[sym]||[];
+  return `<div class="row" style="gap:6px"><div style="width:52px;font-weight:600">${esc(sym.toUpperCase())}</div>
+   <input data-hq="${esc(sym)}" inputmode="decimal" placeholder="Quantity" value="${h[0]??''}" style="flex:1;min-width:0">
+   <input data-hc="${esc(sym)}" inputmode="decimal" placeholder="Cost $ (opt.)" value="${h[1]??''}" style="flex:1;min-width:0"></div>`}
+function portfolioRows(){
+  const on=S.portfolio=='on',priv=S.portfolio_private!='off';
+  return `<h2>Portfolio</h2><div class="card">
+   <div class="row"><div class="grow">Show portfolio<div class="name" style="white-space:normal">After the coins. Turns off at every power-up.</div></div>
+     <label class="switch"><input type="checkbox" id="pf" ${on?'checked':''}><span></span></label></div>
+   <div class="row"><div class="grow">Private<div class="name" style="white-space:normal">No dollar amounts, just %. Turns back on at every power-up.</div></div>
+     <label class="switch"><input type="checkbox" id="pfpriv" ${priv?'checked':''}><span></span></label></div>
+   ${priv?`<div class="row"><div class="grow">Private shows</div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('portfolio_pct',[['24h','24-hour %'],['total','Total % (cost)']])}</div>`:''}
+   <div class="row"><div class="grow">Holdings<div class="name" style="white-space:normal">How many you hold, and optionally the total dollars you paid (for the total %). Stored only on the Pi.</div></div></div>
+   ${S.coins.map(holdRow).join('')}
+  </div>`}
+function holdingsString(){
+  const out=[];document.querySelectorAll('[data-hq]').forEach(q=>{const sym=q.dataset.hq,
+    qty=q.value.trim().replace(/,/g,''),c=document.querySelector(`[data-hc="${sym}"]`),cost=c?c.value.trim().replace(/[$,]/g,''):'';
+    if(qty&&+qty>0)out.push(sym+':'+qty+(cost?':'+cost:''))});return out.join(',')}
 function coinRow(c,i,n){
   const img=c.image?`<img src="${esc(c.image)}" alt="">`:'<div class="ph"></div>';
   const sym=c.entry.split(':')[0], fav=(S.featured||[]).includes(sym);
@@ -1041,6 +1077,7 @@ function render(){
   <div class="card"><div class="row"><div class="grow">Focus<div class="name" style="white-space:normal">Show only ★ coins. Clock, Fear &amp; Greed and indices keep running.</div></div>
    <label class="switch"><input type="checkbox" id="focus" ${S.focus=='on'?'checked':''}><span></span></label></div></div>
   <p class="hint err" id="focushint" hidden>Focus is on but no coins are starred, so all coins are shown. Tap ★ on a coin.</p>
+  ${portfolioRows()}
   <input type="file" id="file" accept="image/*" hidden>
   <h2>Add a coin</h2><input id="q" type="search" placeholder="Search name or ticker, e.g. cardano" autocomplete="off" autocorrect="off" autocapitalize="off">
   <div class="card" id="results" style="margin-top:8px"></div>
@@ -1172,7 +1209,7 @@ async function loadStatus(){
 function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
-    const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),layout:S.layout,
+    const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),portfolio:S.portfolio,portfolio_private:S.portfolio_private,portfolio_pct:S.portfolio_pct,...(document.querySelector('[data-hq]')?{portfolio_holdings:holdingsString()}:{}),layout:S.layout,
       screens:S.screens.join(','),indices_source:S.indices_source,indices_style:S.indices_style,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,weather_extra:(S.weather_extra||[]).join(';'),timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
@@ -1279,6 +1316,11 @@ function bind(){
   $('#focus').onchange=e=>{S.focus=e.target.checked?'on':'off';focusHint();save()};
   if($('#lpage'))$('#lpage').oninput=e=>{S.list_page_seconds=+e.target.value;$('#lpv').textContent=S.list_page_seconds+'s';save()};
   focusHint();
+  if($('#pf'))$('#pf').onchange=e=>{S.portfolio=e.target.checked?'on':'off';save()};
+  if($('#pfpriv'))$('#pfpriv').onchange=e=>{S.portfolio_private=e.target.checked?'on':'off';save();render()};
+  document.querySelectorAll('[data-hq],[data-hc]').forEach(i=>i.onchange=()=>{
+    const h={};holdingsString().split(',').filter(Boolean).forEach(e=>{const b=e.split(':');h[b[0]]=[+b[1],b[2]?+b[2]:null]});
+    S.portfolio_holdings=h;save()});
   $('#dim').onchange=e=>{S.dim_hours=e.target.checked?'22-7':'';render();save()};
   if($('#dfrom')){const f=()=>{S.dim_hours=$('#dfrom').value+'-'+$('#dto').value;save()};$('#dfrom').onchange=f;$('#dto').onchange=f;
     $('#dbright').oninput=e=>{S.dim_brightness=+e.target.value;$('#dbv').textContent=S.dim_brightness+'%';save()}}

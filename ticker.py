@@ -28,6 +28,7 @@ from cache import RequestCache
 from icons import IconStore
 from logsetup import setup_logging
 from prices import CoinGecko, DataError, NetworkError, PriceError, RateLimitError
+from portfolio import parse_holdings, summarize
 from render import Renderer
 from retry import backoff_delay
 from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, DEFAULT_POLITICS_FEEDS, News
@@ -138,6 +139,10 @@ class Config:
     layout: str = "classic"
     featured: list = field(default_factory=list)
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
+    portfolio: bool = False        # portfolio screen (reset to off at every start)
+    portfolio_private: bool = True # no dollar amounts (reset to on at every start)
+    portfolio_pct: str = "24h"     # private mode shows the 24h %, or "total" (since cost)
+    holdings: dict = field(default_factory=dict)  # symbol -> (quantity, cost basis or None)
     list_view: int = 0             # 0 = one coin per screen; 5 or 4 = coins per list page
     list_page_seconds: float = 6
     screens: list = field(default_factory=lambda: list(DEFAULT_SCREENS))
@@ -205,6 +210,10 @@ class Config:
         c.layout = env("LAYOUT", c.layout, str.lower, choices=Renderer.LAYOUTS)
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.focus = env("FOCUS", False, bool)
+        c.portfolio = env("PORTFOLIO", False, bool)
+        c.portfolio_private = env("PORTFOLIO_PRIVATE", True, bool)
+        c.portfolio_pct = env("PORTFOLIO_PCT", c.portfolio_pct, str.lower, choices=("24h", "total"))
+        c.holdings = parse_holdings(os.environ.get("PORTFOLIO_HOLDINGS", ""))
         lv = env("LIST_VIEW", "off", str.lower, choices=("off", "5", "4"))
         c.list_view = 0 if lv == "off" else int(lv)
         c.list_page_seconds = env("LIST_PAGE_SECONDS", c.list_page_seconds, float, lo=2, hi=60)
@@ -867,8 +876,25 @@ class Ticker:
             for i in range(0, len(coins), n):
                 out.append(lambda page=coins[i:i + n]: (
                     self.renderer.list_page(page, rows=n, stale=self.stale), self.cfg.list_page_seconds))
+        out += self.portfolio_screens()
         if summary:
             out.append(summary)
+        return out
+
+    def portfolio_screens(self):
+        """The portfolio screen(s) after the coins, if switched on and something is held."""
+        cfg = self.cfg
+        if not (cfg.portfolio and cfg.holdings and self.assets):
+            return []
+        p = summarize(self.assets, cfg.holdings)
+        if p is None:
+            return []
+        hold = max(3.0, cfg.sleep)
+        if cfg.portfolio_private:
+            return [lambda p=p: (self.renderer.portfolio(p, True, cfg.portfolio_pct), hold)]
+        out = [lambda p=p: (self.renderer.portfolio(p, False, page="day"), hold)]
+        if p["gain"] is not None:
+            out.append(lambda p=p: (self.renderer.portfolio(p, False, page="cost"), hold))
         return out
 
     def run(self):
@@ -945,6 +971,13 @@ def main():
     parser.add_argument("--env", default=os.path.join(HERE, "settings.env"))
     args = parser.parse_args()
 
+    if not args.check and os.path.exists(args.env):
+        # every start: portfolio hidden and private, whatever was set before
+        try:
+            from webui import write_settings
+            write_settings(args.env, {"PORTFOLIO": "off", "PORTFOLIO_PRIVATE": "on"})
+        except (OSError, ValueError) as exc:
+            log.warning("could not reset the portfolio switches: %s", exc)
     load_env_file(args.env)
     if args.check:
         return self_check()
