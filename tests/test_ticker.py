@@ -55,7 +55,7 @@ def test_normal_refresh(http, ok):
     assert [a["symbol"] for a in t.assets] == ["BTC", "ETH", "ADA"]
     assert not t.stale and t.failures == 0
     t.step()
-    assert len(t.display.frames) == 3
+    assert len(t.display.frames) == 1 + 3  # the "PRICES 08:00" header, then the 3 coins
     assert not any(has_stale_marker(f) for f in t.display.frames)
 
 

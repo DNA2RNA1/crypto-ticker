@@ -371,7 +371,7 @@ def test_stale_prices_get_a_dated_notice_first(monkeypatch):
     assert seen and seen[0][1] == "NO NETWORK?" and len(screens) == len(SYMS) + 1
 
 
-def test_live_prices_have_no_notice():
+def test_no_header_before_the_first_fetch():
     t = ticker()
     t.stale = False
     assert len(t.coin_screens()) == len(SYMS)
@@ -390,30 +390,31 @@ def test_stale_notice_fits():
     assert all(x >= 0 and x + font.width(txt) <= 64 for x, txt in drawn)
 
 
-def test_coin_screen_shows_fetch_time(monkeypatch):
+def test_live_prices_get_a_header_with_time_and_symbols(monkeypatch):
     import time as _time
     t = ticker()
     t.stale, t.last_success = False, _time.time()
     seen = []
-    monkeypatch.setattr(t.renderer, "asset", lambda a, stale=False, stamp=None: seen.append(stamp))
-    for s in t.coin_screens():
-        s()
-    assert seen and all(st is not None for st in seen)
-    t.last_success = 0
-    assert t.price_time() is None
+    monkeypatch.setattr(t.renderer, "prices_header", lambda when, syms: seen.append(syms))
+    monkeypatch.setattr(t.renderer, "asset", lambda a, stale=False: None)
+    screens = t.coin_screens()
+    screens[0]()
+    assert seen == [[s.upper() for s in SYMS]] and len(screens) == len(SYMS) + 1
 
 
-def test_tiny_time_fits_under_the_chart():
+def test_prices_header_fits_and_counts_the_rest():
     from datetime import datetime
-    from render import Renderer, tiny_width
-    from sample import sample_assets
+    from render import Renderer
     r = Renderer()
-    r.layout = "classic"
-    a = sample_assets(["ada"])[0] | {"change_24h": -2.7}
-    img = r.asset(a, stamp=datetime(2026, 11, 4, 22, 41))
-    assert img.size == (64, 32) and tiny_width("22:41") == 17
-    rows = {y for y in range(32) for x in range(64) if img.getpixel((x, y)) == (110, 110, 120)}
-    assert rows and rows <= set(range(15, 20))  # drawn in rows 15-19 only
-    # a long symbol with a big change leaves no room: the time is simply left out
-    b = sample_assets(["night"])[0] | {"change_24h": -12.5}
-    assert r.asset(b, stamp=datetime(2026, 11, 4, 22, 41)).size == (64, 32)
+    small = r.fonts["4x6"]
+    drawn = []
+    real = small.draw
+    small.draw = lambda img, x, b, txt, c: (drawn.append((x, txt)), real(img, x, b, txt, c))[1]
+    syms = ["BTC", "ETH", "ADA", "LINK", "HBAR", "PEPE", "DOGE", "SNEK", "SOL", "NIGHT", "XRP"]
+    img = r.prices_header(datetime(2026, 11, 4, 8, 0), syms)
+    assert img.size == (64, 32) and len(drawn) == 3
+    assert all(x >= 0 and x + small.width(txt) <= 64 for x, txt in drawn)
+    shown = sum(len([w for w in txt.split() if not w.startswith("+")]) for _, txt in drawn)
+    more = int(drawn[-1][1].split("+")[-1])
+    assert shown + more == len(syms)
+

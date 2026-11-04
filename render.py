@@ -17,36 +17,8 @@ SYMBOL = (255, 200, 0)
 PRICE = (255, 255, 255)
 DIM = (90, 90, 90)
 DIM_TEXT = (150, 150, 150)
-STAMP = (110, 110, 120)  # price time under the chart: readable, but quieter than the price
 
 CURRENCY_SIGNS = {"usd": "$", "eur": "€", "gbp": "£", "jpy": "¥", "cad": "$", "aud": "$"}
-
-
-# 3x5 digits and ":" for the price time under the coin chart: the BDF fonts' smallest
-# is 4x6, which doesn't fit there. (An "@" was tried; at 3x5 it reads as a smudge.)
-TINY = {
-    "0": ("###", "#.#", "#.#", "#.#", "###"), "1": (".#.", "##.", ".#.", ".#.", "###"),
-    "2": ("###", "..#", "###", "#..", "###"), "3": ("###", "..#", "###", "..#", "###"),
-    "4": ("#.#", "#.#", "###", "..#", "..#"), "5": ("###", "#..", "###", "..#", "###"),
-    "6": ("###", "#..", "###", "#.#", "###"), "7": ("###", "..#", "..#", "..#", "..#"),
-    "8": ("###", "#.#", "###", "#.#", "###"), "9": ("###", "#.#", "###", "..#", "###"),
-    ":": (".", "#", ".", "#", "."),
-}
-
-
-def tiny_width(text):
-    return sum(len(TINY[c][0]) + 1 for c in text) - 1 if text else 0
-
-
-def draw_tiny(img, x, top, text, color):
-    px = img.load()
-    for c in text:
-        rows = TINY[c]
-        for dy, row in enumerate(rows):
-            for dx, bit in enumerate(row):
-                if bit == "#" and 0 <= x + dx < img.width and 0 <= top + dy < img.height:
-                    px[x + dx, top + dy] = color
-        x += len(rows[0]) + 1
 
 
 def load_fonts():
@@ -236,14 +208,12 @@ class Renderer:
             prev = y
 
     # --- screens ----------------------------------------------------------
-    def asset(self, asset, stale=False, stamp=None):
-        """stamp: when the price was fetched (a datetime, local time), shown small under
-        the chart in the classic layout as "08:00" (24-hour, local time)."""
+    def asset(self, asset, stale=False):
         layout = self.layout
         if layout == "mix":
             layout = ("classic", "chart")[self._count % 2]
         self._count += 1
-        img = self._chart_screen(asset) if layout == "chart" else self._classic_screen(asset, stamp)
+        img = self._chart_screen(asset) if layout == "chart" else self._classic_screen(asset)
         return self.stale_mark(img) if stale else img
 
     def stale_mark(self, img):
@@ -299,7 +269,7 @@ class Renderer:
             self._outlined(img, f["4x6"], self.w - tag_w - 1, self.h - 1, "7D", (170, 170, 170))
         return img
 
-    def _classic_screen(self, asset, stamp=None):
+    def _classic_screen(self, asset):
         img = self.blank()
         f = self.fonts
         icon = self.icons.get(asset, f["6x10"]) if self.icons else None
@@ -324,20 +294,11 @@ class Renderer:
             # symbol uses rows 1-9, change rows 12-18, price rows 21-30: 2px gaps
             end2 = f["5x8"].draw(img, tx, 18, ctext, trend_color(change))
             sx = max(end1, end2) + 2
-            if stamp is None:
-                self._sparkline(img, asset.get("sparkline", []), (sx, 1, self.w - 1, 14))
-            else:
-                # chart one row shorter; the price time goes under it, right-aligned in
-                # rows 15-19 (clear of the change text, above the price)
-                self._sparkline(img, asset.get("sparkline", []), (sx, 1, self.w - 1, 13))
-                room = self.w - (end2 + 2)
-                hh, mm = stamp.hour, stamp.minute
-                for t in (f"{hh:02d}:{mm:02d}", f"{hh}:{mm:02d}"):  # 24-hour, local
-                    if tiny_width(t) <= room:
-                        draw_tiny(img, self.w - tiny_width(t), 15, t, STAMP)
-                        break
-            font, text = self._fit_text(prices, [f["7x13"], f["6x12"], f["5x8"]], self.w)
-            font.draw(img, (self.w - font.width(text)) // 2, self.h - 2, text, PRICE)
+            # smaller chart, top-right, so the left column breathes
+            self._sparkline(img, asset.get("sparkline", []), (sx, 2, self.w - 2, 12))
+            # a size smaller than before, sitting lower: clear space under the change line
+            font, text = self._fit_text(prices, [f["6x12"], f["6x10"], f["5x8"]], self.w)
+            font.draw(img, (self.w - font.width(text)) // 2, self.h - 1, text, PRICE)
         return img
 
     def featured(self, asset, stale=False):
@@ -1129,6 +1090,45 @@ class Renderer:
             font.draw(img, right - font.width(text), baseline, text, color)
         img = self._place(img)
         return self.stale_mark(img) if stale else img
+
+    def prices_header(self, when, symbols):
+        """Before the coins: when the prices were fetched and which coins follow, e.g.
+        PRICES @ 08:00 / BTC ETH ADA SNEK / PEPE NIGHT +3."""
+        img = self._base()
+        f = self.fonts
+        label, stamp = "PRICES @", f"{when.hour:02d}:{when.minute:02d}"
+        tf = f["5x8"]
+        if tf.width(f"{label} {stamp}") > 64:
+            label = "PRICES"  # 5x8 has no room for the "@" too
+        x = (64 - tf.width(f"{label} {stamp}")) // 2
+        x = tf.draw(img, x, 8, label + " ", DIM_TEXT)
+        tf.draw(img, x, 8, stamp, PRICE)
+        small = f["4x6"]
+        lines, line, shown = [], "", 0
+        for sym in symbols:
+            cand = f"{line} {sym}".strip()
+            if small.width(cand) <= 63:
+                line, shown = cand, shown + 1
+                continue
+            lines.append(line)
+            line = sym
+            shown += 1
+            if len(lines) == 3:
+                shown -= 1
+                break
+        if line and len(lines) < 3:
+            lines.append(line)
+        left = len(symbols) - shown
+        if left > 0:  # make room for "+N" on the last line
+            last, more = lines[-1], f"+{left}"
+            while last and small.width(f"{last} {more}") > 63:
+                last = last.rsplit(" ", 1)[0] if " " in last else ""
+                left += 1
+                more = f"+{left}"
+            lines[-1] = f"{last} {more}".strip()
+        for i, txt in enumerate(lines[:3]):
+            small.draw(img, (64 - small.width(txt)) // 2, 17 + i * 7, txt, SYMBOL)
+        return self._place(img)
 
     def stale_notice(self, when, reason=""):
         """Shown before the coins while prices can't be refreshed: what went wrong and when

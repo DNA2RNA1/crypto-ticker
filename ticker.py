@@ -822,7 +822,7 @@ class Ticker:
 
     def price_time(self):
         """When the prices on screen were fetched, in local time (None if never), for the
-        small "08:00" under each coin's chart. Stale prices keep their own fetch time."""
+        "PRICES @ 08:00" screen before the coins. Stale prices keep their own fetch time."""
         ts = self.stale_since if self.stale and self.stale_since else self.last_success
         return datetime.fromtimestamp(ts, self.tz) if ts else None
 
@@ -836,6 +836,10 @@ class Ticker:
             when = datetime.fromtimestamp(self.stale_since, self.tz)
             out.append(lambda when=when: (self.renderer.stale_notice(when, self.error_reason()),
                                           max(3.0, sleep)))
+        elif coins and self.price_time():  # live: when they were fetched, and what follows
+            syms = [a["symbol"] for a in coins]
+            out.append(lambda when=self.price_time(), syms=syms: (
+                self.renderer.prices_header(when, syms), max(3.0, sleep)))
 
         # In Focus mode every coin shown is starred, so big + regular screens doubled each
         # coin; there the big screen stands alone and gets the full time per coin.
@@ -846,14 +850,14 @@ class Ticker:
                 out.append(lambda a=asset: (self.renderer.featured(a, stale=self.stale), sleep))
                 return
             out.append(lambda a=asset: (self.renderer.featured(a, stale=self.stale), max(2.0, sleep * 0.6)))
-            out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale, stamp=self.price_time()), sleep))
+            out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
 
         # the normal rotation: every coin full screen (starred ones with their big screen)
         for asset in coins:
             if asset["id"] in starred_ids:
                 big(asset)
             else:
-                out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale, stamp=self.price_time()), sleep))
+                out.append(lambda a=asset: (self.renderer.asset(a, stale=self.stale), sleep))
         # List view adds the list pages at the end of each cycle, as a summary
         if self.cfg.list_view:
             n = self.cfg.list_view
