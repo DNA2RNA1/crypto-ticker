@@ -869,6 +869,7 @@ h1{font-size:28px;margin:18px 0 4px}h2{font-size:13px;text-transform:uppercase;l
  background:#2b313a;color:var(--text);border-radius:50%;width:16px;height:16px;line-height:16px;text-align:center}
 .link{color:var(--accent);text-decoration:none}
 input[type=search],input[type=password]{width:100%;padding:13px 14px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--text);font-size:17px}
+.hold{padding:9px 10px;border-radius:10px;border:1px solid var(--line);background:#0f1216;color:var(--text);font-size:16px}
 .seg{display:flex;width:100%;background:#0f1216;border-radius:10px;padding:3px;gap:3px}
 .seg button{flex:1;border:0;background:none;color:var(--muted);padding:9px 0;border-radius:8px;font-size:15px}
 .seg button.on{background:#2b313a;color:var(--text);font-weight:600}
@@ -916,8 +917,8 @@ async function load(){
 }
 function holdRow(c){const sym=c.entry.split(':')[0],h=(S.portfolio_holdings||{})[sym]||[];
   return `<div class="row" style="gap:6px"><div style="width:52px;font-weight:600">${esc(sym.toUpperCase())}</div>
-   <input data-hq="${esc(sym)}" inputmode="decimal" placeholder="Quantity" value="${h[0]??''}" style="flex:1;min-width:0">
-   <input data-hc="${esc(sym)}" inputmode="decimal" placeholder="Cost $ (opt.)" value="${h[1]??''}" style="flex:1;min-width:0"></div>`}
+   <input class="hold" data-hq="${esc(sym)}" inputmode="decimal" placeholder="Quantity" value="${h[0]??''}" style="flex:1;min-width:0">
+   <input class="hold" data-hc="${esc(sym)}" inputmode="decimal" placeholder="Paid $ (opt.)" value="${h[1]??''}" style="flex:1;min-width:0"></div>`}
 function portfolioRows(){
   const on=S.portfolio=='on',priv=S.portfolio_private!='off';
   return `<h2>Portfolio</h2><div class="card">
