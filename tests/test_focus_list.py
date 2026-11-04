@@ -28,7 +28,7 @@ def kinds(t, monkeypatch):
     calls = []
     r = t.renderer
     monkeypatch.setattr(r, "featured", lambda a, stale=False: calls.append(("big", a["symbol"])))
-    monkeypatch.setattr(r, "asset", lambda a, stale=False: calls.append(("coin", a["symbol"])))
+    monkeypatch.setattr(r, "asset", lambda a, stale=False, stamp=None: calls.append(("coin", a["symbol"])))
     monkeypatch.setattr(r, "list_page", lambda page, rows=5, stale=False:
                         calls.append(("list", tuple(a["symbol"] for a in page))))
     for screen in t.coin_screens():
@@ -356,3 +356,64 @@ def test_indices_style_setting(monkeypatch):
     assert Config.from_env().indices_style == "charts"
     monkeypatch.setenv("INDICES_STYLE", "compact")
     assert Config.from_env().indices_style == "compact"
+
+
+def test_stale_prices_get_a_dated_notice_first(monkeypatch):
+    import time as _time
+    from prices import NetworkError
+    t = ticker()
+    t.stale, t.stale_since, t.last_error = True, _time.time() - 3600, NetworkError("down")
+    seen = []
+    monkeypatch.setattr(t.renderer, "stale_notice", lambda when, reason: seen.append((when, reason)))
+    monkeypatch.setattr(t.renderer, "asset", lambda a, stale=False: None)
+    screens = t.coin_screens()
+    screens[0]()
+    assert seen and seen[0][1] == "NO NETWORK?" and len(screens) == len(SYMS) + 1
+
+
+def test_live_prices_have_no_notice():
+    t = ticker()
+    t.stale = False
+    assert len(t.coin_screens()) == len(SYMS)
+
+
+def test_stale_notice_fits():
+    from datetime import datetime
+    from render import Renderer
+    r = Renderer()
+    font = r.fonts["5x8"]
+    drawn = []
+    real = font.draw
+    font.draw = lambda img, x, b, txt, c: (drawn.append((x, txt)), real(img, x, b, txt, c))[1]
+    img = r.stale_notice(datetime(2026, 11, 12, 22, 41), "NO NETWORK?")
+    assert img.size == (64, 32) and drawn[-1][1] == "11/12 10:41P"
+    assert all(x >= 0 and x + font.width(txt) <= 64 for x, txt in drawn)
+
+
+def test_coin_screen_shows_fetch_time(monkeypatch):
+    import time as _time
+    t = ticker()
+    t.stale, t.last_success = False, _time.time()
+    seen = []
+    monkeypatch.setattr(t.renderer, "asset", lambda a, stale=False, stamp=None: seen.append(stamp))
+    for s in t.coin_screens():
+        s()
+    assert seen and all(st is not None for st in seen)
+    t.last_success = 0
+    assert t.price_time() is None
+
+
+def test_tiny_time_fits_under_the_chart():
+    from datetime import datetime
+    from render import Renderer, tiny_width
+    from sample import sample_assets
+    r = Renderer()
+    r.layout = "classic"
+    a = sample_assets(["ada"])[0] | {"change_24h": -2.7}
+    img = r.asset(a, stamp=datetime(2026, 11, 4, 22, 41))
+    assert img.size == (64, 32) and tiny_width("22:41") == 17
+    rows = {y for y in range(32) for x in range(64) if img.getpixel((x, y)) == (110, 110, 120)}
+    assert rows and rows <= set(range(15, 20))  # drawn in rows 15-19 only
+    # a long symbol with a big change leaves no room: the time is simply left out
+    b = sample_assets(["night"])[0] | {"change_24h": -12.5}
+    assert r.asset(b, stamp=datetime(2026, 11, 4, 22, 41)).size == (64, 32)
