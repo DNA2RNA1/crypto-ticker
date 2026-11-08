@@ -293,6 +293,13 @@ def test_flight_number_becomes_callsign_and_waits(tmp_path):
     assert net.count("/airline/") == 0          # DL is in the built-in table
 
 
+def test_leading_zeros_are_dropped_from_the_callsign(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    assert t.lookups.callsign_for("AA0012") == "AAL12"
+    assert t.lookups.callsign_for("AAL0012") == "AAL12"
+    assert t.lookups.callsign_for("DL1189") == "DAL1189"
+
+
 def test_unknown_airline_prefix_is_looked_up(tmp_path):
     t, sky, net = tracker(tmp_path, ("XQ123",),
                           airlines={"XQ": FakeResponse(200, {"response": [{"icao": "SXS", "iata": "XQ", "name": "SunExpress"}]})})
@@ -403,7 +410,7 @@ def test_one_flight_failing_keeps_the_others(tmp_path):
     net.get = get
     t.data = t.fetch()
     rows = {r["flight"]: r for r in t.rows()}
-    assert rows["DL1189"]["status"] == "air" and "down" in rows["UA77"]["error"]
+    assert rows["DL1189"]["status"] == "air" and "unavailable" in rows["UA77"]["error"]
 
 
 def test_status_for_phone_page(tmp_path):
@@ -431,6 +438,23 @@ def test_tracked_screens_draw_every_state():
     for row in rows:
         img = r.tracked_flight(row, ZoneInfo("America/Chicago")).first_frame()
         assert img.size == (64, 32) and img.getbbox()
+
+
+def test_accented_names_draw_without_question_marks():
+    r = Renderer(64, 32)
+    f = r.fonts["5x8"]
+    assert "?" not in Renderer._panel_text(f, "Aeroméxico") and Renderer._panel_text(f, "Aeroméxico").startswith("Aerom")
+    p = dict(sample_flights()[0], route=dict(sample_flights()[0]["route"], airline="Aeroméxico Connect"))
+    assert r.flight(p).first_frame().getbbox()
+    row = dict(sample_tracked(time.time())[0], place="San Nicolás de los Garza, NLE")
+    assert r.tracked_flight(row).first_frame().getbbox()
+
+
+def test_broken_picture_file_falls_back_to_the_tile(tmp_path, monkeypatch):
+    monkeypatch.setattr(render, "AIRLINE_DIR", str(tmp_path))
+    (tmp_path / "UAL.png").write_bytes(b"not a picture")
+    tile = Renderer(64, 32).airline_badge("UAL", "UA")
+    assert tile.getpixel((8, 1)) == Renderer.AIRLINE_COLORS["UAL"][0]
 
 
 def test_landed_is_green_and_bar_full():
@@ -487,6 +511,22 @@ def test_flights_screen_in_ticker(tmp_path, monkeypatch):
     assert len(screens) == 4 and all(s().first_frame().size == (64, 32) for s in screens)
     t.cfg.flights_overhead = False
     assert len(t.screens()) == 2
+
+
+def test_empty_sky_with_only_flights_on_shows_the_clock(tmp_path, monkeypatch):
+    monkeypatch.setattr(fl, "STATE_PATH", str(tmp_path / "t.json"))
+    cfg = Config()
+    cfg.screens = ["flights"]
+    d = FakeDisplay()
+    t = Ticker(cfg, d)
+    t.flights.update = lambda now=None: None
+    t.weather.update = lambda now=None: None
+    t.step()
+    assert len(d.frames) >= 1                 # the time, not the last plane left up
+    t.flights.overhead = lambda n, now=None: sample_flights()[:1]
+    before = len(d.frames)
+    t.step()
+    assert len(d.frames) > before
 
 
 def test_flights_off_makes_no_calls():

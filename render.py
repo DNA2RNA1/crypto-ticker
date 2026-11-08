@@ -711,10 +711,11 @@ class Renderer:
                 if key not in self._logos:
                     if len(self._logos) > 100:
                         self._logos.clear()
-                    self._logos[key] = fit_logo(Image.open(path).convert("RGBA"), size)
+                    with Image.open(path) as im:
+                        self._logos[key] = fit_logo(im.convert("RGBA"), size)
                 return self._logos[key]
-            except OSError:
-                pass  # no file (or unreadable): the tile below
+            except Exception:  # no file, or not a usable picture: the tile below
+                pass
             color, ink = self.AIRLINE_COLORS.get(icao, (None, (255, 255, 255)))
             if color is None:
                 hue = int(hashlib.md5(icao.encode()).hexdigest()[:2], 16) / 255
@@ -749,12 +750,20 @@ class Renderer:
                     px[x + dx, y + dy] = color
         return 4
 
+    @staticmethod
+    def _panel_text(font, text):
+        """Text from the web made safe for a panel font: accents dropped where the font
+        lacks them (Aeroméxico -> Aeromexico), odd characters removed."""
+        from news import clean_text
+        return clean_text(text, drawable=lambda ch: ord(ch) in font.glyphs)
+
     def _flight_top(self, bg, lanes, top, badge, line1, line2, color2=PRICE):
         """Badge on the left, two lines of text beside it (each scrolls if too long)."""
         from scroller import Lane, text_strip
         bg.paste(badge, (0, top))
         f = self.fonts["5x8"]
         for text, base, color in ((line1, 7, PRICE), (line2, 15, color2)):
+            text = self._panel_text(f, text)
             if not text:
                 continue
             strip = text_strip(f, text, color)
@@ -769,6 +778,7 @@ class Renderer:
         text on the right."""
         from scroller import Lane, text_strip
         f = self.fonts["4x6"]
+        left = self._panel_text(f, left)
         rw = f.width(right) + 3 if right else 0
         if right:
             f.draw(bg, self.w - f.width(right), y_base, right, rcolor)

@@ -348,9 +348,9 @@ class _Lookups:
         m = FLIGHT_RE.fullmatch(flight)
         if not m:
             return ""
-        prefix, num = m[1], m[2]
+        prefix, num = m[1], m[2].lstrip("0") or "0"   # AA0012 flies as AAL12
         if len(prefix) == 3 and prefix.isalpha():
-            return flight
+            return prefix + num
         icao = self.icao_for(prefix)
         return f"{icao}{num}" if icao else ""
 
@@ -539,9 +539,10 @@ class Tracker(Feed):
                 self.update_one(f, now)
                 ok += 1
             except Exception as exc:  # one flight failing never blanks the others
-                log.info("flights: tracking %s failed (%s)", f, str(exc)[:120])
+                log.info("flights: tracking %s failed (%s)", f, str(exc)[:160])
                 with self.lock:
-                    self.state.setdefault(f, {"status": "waiting"})["error"] = str(exc)[:80]
+                    self.state.setdefault(f, {"status": "waiting"})["error"] = \
+                        "flight data unavailable right now; retrying every minute"
         with self.lock:
             self.state = {k: v for k, v in self.state.items() if k in self.flights}
             self._save()

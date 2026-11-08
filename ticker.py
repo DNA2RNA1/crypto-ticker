@@ -727,8 +727,14 @@ class Ticker:
             shown += 1
             if self.reload_pending:
                 return
-        if not shown:  # nothing to show yet; wait for the retry without spinning
-            self.wake.wait(1.0)
+        if not shown:  # nothing to show right now
+            if "flights" in self.cfg.screens and "coins" not in self.cfg.screens:
+                # only Flights (and nothing else with data) on and the sky is empty: show the
+                # time rather than leave the last plane up
+                self.show(self.renderer.clock(self.now(), self.weather.update(), self.cfg.temp_unit,
+                                              self.cfg.weather_place), self.cfg.sleep)
+            else:
+                self.wake.wait(1.0)  # waiting for the first coin prices; don't spin
 
     def screens(self):
         """The screens for one pass of the cycle, in the configured order.
