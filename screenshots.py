@@ -17,7 +17,7 @@ from zoneinfo import ZoneInfo
 
 from display import MatrixDisplay
 from prices import NetworkError, RateLimitError
-from sample import (apply_sample, sample_games, sample_markets, sample_news, sample_videos, sample_watchlist,
+from sample import (apply_sample, sample_flights, sample_games, sample_markets, sample_news, sample_videos, sample_watchlist,
                     sample_weather)
 from videos import TAG_COLOR as VIDEO_TAG
 from sports import BY_KEY
@@ -77,6 +77,7 @@ def main():
     vids = sample_videos(news_now)
     watch = sample_watchlist(news_now)
     markets = sample_markets(news_now)
+    flights = sample_flights()
 
     def odds(key):
         g = next(g for g in games[key] if g["state"] == "pre")
@@ -152,6 +153,9 @@ def main():
         ("22b-sports-odds-moneyline", lambda: odds("mlb")),
         ("23-odds-polymarket", lambda: r.market(markets[0]).first_frame()),
         ("23b-odds-kalshi", lambda: mid(r.market(markets[1]))),
+        ("24-flight-climbing", lambda: r.flight(flights[0]).first_frame()),
+        ("24b-flight-descending", lambda: mid(r.flight(flights[1]))),
+        ("24c-flight-small-plane", lambda: r.flight(flights[2]).first_frame()),
     ]
     paths = []
     for name, make in shots:

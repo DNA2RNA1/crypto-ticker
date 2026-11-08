@@ -39,12 +39,13 @@ from watchlist import REFRESH_CHOICES as WATCHLIST_REFRESH, Watchlist, entries_f
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
+from flights import RADIUS_CHOICES as FLIGHT_RADII, Flights
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
 
 SCREEN_NAMES = ("clock", "weather", "feargreed", "indices", "metals", "watchlist", "news", "videos", "sports",
-                "odds", "arcade", "coins")
+                "odds", "flights", "arcade", "coins")
 DEFAULT_SCREENS = ("clock", "feargreed", "indices", "coins")  # new screens are opt-in
 TRANSITIONS = ("scroll", "slide", "none")
 # Tokenized index funds listed on CoinGecko: fetched in the same call as the coins
@@ -167,6 +168,8 @@ class Config:
     sports_odds: bool = False      # show the betting line after upcoming games (display only)
     odds_markets: list = field(default_factory=list)  # "poly:<slug>" / "kalshi:<TICKER>"
     odds_per_cycle: int = 3        # prediction markets per cycle (they rotate)
+    flights_radius: int = 10       # miles around the weather location
+    flights_per_cycle: int = 3     # closest planes shown each cycle
     videos_max_age_days: int = 3
     videos_skip_shorts: bool = True
     sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
@@ -246,6 +249,9 @@ class Config:
         c.sports_odds = env("SPORTS_ODDS", False, bool)
         c.odds_markets = markets_from_env(env("ODDS_MARKETS", ""))
         c.odds_per_cycle = env("ODDS_PER_CYCLE", c.odds_per_cycle, int, lo=1, hi=10)
+        c.flights_radius = int(env("FLIGHTS_RADIUS", str(c.flights_radius),
+                                   choices=tuple(str(r) for r in FLIGHT_RADII)))
+        c.flights_per_cycle = env("FLIGHTS_PER_CYCLE", c.flights_per_cycle, int, lo=1, hi=5)
         c.videos_max_age_days = env("VIDEOS_MAX_AGE_DAYS", c.videos_max_age_days, int, lo=1, hi=30)
         c.videos_skip_shorts = env("VIDEOS_SKIP_SHORTS", c.videos_skip_shorts, bool)
         c.sports = follow_from_env(os.environ)
@@ -362,6 +368,7 @@ class Ticker:
         self.watchlist = Watchlist(cfg.watchlist, cfg.watchlist_refresh)
         self.markets = Markets(cfg.odds_markets)
         self.sports = Sports(cfg.sports)
+        self.flights = Flights(cfg.weather_lat, cfg.weather_lon, cfg.flights_radius)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
         self.stale_since = None     # when those last good prices were fetched
@@ -548,6 +555,9 @@ class Ticker:
                                    "celsius" if new.temp_unit == "C" else "fahrenheit")
         if (new.weather_extra, new.temp_unit) != (old.weather_extra, old.temp_unit):
             self.extra_weather = self._make_extra_weather(new)
+        if (new.weather_lat, new.weather_lon, new.flights_radius) != \
+                (old.weather_lat, old.weather_lon, old.flights_radius):
+            self.flights = Flights(new.weather_lat, new.weather_lon, new.flights_radius)
         if new.sports != old.sports:
             self.sports.follow = new.sports
             self.sports.next_fetch = 0  # fetch with the new teams right away
@@ -798,6 +808,11 @@ class Ticker:
                 speed = SPEEDS[self.cfg.news_speed]
                 for m in self.markets.next_batch(self.markets.rows(), self.cfg.odds_per_cycle):
                     out.append(lambda m=m: self.renderer.market(m, speed, stale=m["stale"], hold=sleep))
+            elif name == "flights":
+                self.flights.update()    # background refresh every 30 s, only while this is on
+                metric = self.cfg.temp_unit == "C"
+                for p in self.flights.overhead(self.cfg.flights_per_cycle):
+                    out.append(lambda p=p: self.renderer.flight(p, metric, hold=sleep))
             elif name == "coins":
                 out += self.coin_screens()
         return out

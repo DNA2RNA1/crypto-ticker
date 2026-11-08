@@ -217,3 +217,20 @@ def sample_watchlist(now_ts):
           day(141.0, 148.32, n=22, wiggle=0.003, seed=5), span="1M"),
         q("CORN", "ZC=F", "FUTURE", 428.75, 431.0, "", day(431, 428.75, seed=6)),
     ]
+
+
+def sample_flights():
+    """Planes for the screenshots: an airliner climbing out with a known route, one
+    descending, and a small plane with no route (registration and type only)."""
+    return [
+        {"callsign": "UAL1520", "reg": "N37502", "type": "B38M", "alt_ft": 8425, "speed_kt": 268.0,
+         "vrate_fpm": 2112.0, "track": 285.0, "dist_mi": 2.4,
+         "route": {"orig": "ORD", "dest": "DEN", "orig_city": "Chicago", "dest_city": "Denver",
+                   "airline": "United Airlines"}},
+        {"callsign": "SWA2231", "reg": "N8710M", "type": "B738", "alt_ft": 3150, "speed_kt": 172.0,
+         "vrate_fpm": -768.0, "track": 175.0, "dist_mi": 4.8,
+         "route": {"orig": "MDW", "dest": "STL", "orig_city": "Chicago", "dest_city": "St Louis",
+                   "airline": "Southwest Airlines"}},
+        {"callsign": "N4521K", "reg": "N4521K", "type": "C172", "alt_ft": 2500, "speed_kt": 105.0,
+         "vrate_fpm": 0.0, "track": 90.0, "dist_mi": 11.6, "route": None},
+    ]

@@ -37,6 +37,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 5. [Weather, news, videos and sports screens](#weather-news-videos-and-sports-screens)
    - [Watchlist: stocks, funds and futures](#watchlist-stocks-funds-and-futures)
    - [Odds: betting lines and prediction markets](#odds-betting-lines-and-prediction-markets)
+   - [Planes overhead](#planes-overhead)
 6. [Phone settings page](#phone-settings-page)
 7. [Updating (and rolling back)](#updating-and-rolling-back)
 8. [iPhone widget](#iphone-widget)
@@ -383,6 +384,25 @@ event's title, or what went wrong, under each link.
 | Polymarket | Kalshi |
 |--|--|
 | ![](docs/screenshots/23-odds-polymarket.png) | ![](docs/screenshots/23b-odds-kalshi.png) |
+
+### Planes overhead
+
+The **Planes overhead** screen (`flights`, off by default) shows the aircraft in the air closest
+to the weather location, within a radius you pick on the phone page (3-25 miles), one screen each
+(1-5 per cycle). Each shows the callsign and distance, the route (`ORD→DEN`) when one is known,
+the airline and aircraft type, then the altitude with a green up arrow when climbing or an orange down
+arrow when descending and the ground speed (metric when the temperature unit is °C). Small planes with no airline
+route show their type and which way they're heading instead.
+
+Positions come from [airplanes.live](https://airplanes.live) (with [adsb.fi](https://adsb.fi) as
+a backup) and routes from [adsbdb.com](https://www.adsbdb.com), all free and keyless for personal,
+non-commercial use. Positions are checked every 30 seconds, only while the screen is on; each
+callsign's route is looked up once and cached. Planes move, so positions more than two minutes old
+are never shown: if the data is old or nothing is up there, the screen is skipped.
+
+| Climbing | Descending | Small plane |
+|--|--|--|
+| ![](docs/screenshots/24-flight-climbing.png) | ![](docs/screenshots/24b-flight-descending.png) | ![](docs/screenshots/24c-flight-small-plane.png) |
 
 ## Phone settings page
 

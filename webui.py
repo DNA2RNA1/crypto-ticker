@@ -75,6 +75,8 @@ EDITABLE = {  # key -> validator returning the string to store
     "ODDS_PER_CYCLE": lambda v: _int(v, 1, 10),
     "VIDEOS_MAX_AGE_DAYS": lambda v: _int(v, 1, 30),
     "VIDEOS_SKIP_SHORTS": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "FLIGHTS_RADIUS": lambda v: _choice(v.strip(), ("3", "5", "10", "15", "25")),
+    "FLIGHTS_PER_CYCLE": lambda v: _int(v, 1, 5),
 }
 
 MAX_FAILS = 5
@@ -104,7 +106,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "WATCHLIST_PER_CYCLE": "Watchlist symbols per cycle",
           "SPORTS_ODDS": "Betting lines", "ODDS_MARKETS": "Prediction markets",
           "ODDS_PER_CYCLE": "Markets per cycle",
-          "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts"}
+          "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts",
+          "FLIGHTS_RADIUS": "Flight radius", "FLIGHTS_PER_CYCLE": "Planes per cycle"}
 
 
 def _int(v, lo, hi):
@@ -189,7 +192,7 @@ def _tz(v):
 
 
 SCREENS = ("clock", "weather", "feargreed", "indices", "metals", "watchlist", "news", "videos", "sports", "odds",
-           "arcade", "coins")
+           "flights", "arcade", "coins")
 
 
 def _screens(v):
@@ -549,6 +552,8 @@ class WebApp:
             "videos_max_age_days": int(clean("VIDEOS_MAX_AGE_DAYS", "3")),
             "videos_skip_shorts": clean("VIDEOS_SKIP_SHORTS", "on"),
             "videos_status": self._videos_status(clean),
+            "flights_radius": int(clean("FLIGHTS_RADIUS", "10")),
+            "flights_per_cycle": int(clean("FLIGHTS_PER_CYCLE", "3")),
             "sports": self._sports(clean),
         }
 
@@ -952,7 +957,7 @@ function focusHint(){const h=$('#focushint');if(!h)return;
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
 const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',metals:'Gold, silver &amp; oil',
   news:'News headlines',videos:'YouTube videos',sports:'Sports scores',arcade:'Arcade animations',
-  watchlist:'Watchlist (stocks, funds, futures)',odds:'Prediction markets'};
+  watchlist:'Watchlist (stocks, funds, futures)',odds:'Prediction markets',flights:'Planes overhead'};
 function screenOrder(){  // enabled screens in their saved order, then the others
   const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
   const o=(S.screen_order||[]).filter(k=>all.includes(k));
@@ -966,6 +971,14 @@ function arcadeRows(){
    <div class="row"><div class="grow">Scenes per cycle<div class="name" style="white-space:normal">Chase, power pellet, cherries, sweethearts, ghost snack and the giant take turns, about 5 seconds each.</div></div>
     <select id="arcn">${[1,2,3,4,5,6].map(n=>`<option ${S.arcade_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
   </div>`;
+}
+function flightRows(){
+  return `<h2>Planes overhead</h2><div class="card">
+   <div class="row"><div class="grow">Within<div class="name" style="white-space:normal">Of the weather location below. Shows the closest planes in the air with their route, airline, altitude and speed. Skipped when nothing is up there.</div></div>
+    <select id="fradius">${[3,5,10,15,25].map(n=>`<option value="${n}" ${S.flights_radius==n?'selected':''}>${n} mi</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Planes per cycle</div>
+    <select id="fper">${[1,2,3,4,5].map(n=>`<option ${S.flights_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
+  </div><p class="hint">Data: airplanes.live (adsb.fi as backup) and adsbdb.com routes. Free for personal use; checked every 30 seconds only while this screen is on.</p>`;
 }
 function oddsRows(){
   const st=S.odds_status||{};
@@ -1103,6 +1116,7 @@ function render(){
   ${S.screens.includes('arcade')?arcadeRows():''}
   ${S.screens.includes('watchlist')?watchlistRows():''}
   ${S.screens.includes('odds')?oddsRows():''}
+  ${S.screens.includes('flights')?flightRows():''}
   <p class="hint">Shown in this order at the start of each cycle, then your coins (if Crypto prices is on). If everything is off, the coins show. The weather screen uses the location below.</p>
   ${S.screens.includes('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
@@ -1216,6 +1230,7 @@ function save(extra){
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,arcade_per_cycle:S.arcade_per_cycle,
       watchlist:(S.watchlist||[]).join('\n'),watchlist_refresh:S.watchlist_refresh,watchlist_per_cycle:S.watchlist_per_cycle,
+      flights_radius:S.flights_radius,flights_per_cycle:S.flights_per_cycle,
       sports_odds:S.sports_odds,odds_markets:(S.odds_markets||[]).join('\n'),odds_per_cycle:S.odds_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
@@ -1282,6 +1297,8 @@ function bind(){
   if($('#wper'))$('#wper').onchange=e=>{S.watchlist_per_cycle=+e.target.value;save()};
   if($('#wref'))$('#wref').onchange=e=>{S.watchlist_refresh=+e.target.value;save()};
   if($('#arcn'))$('#arcn').onchange=e=>{S.arcade_per_cycle=+e.target.value;save()};
+  if($('#fradius'))$('#fradius').onchange=e=>{S.flights_radius=+e.target.value;save()};
+  if($('#fper'))$('#fper').onchange=e=>{S.flights_per_cycle=+e.target.value;save()};
   if($('#iview'))$('#iview').onchange=e=>{S.indices_view=e.target.checked?'both':'percent';save()};
   const findPlace=async()=>{
     const q=$('#zip').value.trim();if(q.length<3)return toast('Enter a ZIP code or city',true);

@@ -650,6 +650,91 @@ class Renderer:
             self.stale_mark(bg)
         return Scroller(bg, lanes, speed=speed, min_hold=hold)
 
+    # --- flights screen --------------------------------------------------------
+    FLIGHT_TAG = (0, 150, 255)
+    CLIMB = (0, 210, 90)
+    DESCEND = (255, 140, 0)
+
+    @staticmethod
+    def flight_numbers(p, metric=False):
+        """(distance, altitude, speed) strings for the panel."""
+        d, alt, kt = p["dist_mi"], p["alt_ft"], p.get("speed_kt")
+        if metric:
+            km = d * 1.609344
+            dist = f"{km:.1f}KM" if km < 10 else f"{km:.0f}KM"
+            m = alt * 0.3048
+            alt_s = f"{m:,.0f}M"
+            spd = "" if kt is None else f"{kt * 1.852:.0f}KMH"
+        else:
+            dist = f"{d:.1f}MI" if d < 10 else f"{d:.0f}MI"
+            alt_s = f"{alt:,}FT"
+            spd = "" if kt is None else f"{kt * 1.15078:.0f}MPH"
+        return dist, alt_s, spd
+
+    def _vertical_arrow(self, img, x, y, vrate):
+        """3x5 arrow (the 4x6 font has none): up green when climbing, down orange when
+        descending, nothing when level. Returns the width used."""
+        if vrate is None or abs(vrate) < 300:
+            return 0
+        up = vrate > 0
+        rows =(".#.", "###", ".#.", ".#.", ".#.") if up else (".#.", ".#.", ".#.", "###", ".#.")
+        color = self.CLIMB if up else self.DESCEND
+        px = img.load()
+        for dy, row in enumerate(rows):
+            for dx, ch in enumerate(row):
+                if ch == "#" and 0 <= x + dx < img.width and 0 <= y + dy < img.height:
+                    px[x + dx, y + dy] = color
+        return 4
+
+    def flight(self, p, metric=False, hold=5.0):
+        """A plane near you: callsign tag and distance on top, the route big (or the
+        registration for planes without one), the airline and aircraft type, then
+        altitude with a climb/descent arrow and ground speed."""
+        from news import clean_text
+        from scroller import SPEEDS, Lane, Scroller, text_strip
+        f = self.fonts
+        bg = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        route = p.get("route") or {}
+        name = p.get("callsign") or p.get("reg") or "PLANE"
+        self.tag(bg, 0, top, name, self.FLIGHT_TAG)
+        dist, alt, spd = self.flight_numbers(p, metric)
+        small = f["4x6"]
+        small.draw(bg, self.w - small.width(dist), top + 6, dist, DIM_TEXT)
+
+        big = f["6x10"]
+        if route.get("orig") and route.get("dest"):
+            headline = f"{route['orig']}→{route['dest']}"
+            if big.width(headline) > self.w:
+                headline = f"{route['orig'][-3:]}→{route['dest'][-3:]}"
+        else:
+            headline = p.get("type") or p.get("reg") or name
+        hf = big if big.width(headline) <= self.w else f["5x8"]
+        hf.draw(bg, 0, top + 16, headline, PRICE)
+
+        lanes = []
+        mid = f["5x8"]
+        bits = [route.get("airline") or "", p.get("type") or ""]
+        if not route.get("airline") and p.get("reg") and p.get("reg") != name:
+            bits.append(p["reg"])
+        if headline in bits:
+            bits.remove(headline)
+        if not route.get("airline") and p.get("track") is not None:  # small planes: which way it's heading
+            bits.append("HDG " + "N NE E SE S SW W NW".split()[int((p["track"] % 360 + 22.5) // 45) % 8])
+        line = clean_text(" ".join(b for b in bits if b), drawable=lambda ch: ord(ch) in mid.glyphs)
+        if line:
+            strip = text_strip(mid, line, SYMBOL)
+            if strip.width <= self.w:
+                bg.paste(strip, (0, top + 18))
+            else:
+                lanes.append(Lane(strip, (0, top + 18, self.w - 1, top + 18 + strip.height - 1)))
+
+        x = small.draw(bg, 0, top + 31, alt, PRICE)
+        self._vertical_arrow(bg, x + 1, top + 26, p.get("vrate_fpm"))
+        if spd:
+            small.draw(bg, self.w - small.width(spd), top + 31, spd, DIM_TEXT)
+        return Scroller(bg, lanes, speed=SPEEDS["normal"], min_hold=hold)
+
     # --- sports screen ---------------------------------------------------------
     LIVE = (255, 60, 50)
     UPCOMING = (255, 200, 0)
