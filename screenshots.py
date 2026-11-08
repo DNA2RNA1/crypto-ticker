@@ -157,9 +157,9 @@ def main():
         ("24-flight-climbing", lambda: r.flight(flights[0]).first_frame()),
         ("24b-flight-descending", lambda: mid(r.flight(flights[1]))),
         ("24c-flight-small-plane", lambda: r.flight(flights[2]).first_frame()),
-        ("25-flight-tracked-air", lambda: r.tracked_flight(tracked[0], SPORTS_TZ, now_ts=news_now).first_frame()),
-        ("25b-flight-tracked-landed", lambda: r.tracked_flight(tracked[1], SPORTS_TZ, now_ts=news_now).first_frame()),
-        ("25c-flight-tracked-waiting", lambda: r.tracked_flight(tracked[2], SPORTS_TZ, now_ts=news_now).first_frame()),
+        ("25-flight-tracked-air", lambda: r.tracked_flight(tracked[0], SPORTS_TZ).first_frame()),
+        ("25b-flight-tracked-landed", lambda: r.tracked_flight(tracked[1], SPORTS_TZ).first_frame()),
+        ("25c-flight-tracked-waiting", lambda: r.tracked_flight(tracked[2], SPORTS_TZ).first_frame()),
     ]
     paths = []
     for name, make in shots:

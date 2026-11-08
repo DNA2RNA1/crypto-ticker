@@ -270,17 +270,21 @@ def tracked_from_env(raw):
 
 # --- shared helpers ------------------------------------------------------------------
 class _Lookups:
-    """Route and airline lookups (adsbdb), cached; shared by both feeds."""
+    """Web requests and cached route/airline lookups (adsbdb), shared by the overhead and
+    tracking feeds. Both run in their own background threads, so requests go through
+    one lock: one at a time, spaced per host (a few a minute at most)."""
 
     def __init__(self, session):
         self.session = session
         self.routes = {}            # callsign -> (route or None, expires)
         self.airlines = {}          # IATA code -> ICAO code ("" if unknown)
         self.lock = threading.Lock()
+        self.http_lock = threading.Lock()
 
     def get(self, url, **kw):
-        _throttle(url)
-        return self.session.get(url, timeout=kw.pop("timeout", 12), **kw)
+        with self.http_lock:
+            _throttle(url)
+            return self.session.get(url, timeout=kw.pop("timeout", 12), **kw)
 
     def route(self, callsign, now=None):
         with self.lock:
@@ -370,10 +374,6 @@ class Flights(Feed):
         self.lookups = lookups or _Lookups(self.session)
         self.source = ""
         self.fetched = 0.0
-
-    @property
-    def routes(self):
-        return self.lookups.routes
 
     def _positions(self):
         nm = max(1, math.ceil(self.radius_mi / MI_PER_NM))

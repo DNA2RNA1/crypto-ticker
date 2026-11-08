@@ -229,6 +229,26 @@ def test_no_location_means_no_calls():
     assert f.fetch() is None and net.calls == []
 
 
+def test_shared_lookups_send_one_request_at_a_time():
+    import threading
+    active, peak = [0], [0]
+
+    class Slow:
+        def get(self, url, **kw):
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+            time.sleep(0.02)
+            active[0] -= 1
+            return FakeResponse(200, {"ac": []})
+    lk = fl._Lookups(Slow())
+    threads = [threading.Thread(target=lk.get, args=(f"https://h{i}.example/x",)) for i in range(6)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert peak[0] == 1
+
+
 def test_requests_to_one_host_are_spaced(monkeypatch):
     monkeypatch.setattr(fl, "MIN_GAP", 0.05)
     fl._hosts.clear()
@@ -564,6 +584,7 @@ def test_airline_picture_upload_and_reset(app, tmp_path, monkeypatch):
 def test_airline_routes_need_login_and_check_codes(server):
     from conftest import login, request
     assert request(server, "POST", "/api/airline-icon?code=UAL", b"x")[0] == 401
+    assert request(server, "POST", "/api/airline-icon/reset?code=UAL")[0] == 401
     auth = login(server)
     assert request(server, "GET", "/api/airline-badge?code=../x", headers=auth)[0] == 400
     assert request(server, "POST", "/api/airline-icon?code=UAL", b"not a picture", auth)[0] == 400

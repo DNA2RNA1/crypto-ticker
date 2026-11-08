@@ -135,6 +135,7 @@ class Renderer:
         self.w, self.h = width, height
         self.layout = layout if layout in self.LAYOUTS else "classic"
         self._count = 0
+        self._logos = {}            # your airline pictures, fitted to the panel
         self.currency = currency
         self.fonts = load_fonts()
         self.tall = height >= 64
@@ -706,11 +707,12 @@ class Renderer:
         if icao:
             path = os.path.join(AIRLINE_DIR, f"{icao}.png")
             try:
-                key = (icao, size, os.path.getmtime(path))
-                cache = self.__dict__.setdefault("_logos", {})
-                if key not in cache:
-                    cache[key] = fit_logo(Image.open(path).convert("RGBA"), size)
-                return cache[key]
+                key = (icao, size, os.path.getmtime(path))   # a new upload changes the time
+                if key not in self._logos:
+                    if len(self._logos) > 100:
+                        self._logos.clear()
+                    self._logos[key] = fit_logo(Image.open(path).convert("RGBA"), size)
+                return self._logos[key]
             except OSError:
                 pass  # no file (or unreadable): the tile below
             color, ink = self.AIRLINE_COLORS.get(icao, (None, (255, 255, 255)))
@@ -809,14 +811,12 @@ class Renderer:
             self.fonts["4x6"].draw(bg, self.w - self.fonts["4x6"].width(spd), top + 31, spd, DIM_TEXT)
         return Scroller(bg, lanes, speed=SPEEDS["normal"], min_hold=hold)
 
-    def tracked_flight(self, r, tz=None, hold=5.0, now_ts=None):
+    def tracked_flight(self, r, tz=None, hold=5.0):
         """A flight you're following: airline picture, flight number and route, then
         where it is (or LANDED / NOT DEPARTED / NO SIGNAL), then a progress bar with the
         estimated arrival time."""
-        import time as _time
         from flights import airline_codes
         from scroller import SPEEDS, Scroller
-        now_ts = now_ts or _time.time()
         bg = Image.new("RGB", (self.w, self.h))
         top = (self.h - 32) // 2
         lanes = []

@@ -1081,7 +1081,7 @@ function flightRows(){
   const label={air:'In the air',landed:'Landed',ground:'On the ground',lost:'No signal right now',waiting:'Not departed yet',checking:'Checking…'};
   const line=f=>{const x=st[f];
     const msg=!x?'<span class="name">Checked when you save</span>'
-      :x.error&&x.error!=''?`<span style="color:#ff6b5e">⚠ ${esc(x.error)}</span>`
+      :x.error?`<span style="color:#ff6b5e">⚠ ${esc(x.error)}</span>`
       :`<span style="color:${x.status=='landed'?'#3ad07a':x.status=='air'?'var(--text)':'#f5b400'}">${label[x.status]||esc(x.status)}${x.route?' · '+esc(x.route):''}${x.place&&x.status=='air'?' · over '+esc(x.place):''}</span>`;
     return `<div class="row"><div class="grow" style="min-width:0"><div style="font:13px ui-monospace,monospace">${esc(f)}${x&&x.callsign&&x.callsign!=f?` <span class="name">(${esc(x.callsign)})</span>`:''}</div><div style="font-size:13px">${msg}</div></div></div>`};
   const air=a=>`<div class="row" data-air="${a.icao}" style="cursor:pointer"><img src="/api/airline-badge?code=${a.icao}&iata=${a.iata||''}&v=${a.custom?Date.now():0}" alt="" style="width:32px;height:32px;border-radius:6px;image-rendering:pixelated">
