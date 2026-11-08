@@ -37,7 +37,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
 5. [Weather, news, videos and sports screens](#weather-news-videos-and-sports-screens)
    - [Watchlist: stocks, funds and futures](#watchlist-stocks-funds-and-futures)
    - [Odds: betting lines and prediction markets](#odds-betting-lines-and-prediction-markets)
-   - [Planes overhead](#planes-overhead)
+   - [Flights: tracked flights and planes overhead](#flights-tracked-flights-and-planes-overhead)
 6. [Phone settings page](#phone-settings-page)
 7. [Updating (and rolling back)](#updating-and-rolling-back)
 8. [iPhone widget](#iphone-widget)
@@ -385,24 +385,41 @@ event's title, or what went wrong, under each link.
 |--|--|
 | ![](docs/screenshots/23-odds-polymarket.png) | ![](docs/screenshots/23b-odds-kalshi.png) |
 
-### Planes overhead
+### Flights: tracked flights and planes overhead
 
-The **Planes overhead** screen (`flights`, off by default) shows the aircraft in the air closest
-to the weather location, within a radius you pick on the phone page (3-25 miles), one screen each
-(1-5 per cycle). Each shows the callsign and distance, the route (`ORD→DEN`) when one is known,
-the airline and aircraft type, then the altitude with a green up arrow when climbing or an orange down
-arrow when descending and the ground speed (metric when the temperature unit is °C). Small planes with no airline
-route show their type and which way they're heading instead.
+The **Flights** screen (`flights`, off by default) has two parts, both set on the phone page.
 
-Positions come from [airplanes.live](https://airplanes.live) (with [adsb.fi](https://adsb.fi) as
-a backup) and routes from [adsbdb.com](https://www.adsbdb.com), all free and keyless for personal,
-non-commercial use. Positions are checked every 30 seconds, only while the screen is on; each
-callsign's route is looked up once and cached. Planes move, so positions more than two minutes old
-are never shown: if the data is old or nothing is up there, the screen is skipped.
+**Tracked flights** come first: up to 4 flight numbers you enter (`AA1234`, `UA 512`). Each
+shows the airline picture, flight number and route, then where the plane is now ("OVER DES
+MOINES, IA"), a progress bar with the estimated arrival time, and **LANDED** with the time once
+it's down (it stays up for 6 hours, then waits for the flight's next trip). Before departure it
+says NOT DEPARTED; if the plane drops out of receiver range mid-flight (often over open water) it
+says NO SIGNAL with when it was last seen, until it reappears. Arrival times are estimates from the
+remaining distance and ground speed, not airline schedules. Regional partner flights sometimes fly
+under their own callsign (an American Eagle flight may be `ENY3456`); if a flight number never
+shows up, enter that callsign instead. The phone page shows each flight's status under the box.
 
-| Climbing | Descending | Small plane |
-|--|--|--|
-| ![](docs/screenshots/24-flight-climbing.png) | ![](docs/screenshots/24b-flight-descending.png) | ![](docs/screenshots/24c-flight-small-plane.png) |
+**Planes overhead** (on/off) shows the aircraft in the air closest to the weather location, within
+3-25 miles, 1-5 per cycle: airline picture, airline and route, aircraft type and distance, then
+altitude with a green up / orange down arrow when climbing or descending, and ground speed (metric
+when the temperature unit is °C). Small planes with no airline show their registration, type and
+heading.
+
+**Airline pictures:** each airline gets a colored tile with its code. To use a logo instead, tap
+the airline under **Airline pictures** on the phone page and pick an image; it's stored as
+`icons/airlines/<ICAO>.png` (e.g. `UAL.png`) and shown 16×16. Airlines appear in that list once
+they've flown by or you track one.
+
+Data: positions from [airplanes.live](https://airplanes.live) (with [adsb.fi](https://adsb.fi) as
+a backup), routes from [adsbdb.com](https://www.adsbdb.com), and place names from
+[OpenStreetMap](https://www.openstreetmap.org/copyright) Nominatim; all free and keyless for
+personal, non-commercial use. Requests to each are spaced at least a second apart, and nothing is
+fetched while the screen is off. Overhead positions refresh every 30 seconds, tracked flights every
+minute; positions more than two minutes old are never shown as current.
+
+| Overhead | Small plane | Tracked, in the air | Tracked, landed |
+|--|--|--|--|
+| ![](docs/screenshots/24-flight-climbing.png) | ![](docs/screenshots/24c-flight-small-plane.png) | ![](docs/screenshots/25-flight-tracked-air.png) | ![](docs/screenshots/25b-flight-tracked-landed.png) |
 
 ## Phone settings page
 

@@ -25,6 +25,24 @@ CACHE_DIR = os.path.join(HERE, "cache", "icons")
 SPOTHQ = "https://raw.githubusercontent.com/spothq/cryptocurrency-icons/master/128/color/{}.png"
 
 
+def fit_logo(img, size):
+    """Crop transparent margins, shrink to the icon box, flatten onto black,
+    then sharpen and brighten so the logo reads on LEDs (dark colors
+    otherwise almost vanish on a matrix panel)."""
+    bbox = img.getchannel("A").getbbox()
+    if bbox:
+        img = img.crop(bbox)
+    scale = size / max(img.width, img.height)
+    img = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))),
+                     Image.BOX)
+    out = Image.new("RGB", (size, size), (0, 0, 0))
+    out.paste(img, ((size - img.width) // 2, (size - img.height) // 2), img)
+    out = out.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=0))
+    peak = max(hi for _, hi in out.getextrema()) or 1
+    out = out.point(lambda v: min(255, int(255 * (min(255, v * 255 / peak) / 255) ** 0.7)))
+    return ImageEnhance.Color(out).enhance(1.4)
+
+
 class IconStore:
     def __init__(self, size=16, download=True, timeout=10):
         self.size = size
@@ -76,21 +94,7 @@ class IconStore:
         return None
 
     def _fit(self, img, size):
-        """Crop transparent margins, shrink to the icon box, flatten onto black,
-        then sharpen and brighten so the logo reads on LEDs (dark colors
-        otherwise almost vanish on a matrix panel)."""
-        bbox = img.getchannel("A").getbbox()
-        if bbox:
-            img = img.crop(bbox)
-        scale = size / max(img.width, img.height)
-        img = img.resize((max(1, round(img.width * scale)), max(1, round(img.height * scale))),
-                         Image.BOX)
-        out = Image.new("RGB", (size, size), (0, 0, 0))
-        out.paste(img, ((size - img.width) // 2, (size - img.height) // 2), img)
-        out = out.filter(ImageFilter.UnsharpMask(radius=1, percent=150, threshold=0))
-        peak = max(hi for _, hi in out.getextrema()) or 1
-        out = out.point(lambda v: min(255, int(255 * (min(255, v * 255 / peak) / 255) ** 0.7)))
-        return ImageEnhance.Color(out).enhance(1.4)
+        return fit_logo(img, size)
 
     def _badge(self, symbol, font, size):
         """Fallback: a colored disc with the ticker's first letter."""

@@ -25,6 +25,8 @@ log = logging.getLogger("ticker.web")
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "cache")
 ICON_DIR = os.path.join(HERE, "icons")
+AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
+AIRLINE_RE = re.compile(r"[A-Z]{3}")
 MAX_UPLOAD = 8 * 1024 * 1024
 COIN_META = os.path.join(CACHE, "coins.json")
 
@@ -77,6 +79,8 @@ EDITABLE = {  # key -> validator returning the string to store
     "VIDEOS_SKIP_SHORTS": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "FLIGHTS_RADIUS": lambda v: _choice(v.strip(), ("3", "5", "10", "15", "25")),
     "FLIGHTS_PER_CYCLE": lambda v: _int(v, 1, 5),
+    "FLIGHTS_OVERHEAD": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "FLIGHTS_TRACK": lambda v: _tracked(v),
 }
 
 MAX_FAILS = 5
@@ -107,7 +111,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "SPORTS_ODDS": "Betting lines", "ODDS_MARKETS": "Prediction markets",
           "ODDS_PER_CYCLE": "Markets per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts",
-          "FLIGHTS_RADIUS": "Flight radius", "FLIGHTS_PER_CYCLE": "Planes per cycle"}
+          "FLIGHTS_RADIUS": "Flight radius", "FLIGHTS_PER_CYCLE": "Planes per cycle",
+          "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track"}
 
 
 def _int(v, lo, hi):
@@ -288,6 +293,12 @@ def _watchlist(v):
     Empty is allowed (nothing on the watchlist yet)."""
     from watchlist import format_entries, parse_entries
     return format_entries(parse_entries(v))
+
+
+def _tracked(v):
+    """Flight numbers, one per line or comma separated -> 'AA1234,UAL512'."""
+    from flights import parse_tracked
+    return ",".join(parse_tracked(v))
 
 
 def _markets(v):
@@ -554,8 +565,74 @@ class WebApp:
             "videos_status": self._videos_status(clean),
             "flights_radius": int(clean("FLIGHTS_RADIUS", "10")),
             "flights_per_cycle": int(clean("FLIGHTS_PER_CYCLE", "3")),
+            "flights_overhead": clean("FLIGHTS_OVERHEAD", "on"),
+            "flights_track": [f for f in clean("FLIGHTS_TRACK", "").split(",") if f],
+            "flights_status": self._flights_status(),
+            "airlines": self._airlines(clean),
             "sports": self._sports(clean),
         }
+
+    def _flights_status(self):
+        tracker = getattr(self.ticker, "tracker", None)
+        return tracker.status_for() if tracker else {}
+
+    def _airlines(self, clean):
+        """Airlines with a picture on the panel: ones seen recently, ones you're tracking,
+        and any with an uploaded logo. [{icao, iata, name, custom}] sorted by name."""
+        from flights import FLIGHT_RE, IATA_ICAO
+        seen = {}
+        flights = getattr(self.ticker, "flights", None)
+        if flights is not None:
+            seen.update(flights.lookups.seen_airlines())
+        for f in clean("FLIGHTS_TRACK", "").split(","):
+            m = FLIGHT_RE.fullmatch(f) if f else None
+            if m:
+                pre = m[1]
+                icao = pre if len(pre) == 3 and pre.isalpha() else IATA_ICAO.get(pre, "")
+                if icao and icao not in seen:
+                    seen[icao] = (pre if len(pre) == 2 else "", "")
+        try:
+            for name in os.listdir(AIRLINE_DIR):
+                code = name[:-4].upper()
+                if name.endswith(".png") and AIRLINE_RE.fullmatch(code) and code not in seen:
+                    seen[code] = ("", "")
+        except OSError:
+            pass
+        out = []
+        for icao, (iata, name) in seen.items():
+            if not iata:
+                iata = next((k for k, v in IATA_ICAO.items() if v == icao), "")
+            out.append({"icao": icao, "iata": iata, "name": name,
+                        "custom": os.path.exists(os.path.join(AIRLINE_DIR, f"{icao}.png"))})
+        return sorted(out, key=lambda a: (a["name"] or a["icao"]).lower())
+
+    def save_airline_icon(self, code, data):
+        """Your own logo for an airline: icons/airlines/<ICAO>.png (shown instead of the tile)."""
+        code = (code or "").upper()
+        if not AIRLINE_RE.fullmatch(code):
+            raise ValueError("bad airline code")
+        img = self._read_picture(data)
+        os.makedirs(AIRLINE_DIR, exist_ok=True)
+        img.save(os.path.join(AIRLINE_DIR, f"{code}.png"))
+
+    def reset_airline_icon(self, code):
+        code = (code or "").upper()
+        path = os.path.join(AIRLINE_DIR, f"{code}.png")
+        if AIRLINE_RE.fullmatch(code) and os.path.exists(path):
+            os.remove(path)
+
+    def airline_badge_png(self, code, iata=""):
+        """The airline's picture as the panel draws it, enlarged for the phone page."""
+        from render import Renderer
+        code = (code or "").upper()
+        iata = (iata or "").upper()
+        if not AIRLINE_RE.fullmatch(code) or (iata and not re.fullmatch(r"[A-Z0-9]{2}", iata)):
+            raise ValueError("bad airline code")
+        r = self.ticker.renderer if self.ticker else Renderer(64, 32)
+        img = r.airline_badge(code, iata).resize((64, 64), Image.NEAREST)
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+        return buf.getvalue()
 
     def _videos_status(self, clean):
         """Per channel: {"ok": True, "name"} once fetched, {"ok": False, "error"} if it
@@ -624,6 +701,15 @@ class WebApp:
         """Store an uploaded picture as icons/<symbol>.png (it overrides the default)."""
         if not SYMBOL_RE.fullmatch(symbol):
             raise ValueError("bad coin")
+        img = self._read_picture(data)
+        os.makedirs(ICON_DIR, exist_ok=True)
+        img.save(os.path.join(ICON_DIR, f"{symbol}.png"))
+        if self.ticker:
+            self.ticker.request_reload()
+
+    @staticmethod
+    def _read_picture(data):
+        """Uploaded bytes -> an RGBA picture no bigger than 256 px, or ValueError."""
         if not data or len(data) > MAX_UPLOAD:
             raise ValueError("picture missing or too large")
         try:
@@ -637,10 +723,7 @@ class WebApp:
             raise ValueError("that file isn't a picture I can read")
         img = img.convert("RGBA")
         img.thumbnail((256, 256))
-        os.makedirs(ICON_DIR, exist_ok=True)
-        img.save(os.path.join(ICON_DIR, f"{symbol}.png"))
-        if self.ticker:
-            self.ticker.request_reload()
+        return img
 
     def reset_icon(self, symbol):
         path = os.path.join(ICON_DIR, f"{symbol}.png")
@@ -755,6 +838,13 @@ def make_handler(app):
                 return self._send(200, app.settings())
             if url.path == "/api/status":
                 return self._send(200, app.status())
+            if url.path == "/api/airline-badge":
+                q = parse_qs(url.query)
+                try:
+                    png = app.airline_badge_png(q.get("code", [""])[0], q.get("iata", [""])[0])
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+                return self._send(200, png, "image/png")
             if url.path == "/api/geocode":
                 q = parse_qs(url.query).get("q", [""])[0].strip()[:64]
                 if len(q) < 3:
@@ -814,6 +904,20 @@ def make_handler(app):
                         app.save_icon(sym, self.rfile.read(n))
                     else:
                         app.reset_icon(sym)
+                except ValueError as exc:
+                    return self._send(400, {"error": str(exc)})
+                return self._send(200, {"ok": True})
+            if url.path in ("/api/airline-icon", "/api/airline-icon/reset"):
+                code = parse_qs(url.query).get("code", [""])[0]
+                try:
+                    if url.path == "/api/airline-icon":
+                        try:
+                            n = self._length(MAX_UPLOAD)
+                        except OverflowError:
+                            return self._send(413, {"error": "picture too large"})
+                        app.save_airline_icon(code, self.rfile.read(n))
+                    else:
+                        app.reset_airline_icon(code)
                 except ValueError as exc:
                     return self._send(400, {"error": str(exc)})
                 return self._send(200, {"ok": True})
@@ -957,7 +1061,7 @@ function focusHint(){const h=$('#focushint');if(!h)return;
   h.hidden=!(S.focus=='on'&&!(S.featured||[]).some(f=>syms.includes(f)))}
 const SCREEN_LABELS={clock:'Clock',weather:'Weather',feargreed:'Fear &amp; Greed index',indices:'Market indices',metals:'Gold, silver &amp; oil',
   news:'News headlines',videos:'YouTube videos',sports:'Sports scores',arcade:'Arcade animations',
-  watchlist:'Watchlist (stocks, funds, futures)',odds:'Prediction markets',flights:'Planes overhead'};
+  watchlist:'Watchlist (stocks, funds, futures)',odds:'Prediction markets',flights:'Flights (tracked &amp; overhead)'};
 function screenOrder(){  // enabled screens in their saved order, then the others
   const all=(S.screen_names||Object.keys(SCREEN_LABELS)).filter(k=>k!='coins');
   const o=(S.screen_order||[]).filter(k=>all.includes(k));
@@ -973,12 +1077,47 @@ function arcadeRows(){
   </div>`;
 }
 function flightRows(){
-  return `<h2>Planes overhead</h2><div class="card">
-   <div class="row"><div class="grow">Within<div class="name" style="white-space:normal">Of the weather location below. Shows the closest planes in the air with their route, airline, altitude and speed. Skipped when nothing is up there.</div></div>
+  const st=S.flights_status||{};
+  const label={air:'In the air',landed:'Landed',ground:'On the ground',lost:'No signal right now',waiting:'Not departed yet',checking:'Checking…'};
+  const line=f=>{const x=st[f];
+    const msg=!x?'<span class="name">Checked when you save</span>'
+      :x.error&&x.error!=''?`<span style="color:#ff6b5e">⚠ ${esc(x.error)}</span>`
+      :`<span style="color:${x.status=='landed'?'#3ad07a':x.status=='air'?'var(--text)':'#f5b400'}">${label[x.status]||esc(x.status)}${x.route?' · '+esc(x.route):''}${x.place&&x.status=='air'?' · over '+esc(x.place):''}</span>`;
+    return `<div class="row"><div class="grow" style="min-width:0"><div style="font:13px ui-monospace,monospace">${esc(f)}${x&&x.callsign&&x.callsign!=f?` <span class="name">(${esc(x.callsign)})</span>`:''}</div><div style="font-size:13px">${msg}</div></div></div>`};
+  const air=a=>`<div class="row" data-air="${a.icao}" style="cursor:pointer"><img src="/api/airline-badge?code=${a.icao}&iata=${a.iata||''}&v=${a.custom?Date.now():0}" alt="" style="width:32px;height:32px;border-radius:6px;image-rendering:pixelated">
+    <div class="grow" style="min-width:0">${esc(a.name||a.icao)}<div class="name">${a.custom?'Your picture':'Code tile'} · tap to ${a.custom?'change':'use your own'}</div></div>
+    ${a.custom?`<button class="btn del" data-airreset="${a.icao}" aria-label="Back to the code tile">↺</button>`:''}</div>`;
+  return `<h2>Flights</h2><div class="card">
+   <div class="row" style="display:block"><div>Track flights<div class="name" style="white-space:normal">Flight numbers to follow, one per line, up to 4 (e.g. AA1234 or UA 512). The panel shows the route, where the plane is, an estimated arrival time, and LANDED once it's down. A regional flight that never shows up may fly under its own callsign: enter that instead (FlightAware shows it, e.g. ENY3456).</div></div>
+    ${feedBox('ftrack',S.flights_track)}</div>
+   ${(S.flights_track||[]).map(line).join('')}
+   <div class="row"><div class="grow">Planes overhead<div class="name" style="white-space:normal">The closest planes in the air near the weather location below.</div></div>
+    <label class="switch"><input type="checkbox" id="fover" ${S.flights_overhead!='off'?'checked':''}><span></span></label></div>
+   ${S.flights_overhead!='off'?`<div class="row"><div class="grow">Within</div>
     <select id="fradius">${[3,5,10,15,25].map(n=>`<option value="${n}" ${S.flights_radius==n?'selected':''}>${n} mi</option>`).join('')}</select></div>
    <div class="row"><div class="grow">Planes per cycle</div>
-    <select id="fper">${[1,2,3,4,5].map(n=>`<option ${S.flights_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>
-  </div><p class="hint">Data: airplanes.live (adsb.fi as backup) and adsbdb.com routes. Free for personal use; checked every 30 seconds only while this screen is on.</p>`;
+    <select id="fper">${[1,2,3,4,5].map(n=>`<option ${S.flights_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>`:''}
+  </div>
+  ${(S.airlines||[]).length?`<h2>Airline pictures</h2><div class="card">${S.airlines.map(air).join('')}</div>
+  <p class="hint">Each airline gets a colored tile with its code. Tap one to use your own picture instead (it's shown 16×16 on the panel). Airlines appear here once they've flown by or you track one.</p>`:''}
+  <p class="hint">Data: airplanes.live (adsb.fi as backup), adsbdb.com routes, OpenStreetMap place names. Free for personal use; checked only while this screen is on. Arrival times are estimates from distance and speed.</p>`;
+}
+function pickAirline(code){
+  const f=$('#file');f.value='';
+  f.onchange=async()=>{
+    const file=f.files[0];if(!file)return;
+    try{
+      const bmp=await createImageBitmap(file);const k=Math.min(1,256/Math.max(bmp.width,bmp.height));
+      const cv=document.createElement('canvas');cv.width=Math.round(bmp.width*k);cv.height=Math.round(bmp.height*k);
+      cv.getContext('2d').drawImage(bmp,0,0,cv.width,cv.height);
+      const blob=await new Promise(r=>cv.toBlob(r,'image/png'));
+      const r=await fetch('/api/airline-icon?code='+encodeURIComponent(code),{method:'POST',headers:{'Content-Type':'image/png'},body:blob});
+      if(r.status==401)return showLogin();
+      if(!r.ok)throw new Error((await r.json()).error);
+      toast('New picture for '+code);load();
+    }catch(e){toast(e.message||'Upload failed',true)}
+  };
+  f.click();
 }
 function oddsRows(){
   const st=S.odds_status||{};
@@ -1230,7 +1369,7 @@ function save(extra){
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,arcade_per_cycle:S.arcade_per_cycle,
       watchlist:(S.watchlist||[]).join('\n'),watchlist_refresh:S.watchlist_refresh,watchlist_per_cycle:S.watchlist_per_cycle,
-      flights_radius:S.flights_radius,flights_per_cycle:S.flights_per_cycle,
+      flights_radius:S.flights_radius,flights_per_cycle:S.flights_per_cycle,flights_overhead:S.flights_overhead,flights_track:(S.flights_track||[]).join('\n'),
       sports_odds:S.sports_odds,odds_markets:(S.odds_markets||[]).join('\n'),odds_per_cycle:S.odds_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
@@ -1298,6 +1437,12 @@ function bind(){
   if($('#wref'))$('#wref').onchange=e=>{S.watchlist_refresh=+e.target.value;save()};
   if($('#arcn'))$('#arcn').onchange=e=>{S.arcade_per_cycle=+e.target.value;save()};
   if($('#fradius'))$('#fradius').onchange=e=>{S.flights_radius=+e.target.value;save()};
+  if($('#fover'))$('#fover').onchange=e=>{S.flights_overhead=e.target.checked?'on':'off';save();render()};
+  if($('#ftrack'))$('#ftrack').onchange=e=>{S.flights_track=e.target.value.split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);save(0);setTimeout(load,2500);setTimeout(load,10000)};
+  document.querySelectorAll('[data-air]').forEach(el=>el.onclick=()=>pickAirline(el.dataset.air));
+  document.querySelectorAll('[data-airreset]').forEach(el=>el.onclick=async ev=>{ev.stopPropagation();
+    try{await api('/api/airline-icon/reset?code='+encodeURIComponent(el.dataset.airreset),{});toast('Back to the code tile');load()}
+    catch(e){if(e.message!='login')toast(e.message,true)}});
   if($('#fper'))$('#fper').onchange=e=>{S.flights_per_cycle=+e.target.value;save()};
   if($('#iview'))$('#iview').onchange=e=>{S.indices_view=e.target.checked?'both':'percent';save()};
   const findPlace=async()=>{

@@ -1,17 +1,28 @@
-"""Planes overhead: parsing the position and route feeds (with odd and failing responses),
-the fallback source, route caching, never showing old positions, and the screen itself."""
+"""Flights: parsing the position, route, airline and place feeds (with odd and failing
+responses), the fallback source, route caching, tracked-flight states (waiting, in the air,
+no signal, landed, next trip), never showing old positions, the screens, and the phone page."""
+
+import json
+import time
 
 import pytest
 import requests
 
 import flights as fl
+import render
 from conftest import FakeResponse
 from render import Renderer
-from sample import sample_flights
+from sample import sample_flights, sample_tracked
 from test_ticker import FakeDisplay
 from ticker import Config, Ticker
 
 HOME = (40.0, -90.0)
+DEN, BOS = (39.86, -104.67), (42.36, -71.01)
+
+
+@pytest.fixture(autouse=True)
+def no_spacing(monkeypatch):
+    monkeypatch.setattr(fl, "MIN_GAP", 0)
 
 
 def ac(dlat=0.01, dlon=0.0, **kw):
@@ -21,46 +32,66 @@ def ac(dlat=0.01, dlon=0.0, **kw):
     return a
 
 
-ROUTE = {"response": {"flightroute": {
-    "callsign": "UAL1520", "airline": {"name": "United Airlines", "icao": "UAL"},
-    "origin": {"iata_code": "ORD", "icao_code": "KORD", "municipality": "Chicago"},
-    "destination": {"iata_code": "DEN", "icao_code": "KDEN", "municipality": "Denver"}}}}
+def route_json(cs="UAL1520", orig=("ORD", 41.98, -87.9), dest=("DEN", *DEN), airline=("United Airlines", "UAL", "UA")):
+    return {"response": {"flightroute": {
+        "callsign": cs, "airline": {"name": airline[0], "icao": airline[1], "iata": airline[2]},
+        "origin": {"iata_code": orig[0], "municipality": "A", "latitude": orig[1], "longitude": orig[2]},
+        "destination": {"iata_code": dest[0], "municipality": "B", "latitude": dest[1], "longitude": dest[2]}}}}
 
 
-class Routes:
-    """Session stand-in: positions from one queue, adsbdb answers by callsign."""
+class Net:
+    """Session stand-in: positions from a queue (or a function of the URL), adsbdb answers
+    by callsign/airline, Nominatim from `place`."""
 
-    def __init__(self, positions, routes=None):
-        self.positions = list(positions)
+    def __init__(self, positions=None, routes=None, airlines=None, place=None):
+        self.positions = list(positions or [])
         self.routes = routes or {}
+        self.airlines = airlines or {}
+        self.place = place
         self.calls = []
 
-    def get(self, url, params=None, timeout=None):
+    def get(self, url, params=None, timeout=None, headers=None):
         self.calls.append(url)
-        if "adsbdb" in url:
+        if "adsbdb" in url and "/callsign/" in url:
             item = self.routes.get(url.rsplit("/", 1)[1], FakeResponse(404, {"response": "unknown callsign"}))
+        elif "adsbdb" in url and "/airline/" in url:
+            item = self.airlines.get(url.rsplit("/", 1)[1], FakeResponse(404, {"response": "unknown airline"}))
+        elif "nominatim" in url:
+            item = self.place or FakeResponse(200, {"error": "Unable to geocode"})
         else:
-            item = self.positions.pop(0) if len(self.positions) > 1 else self.positions[0]
+            item = self.positions[0](url) if callable(self.positions[0]) else \
+                self.positions.pop(0) if len(self.positions) > 1 else self.positions[0]
         if isinstance(item, BaseException):
             raise item
         return item
 
+    def count(self, word):
+        return sum(word in u for u in self.calls)
+
+
+def overhead_feed(net, radius=10):
+    f = fl.Flights(*HOME, radius_mi=radius)
+    f.lookups.session = net
+    return f
+
 
 # --- parsing ------------------------------------------------------------------------
-def test_distance_is_in_miles():
+def test_distance_and_compass():
     assert fl.distance_mi(40, -90, 41, -90) == pytest.approx(69.1, abs=0.2)
+    assert [fl.compass(t) for t in (0, 44, 90, 200, 359, None)] == ["N", "NE", "E", "S", "N", ""]
+
+
+def test_short_airline():
+    assert fl.short_airline("Southwest Airlines") == "Southwest"
+    assert fl.short_airline("Delta Air Lines") == "Delta"
+    assert fl.short_airline("Air Canada") == "Air Canada"
+    assert fl.short_airline("") == ""
 
 
 def test_parse_keeps_planes_in_the_air_within_radius_closest_first():
-    data = {"ac": [
-        ac(0.05, flight="FAR1   "),
-        ac(0.01, flight="NEAR1  "),
-        ac(0.0, flight="PARKED ", alt_baro="ground"),
-        ac(0.0, flight="LOW    ", alt_baro=50),
-        ac(1.0, flight="OUTSIDE"),          # ~69 miles away
-        ac(0.0, flight="NOPOS  ", lat=None),
-        "junk", None,
-    ]}
+    data = {"ac": [ac(0.05, flight="FAR1   "), ac(0.01, flight="NEAR1  "),
+                   ac(0.0, flight="PARKED ", alt_baro="ground"), ac(0.0, flight="LOW    ", alt_baro=50),
+                   ac(1.0, flight="OUTSIDE"), ac(0.0, flight="NOPOS  ", lat=None), "junk", None]}
     planes = fl.parse_aircraft(data, *HOME, radius_mi=10)
     assert [p["callsign"] for p in planes] == ["NEAR1", "FAR1"]
     p = planes[0]
@@ -83,9 +114,9 @@ def test_parse_rejects_bad_payloads(data):
 
 
 def test_parse_route():
-    r = fl.parse_route(ROUTE)
-    assert r == {"orig": "ORD", "dest": "DEN", "orig_city": "Chicago", "dest_city": "Denver",
-                 "airline": "United Airlines"}
+    r = fl.parse_route(route_json())
+    assert r["orig"] == "ORD" and r["dest"] == "DEN" and r["dest_pos"] == DEN
+    assert r["airline"] == "United Airlines" and r["airline_icao"] == "UAL" and r["airline_iata"] == "UA"
 
 
 @pytest.mark.parametrize("data", [
@@ -97,83 +128,295 @@ def test_parse_route_unusable(data):
     assert fl.parse_route(data) is None
 
 
-# --- the feed -----------------------------------------------------------------------
+@pytest.mark.parametrize("data,expect", [
+    ({"address": {"city": "Des Moines", "state": "Iowa", "ISO3166-2-lvl4": "US-IA", "country_code": "us"}},
+     "Des Moines, IA"),
+    ({"address": {"county": "Kenedy County", "state": "Texas", "ISO3166-2-lvl4": "US-TX", "country_code": "us"}},
+     "Kenedy Co, TX"),
+    ({"address": {"town": "Reynosa", "state": "Tamaulipas", "country": "Mexico", "country_code": "mx"}},
+     "Reynosa, Tamaulipas"),
+    ({"error": "Unable to geocode"}, ""), (None, ""), ({"address": "x"}, ""),
+])
+def test_parse_place(data, expect):
+    assert fl.parse_place(data) == expect
+
+
+@pytest.mark.parametrize("text,expect", [
+    ("aa 1234", "AA1234"), ("UA512", "UA512"), ("B6-101", "B6101"), ("AAL1234", "AAL1234"),
+    ("ENY3456", "ENY3456"), ("dl 7a", "DL7A"),
+])
+def test_flight_numbers(text, expect):
+    assert fl.parse_flight_number(text) == expect
+
+
+@pytest.mark.parametrize("text", ["", "1234", "A1", "AA", "12345", "AA12345", "AA1234;rm", "N123AB", "<b>"])
+def test_bad_flight_numbers(text):
+    with pytest.raises(ValueError):
+        fl.parse_flight_number(text)
+
+
+def test_parse_tracked_list():
+    assert fl.parse_tracked("aa 1234\nUA512, aa1234") == ["AA1234", "UA512"]
+    with pytest.raises(ValueError):
+        fl.parse_tracked("AA1,AA2,AA3,AA4,AA5")
+    assert fl.tracked_from_env("AA1,bad!,UA2") == ["AA1", "UA2"]
+
+
+# --- overhead feed ------------------------------------------------------------------
 def test_fetch_adds_routes_and_caches_them():
-    f = fl.Flights(*HOME, radius_mi=10)
-    f.session = Routes([FakeResponse(200, {"ac": [ac(), ac(0.02, flight="N4521K ", r="N4521K", t="C172")]})],
-                       {"UAL1520": FakeResponse(200, ROUTE)})
+    net = Net([FakeResponse(200, {"ac": [ac(), ac(0.02, flight="N4521K ", r="N4521K", t="C172")]})],
+              {"UAL1520": FakeResponse(200, route_json())})
+    f = overhead_feed(net)
     f.data = f.fetch()
     shown = f.overhead(5)
     assert shown[0]["route"]["dest"] == "DEN" and shown[1]["route"] is None
-    assert sum("adsbdb" in u for u in f.session.calls) == 1   # small plane: no route lookup
+    assert net.count("adsbdb") == 1            # small plane: no route lookup
     f.data = f.fetch()
-    assert sum("adsbdb" in u for u in f.session.calls) == 1   # cached
+    assert net.count("adsbdb") == 1            # cached
+    assert f.lookups.seen_airlines() == {"UAL": ("UA", "United Airlines")}
 
 
 def test_unknown_callsign_is_not_asked_again_right_away():
-    f = fl.Flights(*HOME)
-    f.session = Routes([FakeResponse(200, {"ac": [ac(flight="AAL9")]})])
+    net = Net([FakeResponse(200, {"ac": [ac(flight="AAL9")]})])
+    f = overhead_feed(net)
     f.data = f.fetch()
     f.data = f.fetch()
-    assert sum("adsbdb" in u for u in f.session.calls) == 1 and f.overhead(1)[0]["route"] is None
+    assert net.count("adsbdb") == 1 and f.overhead(1)[0]["route"] is None
 
 
 def test_route_failure_is_retried_next_time():
-    f = fl.Flights(*HOME)
-    f.session = Routes([FakeResponse(200, {"ac": [ac()]})],
-                       {"UAL1520": requests.exceptions.ReadTimeout("timed out")})
+    net = Net([FakeResponse(200, {"ac": [ac()]})], {"UAL1520": requests.exceptions.ReadTimeout("timed out")})
+    f = overhead_feed(net)
     f.data = f.fetch()
-    f.session.routes["UAL1520"] = FakeResponse(200, ROUTE)
+    net.routes["UAL1520"] = FakeResponse(200, route_json())
     f.data = f.fetch()
     assert f.overhead(1)[0]["route"]["orig"] == "ORD"
 
 
 def test_route_lookups_are_capped_per_fetch():
-    planes = [ac(0.001 * i, flight=f"SWA{100 + i}") for i in range(10)]
-    f = fl.Flights(*HOME)
-    f.session = Routes([FakeResponse(200, {"ac": planes})])
-    f.fetch()
-    assert sum("adsbdb" in u for u in f.session.calls) == fl.ROUTE_LOOKUPS_PER_FETCH
+    net = Net([FakeResponse(200, {"ac": [ac(0.001 * i, flight=f"SWA{100 + i}") for i in range(10)]})])
+    overhead_feed(net).fetch()
+    assert net.count("adsbdb") == fl.ROUTE_LOOKUPS_PER_FETCH
 
 
 def test_falls_back_to_second_source():
-    f = fl.Flights(*HOME)
-    f.session = Routes([requests.exceptions.ConnectionError("down"), FakeResponse(200, {"ac": [ac()]})])
+    net = Net([requests.exceptions.ConnectionError("down"), FakeResponse(200, {"ac": [ac()]})])
+    f = overhead_feed(net)
     assert len(f.fetch()) == 1 and f.source == "adsb.fi"
-    assert "airplanes.live" in f.session.calls[0] and "adsb.fi" in f.session.calls[1]
+    assert "airplanes.live" in net.calls[0] and "adsb.fi" in net.calls[1]
 
 
-def test_both_sources_down_raises_and_keeps_nothing_old():
-    f = fl.Flights(*HOME)
-    f.session = Routes([FakeResponse(200, {"ac": [ac()]})])
+def test_both_sources_down_raises_and_old_positions_expire():
+    net = Net([FakeResponse(200, {"ac": [ac()]})])
+    f = overhead_feed(net)
     f.data = f.fetch()
-    f.session = Routes([FakeResponse(503, {})])
+    net.positions = [FakeResponse(503, {})]
     with pytest.raises(requests.HTTPError):
         f.fetch()
-    assert len(f.overhead(3, now=f.fetched + 60)) == 1         # still fresh enough
-    assert f.overhead(3, now=f.fetched + fl.MAX_AGE + 1) == []  # too old: skip the screen
+    assert len(f.overhead(3, now=f.fetched + 60)) == 1
+    assert f.overhead(3, now=f.fetched + fl.MAX_AGE + 1) == []
 
 
 def test_radius_in_request_is_nautical_miles_rounded_up():
-    f = fl.Flights(*HOME, radius_mi=10)
-    f.session = Routes([FakeResponse(200, {"ac": []})])
-    f.fetch()
-    assert f.session.calls[0].endswith("/40.0000/-90.0000/9")
+    net = Net([FakeResponse(200, {"ac": []})])
+    overhead_feed(net, radius=10).fetch()
+    assert net.calls[0].endswith("/40.0000/-90.0000/9")
 
 
 def test_no_location_means_no_calls():
     f = fl.Flights(None, None)
-    f.session = Routes([FakeResponse(200, {"ac": [ac()]})])
-    assert f.fetch() is None and f.session.calls == []
+    f.lookups.session = net = Net([FakeResponse(200, {"ac": [ac()]})])
+    assert f.fetch() is None and net.calls == []
 
 
-# --- the screen ---------------------------------------------------------------------
-def test_screen_draws_every_kind_of_plane_without_errors():
+def test_requests_to_one_host_are_spaced(monkeypatch):
+    monkeypatch.setattr(fl, "MIN_GAP", 0.05)
+    fl._hosts.clear()
+    start = time.monotonic()
+    for _ in range(3):
+        fl._throttle("https://api.airplanes.live/v2/x")
+    assert time.monotonic() - start >= 0.1
+
+
+# --- tracked flights ----------------------------------------------------------------
+class Sky:
+    """Where DAL1189 is: set .plane to a readsb row, or None when no receiver hears it."""
+
+    def __init__(self):
+        self.plane = None
+
+    def __call__(self, url):
+        return FakeResponse(200, {"ac": [self.plane] if self.plane else []})
+
+
+def tracker(tmp_path, flights=("DL1189",), **net_kw):
+    sky = Sky()
+    net = Net([sky], {"DAL1189": FakeResponse(200, route_json("DAL1189", ("DEN", *DEN), ("BOS", *BOS),
+                                                                ("Delta Air Lines", "DAL", "DL")))}, **net_kw)
+    t = fl.Tracker(list(flights), state_path=str(tmp_path / "tracked.json"))
+    t.lookups.session = net
+    t.session = net
+    return t, sky, net
+
+
+def plane(lat, lon, alt=36000, **kw):
+    return dict({"flight": "DAL1189 ", "t": "A321", "alt_baro": alt, "gs": 455, "track": 80, "baro_rate": 0,
+                 "lat": lat, "lon": lon}, **kw)
+
+
+def test_flight_number_becomes_callsign_and_waits(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    assert t.rows()[0]["status"] == "checking"
+    t.data = t.fetch()
+    row = t.rows()[0]
+    assert row["callsign"] == "DAL1189" and row["status"] == "waiting" and row["route"]["dest"] == "BOS"
+    assert net.count("/airline/") == 0          # DL is in the built-in table
+
+
+def test_unknown_airline_prefix_is_looked_up(tmp_path):
+    t, sky, net = tracker(tmp_path, ("XQ123",),
+                          airlines={"XQ": FakeResponse(200, {"response": [{"icao": "SXS", "iata": "XQ", "name": "SunExpress"}]})})
+    t.data = t.fetch()
+    assert t.rows()[0]["callsign"] == "SXS123"
+    t2, _, _ = tracker(tmp_path, ("ZZ9",))
+    t2.data = t2.fetch()
+    assert t2.rows()[0]["error"] == "airline not found" and t2.rows()[0]["status"] == "waiting"
+
+
+def test_in_the_air_with_place_progress_and_eta(tmp_path):
+    place = FakeResponse(200, {"address": {"city": "Des Moines", "state": "Iowa", "ISO3166-2-lvl4": "US-IA",
+                                           "country_code": "us"}})
+    t, sky, net = tracker(tmp_path, place=place)
+    sky.plane = plane(41.6, -93.6)
+    t.data = t.fetch()
+    r = t.rows()[0]
+    assert r["status"] == "air" and r["place"] == "Des Moines, IA" and r["alt_ft"] == 36000
+    assert 0.3 < r["progress"] < 0.45
+    hours = (r["eta"] - r["seen_at"]) / 3600
+    assert hours == pytest.approx(r["remaining_mi"] / (455 * fl.MI_PER_NM), rel=0.01)
+    t.data = t.fetch()
+    assert net.count("nominatim") == 1          # place looked up at most every 5 minutes
+
+
+def test_landing_by_ground_report(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    sky.plane = plane(41.0, -80.0)
+    t.data = t.fetch()
+    sky.plane = plane(*BOS, alt="ground", gs=10)
+    t.data = t.fetch()
+    r = t.rows()[0]
+    assert r["status"] == "landed" and r["progress"] == 1.0 and r["landed_at"]
+
+
+def test_landing_by_dropping_out_low_near_destination(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    sky.plane = plane(BOS[0] + 0.1, BOS[1] - 0.1, alt=2000, baro_rate=-800)
+    t.data = t.fetch()
+    sky.plane = None
+    st = t.state["DL1189"]
+    st["seen_at"] -= 5 * 60                     # gone for 5 minutes
+    t.data = t.fetch()
+    assert t.rows()[0]["status"] == "landed"
+
+
+def test_dropping_out_high_mid_flight_is_no_signal_not_landed(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    sky.plane = plane(41.0, -85.0)
+    t.data = t.fetch()
+    sky.plane = None
+    t.state["DL1189"]["seen_at"] -= 5 * 60
+    t.data = t.fetch()
+    assert t.state["DL1189"]["status"] == "air"
+    assert t.rows()[0]["status"] == "lost"       # not refreshed lately: not shown as live
+    t.state["DL1189"]["seen_at"] -= fl.LOST_AFTER
+    t.data = t.fetch()
+    assert t.rows()[0]["status"] == "lost"
+    sky.plane = plane(42.0, -75.0)               # back in range
+    t.data = t.fetch()
+    assert t.rows()[0]["status"] == "air"
+
+
+def test_on_ground_before_departure(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    sky.plane = plane(*DEN, alt="ground", gs=0)
+    t.data = t.fetch()
+    assert t.rows()[0]["status"] == "ground"
+
+
+def test_landed_shows_for_hours_then_waits_for_next_trip(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    sky.plane = plane(41.0, -80.0)
+    t.data = t.fetch()
+    sky.plane = plane(*BOS, alt="ground")
+    t.data = t.fetch()
+    sky.plane = None
+    t.data = t.fetch()
+    assert t.rows()[0]["status"] == "landed"
+    t.state["DL1189"]["landed_at"] -= fl.LANDED_SHOW + 1
+    t.data = t.fetch()
+    assert t.rows()[0]["status"] == "waiting"
+
+
+def test_state_survives_restart(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    sky.plane = plane(41.0, -80.0)
+    t.data = t.fetch()
+    sky.plane = plane(*BOS, alt="ground")
+    t.data = t.fetch()
+    saved = json.loads((tmp_path / "tracked.json").read_text())
+    assert saved["DL1189"]["status"] == "landed"
+    t2 = fl.Tracker(["DL1189"], state_path=str(tmp_path / "tracked.json"))
+    assert t2.state["DL1189"]["status"] == "landed"
+    t3 = fl.Tracker(["UA1"], state_path=str(tmp_path / "tracked.json"))
+    assert t3.state == {}                         # removed flights are dropped
+
+
+def test_one_flight_failing_keeps_the_others(tmp_path):
+    t, sky, net = tracker(tmp_path, ("DL1189", "UA77"))
+    sky.plane = plane(41.0, -80.0)
+    original = net.get
+
+    def get(url, **kw):
+        if "UAL77" in url and "adsbdb" not in url:
+            raise requests.exceptions.ConnectionError("down")
+        return original(url, **kw)
+    net.get = get
+    t.data = t.fetch()
+    rows = {r["flight"]: r for r in t.rows()}
+    assert rows["DL1189"]["status"] == "air" and "down" in rows["UA77"]["error"]
+
+
+def test_status_for_phone_page(tmp_path):
+    t, sky, net = tracker(tmp_path)
+    t.data = t.fetch()
+    s = t.status_for()["DL1189"]
+    assert s["route"] == "DEN-BOS" and s["callsign"] == "DAL1189" and s["status"] == "waiting"
+
+
+# --- the screens ---------------------------------------------------------------------
+def test_overhead_screens_draw_without_errors():
     r = Renderer(64, 32)
     for p in sample_flights():
         for metric in (False, True):
             img = r.flight(p, metric).first_frame()
             assert img.size == (64, 32) and img.getbbox()
+
+
+def test_tracked_screens_draw_every_state():
+    from zoneinfo import ZoneInfo
+    r = Renderer(64, 32)
+    rows = sample_tracked(time.time())
+    rows += [dict(rows[0], status=s) for s in ("lost", "ground", "checking")]
+    rows += [dict(rows[2], error="airline not found", route=None, callsign="")]
+    for row in rows:
+        img = r.tracked_flight(row, ZoneInfo("America/Chicago")).first_frame()
+        assert img.size == (64, 32) and img.getbbox()
+
+
+def test_landed_is_green_and_bar_full():
+    r = Renderer(64, 32)
+    landed = r.tracked_flight(sample_tracked(time.time())[1]).first_frame()
+    assert sum(landed.getpixel((x, 28)) == Renderer.CLIMB for x in range(1, 20)) == 19
 
 
 def test_numbers():
@@ -192,32 +435,48 @@ def test_climb_and_descent_arrows():
     assert not {Renderer.CLIMB, Renderer.DESCEND} & colors(level)
 
 
-def test_long_airline_name_scrolls_short_one_does_not():
+def test_badges(tmp_path, monkeypatch):
+    from PIL import Image
+    monkeypatch.setattr(render, "AIRLINE_DIR", str(tmp_path))
     r = Renderer(64, 32)
-    long_name, small = sample_flights()[1], sample_flights()[2]
-    assert r.flight(long_name).scrolls and not r.flight(small).scrolls
-    s = r.flight(long_name)
-    assert s.first_frame().tobytes() != s.last_frame().tobytes()
+    united = r.airline_badge("UAL", "UA")
+    assert united.getpixel((8, 1)) == Renderer.AIRLINE_COLORS["UAL"][0]
+    other = r.airline_badge("XYZ")
+    assert other.size == (16, 16) and other.getbbox()
+    small = r.airline_badge("")
+    assert small.getpixel((7, 7)) != (0, 0, 0)          # the plane picture
+    Image.new("RGBA", (64, 64), (255, 0, 0, 255)).save(tmp_path / "UAL.png")
+    mine = r.airline_badge("UAL", "UA")
+    assert mine.getpixel((8, 8))[0] > 200 and mine.getpixel((8, 8))[2] < 50
 
 
-def test_flights_screen_in_ticker():
+# --- in the ticker ---------------------------------------------------------------------
+def test_flights_screen_in_ticker(tmp_path, monkeypatch):
+    monkeypatch.setattr(fl, "STATE_PATH", str(tmp_path / "t.json"))
     cfg = Config()
     cfg.screens = ["flights"]
     cfg.flights_per_cycle = 2
+    cfg.flights_track = ["DL1189", "AA2410"]
     t = Ticker(cfg, FakeDisplay())
     t.flights.update = lambda now=None: None
-    assert t.screens() == []                     # nothing overhead: skipped
+    t.tracker.update = lambda now=None: None
+    t.tracker.rows = lambda now=None: sample_tracked(time.time())[:2]
+    assert len(t.screens()) == 2                 # nothing overhead: only the tracked flights
     t.flights.overhead = lambda n, now=None: sample_flights()[:n]
     screens = t.screens()
-    assert len(screens) == 2 and screens[0]().first_frame().size == (64, 32)
+    assert len(screens) == 4 and all(s().first_frame().size == (64, 32) for s in screens)
+    t.cfg.flights_overhead = False
+    assert len(t.screens()) == 2
 
 
 def test_flights_off_makes_no_calls():
     cfg = Config()
     cfg.screens = ["clock", "coins"]
+    cfg.flights_track = ["DL1189"]
     t = Ticker(cfg, FakeDisplay())
     called = []
     t.flights.update = lambda now=None: called.append(1)
+    t.tracker.update = lambda now=None: called.append(2)
     t.screens()
     assert called == []
 
@@ -225,38 +484,86 @@ def test_flights_off_makes_no_calls():
 def test_settings(monkeypatch):
     c = Config.from_env()
     assert "flights" not in c.screens and c.flights_radius == 10 and c.flights_per_cycle == 3
+    assert c.flights_overhead and c.flights_track == []
     monkeypatch.setenv("SCREENS", "flights,coins")
     monkeypatch.setenv("FLIGHTS_RADIUS", "25")
     monkeypatch.setenv("FLIGHTS_PER_CYCLE", "9")
+    monkeypatch.setenv("FLIGHTS_OVERHEAD", "off")
+    monkeypatch.setenv("FLIGHTS_TRACK", "AA1234,UA512")
     c = Config.from_env()
     assert c.screens == ["flights", "coins"] and c.flights_radius == 25 and c.flights_per_cycle == 5
+    assert not c.flights_overhead and c.flights_track == ["AA1234", "UA512"]
     monkeypatch.setenv("FLIGHTS_RADIUS", "7")
     assert Config.from_env().flights_radius == 10
 
 
-def test_reload_rebuilds_feed_when_area_changes(monkeypatch, tmp_path):
+def test_reload_rebuilds_feeds_when_settings_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(fl, "STATE_PATH", str(tmp_path / "t.json"))
     env = tmp_path / "settings.env"
-    env.write_text("SCREENS=flights\nFLIGHTS_RADIUS=10\n")
+    env.write_text("SCREENS=clock\nFLIGHTS_RADIUS=10\n")
     from ticker import load_env_file
     load_env_file(str(env), override=True)
     t = Ticker(Config.from_env(), FakeDisplay(), env_path=str(env))
-    before = t.flights
-    env.write_text("SCREENS=flights\nFLIGHTS_RADIUS=25\n")
+    before, tracker_before = t.flights, t.tracker
+    env.write_text("SCREENS=clock\nFLIGHTS_RADIUS=25\nFLIGHTS_TRACK=DL1189\n")
     t.reload()
     assert t.flights is not before and t.flights.radius_mi == 25
+    assert t.tracker is not tracker_before and t.tracker.flights == ["DL1189"]
+    assert t.tracker.lookups is t.flights.lookups
 
 
+# --- phone page ---------------------------------------------------------------------
 def test_settings_page_saves_flight_options(app):
-    saved = app.save({"screens": "flights,coins", "flights_radius": "15", "flights_per_cycle": 2})
+    saved = app.save({"screens": "flights,coins", "flights_radius": "15", "flights_per_cycle": 2,
+                      "flights_overhead": "off", "flights_track": "aa 1234\nUA512"})
     assert saved["FLIGHTS_RADIUS"] == "15" and saved["FLIGHTS_PER_CYCLE"] == "2"
+    assert saved["FLIGHTS_OVERHEAD"] == "off" and saved["FLIGHTS_TRACK"] == "AA1234,UA512"
     s = app.settings()
-    assert s["flights_radius"] == 15 and s["flights_per_cycle"] == 2 and "flights" in s["screen_names"]
+    assert s["flights_radius"] == 15 and s["flights_overhead"] == "off"
+    assert s["flights_track"] == ["AA1234", "UA512"] and "flights" in s["screen_names"]
+    assert {a["icao"] for a in s["airlines"]} >= {"AAL", "UAL"}
 
 
-@pytest.mark.parametrize("field,value", [("flights_radius", "7"), ("flights_radius", "10\nWEB_PIN="),
-                                         ("flights_per_cycle", 0), ("flights_per_cycle", 6)])
+@pytest.mark.parametrize("field,value", [
+    ("flights_radius", "7"), ("flights_radius", "10\nWEB_PIN="), ("flights_per_cycle", 0),
+    ("flights_per_cycle", 6), ("flights_overhead", "maybe"), ("flights_track", "AA1\nWEB_PIN=1"),
+    ("flights_track", "AA1,AA2,AA3,AA4,AA5"), ("flights_track", "N123AB"),
+])
 def test_settings_page_rejects_bad_flight_options(app, field, value):
     before = open(app.env_path).read()
     with pytest.raises(ValueError):
         app.save({field: value})
     assert open(app.env_path).read() == before
+
+
+def test_airline_picture_upload_and_reset(app, tmp_path, monkeypatch):
+    import io
+
+    import webui
+    from PIL import Image
+    monkeypatch.setattr(webui, "AIRLINE_DIR", str(tmp_path / "air"))
+    monkeypatch.setattr(render, "AIRLINE_DIR", str(tmp_path / "air"))
+    buf = io.BytesIO()
+    Image.new("RGB", (40, 40), (255, 0, 0)).save(buf, "PNG")
+    app.save_airline_icon("ual", buf.getvalue())
+    assert (tmp_path / "air" / "UAL.png").exists()
+    assert any(a["icao"] == "UAL" and a["custom"] for a in app.settings()["airlines"])
+    png = app.airline_badge_png("UAL", "UA")
+    assert Image.open(io.BytesIO(png)).size == (64, 64)
+    app.reset_airline_icon("UAL")
+    assert not (tmp_path / "air" / "UAL.png").exists()
+    for bad in ("../x", "UA", "UALX", "u1l"):
+        with pytest.raises(ValueError):
+            app.save_airline_icon(bad, buf.getvalue())
+    with pytest.raises(ValueError):
+        app.save_airline_icon("DAL", b"not a picture")
+    with pytest.raises(ValueError):
+        app.airline_badge_png("UAL", "U<")
+
+
+def test_airline_routes_need_login_and_check_codes(server):
+    from conftest import login, request
+    assert request(server, "POST", "/api/airline-icon?code=UAL", b"x")[0] == 401
+    auth = login(server)
+    assert request(server, "GET", "/api/airline-badge?code=../x", headers=auth)[0] == 400
+    assert request(server, "POST", "/api/airline-icon?code=UAL", b"not a picture", auth)[0] == 400

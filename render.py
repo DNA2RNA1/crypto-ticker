@@ -9,6 +9,7 @@ from bdf import BDFFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FONT_DIR = os.path.join(HERE, "fonts")
+AIRLINE_DIR = os.path.join(HERE, "icons", "airlines")   # your own airline logos, <ICAO>.png
 
 UP = (0, 210, 90)
 DOWN = (230, 40, 30)
@@ -651,25 +652,85 @@ class Renderer:
         return Scroller(bg, lanes, speed=speed, min_hold=hold)
 
     # --- flights screen --------------------------------------------------------
-    FLIGHT_TAG = (0, 150, 255)
     CLIMB = (0, 210, 90)
     DESCEND = (255, 140, 0)
+    FLIGHT_DIM = (170, 175, 185)
+    WAIT = (255, 170, 0)
+    PROGRESS = (40, 140, 255)
+    # Tile color (and text color) for well-known airlines: just their main brand color;
+    # everyone else gets a color picked from the code
+    AIRLINE_COLORS = {
+        "UAL": ((0, 60, 190), (255, 255, 255)), "DAL": ((190, 20, 45), (255, 255, 255)),
+        "AAL": ((0, 110, 200), (255, 255, 255)), "SWA": ((40, 70, 190), (255, 200, 0)),
+        "JBU": ((0, 45, 140), (255, 255, 255)), "ASA": ((0, 90, 130), (255, 255, 255)),
+        "NKS": ((240, 210, 0), (0, 0, 0)), "FFT": ((0, 120, 60), (255, 255, 255)),
+        "AAY": ((240, 140, 0), (255, 255, 255)), "HAL": ((110, 40, 140), (255, 255, 255)),
+        "SKW": ((30, 60, 120), (255, 255, 255)), "ENY": ((0, 110, 200), (255, 255, 255)),
+        "RPA": ((0, 60, 190), (255, 255, 255)), "AMX": ((10, 30, 90), (255, 255, 255)),
+        "VOI": ((180, 0, 60), (255, 255, 255)), "FDX": ((80, 20, 140), (255, 140, 0)),
+        "UPS": ((90, 60, 30), (255, 190, 0)),
+    }
+    # A generic top-view airplane (original pixel art) for planes with no airline
+    PLANE_ART = ("................", ".......##.......", ".......##.......", "......####......",
+                 "......####......", ".....######.....", "..############..", "################",
+                 "################", ".......##.......", ".......##.......", ".......##.......",
+                 ".....######.....", "....########....", ".......##.......", "................")
+
+    @staticmethod
+    def hm(ts, tz=None):
+        from datetime import datetime
+        t = datetime.fromtimestamp(ts, tz)
+        return t.strftime("%I:%M").lstrip("0") + ("A" if t.hour < 12 else "P")
 
     @staticmethod
     def flight_numbers(p, metric=False):
         """(distance, altitude, speed) strings for the panel."""
-        d, alt, kt = p["dist_mi"], p["alt_ft"], p.get("speed_kt")
+        d, alt, kt = p.get("dist_mi"), p.get("alt_ft"), p.get("speed_kt")
         if metric:
-            km = d * 1.609344
-            dist = f"{km:.1f}KM" if km < 10 else f"{km:.0f}KM"
-            m = alt * 0.3048
-            alt_s = f"{m:,.0f}M"
+            dist = "" if d is None else (f"{d * 1.609344:.1f}KM" if d * 1.609344 < 10 else f"{d * 1.609344:.0f}KM")
+            alt_s = "" if alt is None else f"{alt * 0.3048:,.0f}M"
             spd = "" if kt is None else f"{kt * 1.852:.0f}KMH"
         else:
-            dist = f"{d:.1f}MI" if d < 10 else f"{d:.0f}MI"
-            alt_s = f"{alt:,}FT"
+            dist = "" if d is None else (f"{d:.1f}MI" if d < 10 else f"{d:.0f}MI")
+            alt_s = "" if alt is None else f"{alt:,}FT"
             spd = "" if kt is None else f"{kt * 1.15078:.0f}MPH"
         return dist, alt_s, spd
+
+    def airline_badge(self, icao, iata="", size=16):
+        """The picture left of the text: your own logo file (icons/airlines/<ICAO>.png) if
+        there is one, else a colored tile with the airline code, or a small plane for
+        aircraft with no airline."""
+        import colorsys
+        import hashlib
+        from icons import fit_logo
+        if icao:
+            path = os.path.join(AIRLINE_DIR, f"{icao}.png")
+            try:
+                key = (icao, size, os.path.getmtime(path))
+                cache = self.__dict__.setdefault("_logos", {})
+                if key not in cache:
+                    cache[key] = fit_logo(Image.open(path).convert("RGBA"), size)
+                return cache[key]
+            except OSError:
+                pass  # no file (or unreadable): the tile below
+            color, ink = self.AIRLINE_COLORS.get(icao, (None, (255, 255, 255)))
+            if color is None:
+                hue = int(hashlib.md5(icao.encode()).hexdigest()[:2], 16) / 255
+                color = tuple(int(c * 255) for c in colorsys.hsv_to_rgb(hue, 0.75, 0.85))
+            img = Image.new("RGB", (size, size))
+            ImageDraw.Draw(img).rounded_rectangle((0, 0, size - 1, size - 1), radius=3, fill=color)
+            code = iata or icao
+            font = self.fonts["6x10"] if len(code) <= 2 else self.fonts["4x6"]
+            font.draw(img, (size - font.width(code)) // 2 + 1, (size + font.ascent) // 2 - (0 if len(code) <= 2 else 1),
+                      code, ink)
+            return img
+        img = Image.new("RGB", (size, size))
+        px = img.load()
+        for y, row in enumerate(self.PLANE_ART[:size]):
+            for x, ch in enumerate(row[:size]):
+                if ch == "#":
+                    px[x, y] = (120, 190, 255)
+        return img
 
     def _vertical_arrow(self, img, x, y, vrate):
         """3x5 arrow (the 4x6 font has none): up green when climbing, down orange when
@@ -677,7 +738,7 @@ class Renderer:
         if vrate is None or abs(vrate) < 300:
             return 0
         up = vrate > 0
-        rows =(".#.", "###", ".#.", ".#.", ".#.") if up else (".#.", ".#.", ".#.", "###", ".#.")
+        rows = (".#.", "###", ".#.", ".#.", ".#.") if up else (".#.", ".#.", ".#.", "###", ".#.")
         color = self.CLIMB if up else self.DESCEND
         px = img.load()
         for dy, row in enumerate(rows):
@@ -686,53 +747,123 @@ class Renderer:
                     px[x + dx, y + dy] = color
         return 4
 
+    def _flight_top(self, bg, lanes, top, badge, line1, line2, color2=PRICE):
+        """Badge on the left, two lines of text beside it (each scrolls if too long)."""
+        from scroller import Lane, text_strip
+        bg.paste(badge, (0, top))
+        f = self.fonts["5x8"]
+        for text, base, color in ((line1, 7, PRICE), (line2, 15, color2)):
+            if not text:
+                continue
+            strip = text_strip(f, text, color)
+            box = (18, top + base - f.ascent, self.w - 1, top + base - f.ascent + strip.height - 1)
+            if strip.width <= self.w - 18:
+                bg.paste(strip, box[:2])
+            else:
+                lanes.append(Lane(strip, box))
+
+    def _line(self, bg, lanes, y_base, left, right="", lcolor=None, rcolor=DIM_TEXT):
+        """A full-width 4x6 line: text on the left (scrolls if it doesn't fit), optional
+        text on the right."""
+        from scroller import Lane, text_strip
+        f = self.fonts["4x6"]
+        rw = f.width(right) + 3 if right else 0
+        if right:
+            f.draw(bg, self.w - f.width(right), y_base, right, rcolor)
+        if not left:
+            return
+        strip = text_strip(f, left, lcolor or self.FLIGHT_DIM)
+        room = self.w - rw
+        if strip.width <= room:
+            bg.paste(strip, (0, y_base - f.ascent))
+        else:
+            lanes.append(Lane(strip, (0, y_base - f.ascent, room - 1, y_base - f.ascent + strip.height - 1)))
+
     def flight(self, p, metric=False, hold=5.0):
-        """A plane near you: callsign tag and distance on top, the route big (or the
-        registration for planes without one), the airline and aircraft type, then
-        altitude with a climb/descent arrow and ground speed."""
-        from news import clean_text
-        from scroller import SPEEDS, Lane, Scroller, text_strip
-        f = self.fonts
+        """A plane near you, laid out like an airport board: airline picture on the left,
+        airline and route beside it, then the aircraft type and distance, then altitude
+        (with a climb/descent arrow) and ground speed."""
+        from flights import airline_codes, compass, short_airline
+        from scroller import SPEEDS, Scroller
         bg = Image.new("RGB", (self.w, self.h))
         top = (self.h - 32) // 2
-        route = p.get("route") or {}
-        name = p.get("callsign") or p.get("reg") or "PLANE"
-        self.tag(bg, 0, top, name, self.FLIGHT_TAG)
-        dist, alt, spd = self.flight_numbers(p, metric)
-        small = f["4x6"]
-        small.draw(bg, self.w - small.width(dist), top + 6, dist, DIM_TEXT)
-
-        big = f["6x10"]
-        if route.get("orig") and route.get("dest"):
-            headline = f"{route['orig']}→{route['dest']}"
-            if big.width(headline) > self.w:
-                headline = f"{route['orig'][-3:]}→{route['dest'][-3:]}"
-        else:
-            headline = p.get("type") or p.get("reg") or name
-        hf = big if big.width(headline) <= self.w else f["5x8"]
-        hf.draw(bg, 0, top + 16, headline, PRICE)
-
         lanes = []
-        mid = f["5x8"]
-        bits = [route.get("airline") or "", p.get("type") or ""]
-        if not route.get("airline") and p.get("reg") and p.get("reg") != name:
-            bits.append(p["reg"])
-        if headline in bits:
-            bits.remove(headline)
-        if not route.get("airline") and p.get("track") is not None:  # small planes: which way it's heading
-            bits.append("HDG " + "N NE E SE S SW W NW".split()[int((p["track"] % 360 + 22.5) // 45) % 8])
-        line = clean_text(" ".join(b for b in bits if b), drawable=lambda ch: ord(ch) in mid.glyphs)
-        if line:
-            strip = text_strip(mid, line, SYMBOL)
-            if strip.width <= self.w:
-                bg.paste(strip, (0, top + 18))
-            else:
-                lanes.append(Lane(strip, (0, top + 18, self.w - 1, top + 18 + strip.height - 1)))
-
-        x = small.draw(bg, 0, top + 31, alt, PRICE)
+        route = p.get("route") or {}
+        icao, iata = airline_codes(p.get("callsign", ""), route)
+        ident = p.get("callsign") or p.get("reg") or "PLANE"
+        if route.get("orig"):
+            line1 = short_airline(route.get("airline")) or ident
+            line2 = f"{route['orig']}-{route['dest']}"
+            detail = " ".join(x for x in (p.get("type"), ident if line1 != ident else "") if x)
+        else:
+            line1 = ident
+            line2 = p.get("type") or p.get("reg") or ""
+            hdg = compass(p.get("track"))
+            detail = (f"HDG {hdg}" if hdg else "") if not icao else (p.get("reg") or "")
+        self._flight_top(bg, lanes, top, self.airline_badge(icao, iata), line1, line2)
+        dist, alt, spd = self.flight_numbers(p, metric)
+        self._line(bg, lanes, top + 24, detail, dist)
+        x = self.fonts["4x6"].draw(bg, 0, top + 31, alt, PRICE)
         self._vertical_arrow(bg, x + 1, top + 26, p.get("vrate_fpm"))
         if spd:
-            small.draw(bg, self.w - small.width(spd), top + 31, spd, DIM_TEXT)
+            self.fonts["4x6"].draw(bg, self.w - self.fonts["4x6"].width(spd), top + 31, spd, DIM_TEXT)
+        return Scroller(bg, lanes, speed=SPEEDS["normal"], min_hold=hold)
+
+    def tracked_flight(self, r, tz=None, hold=5.0, now_ts=None):
+        """A flight you're following: airline picture, flight number and route, then
+        where it is (or LANDED / NOT DEPARTED / NO SIGNAL), then a progress bar with the
+        estimated arrival time."""
+        import time as _time
+        from flights import airline_codes
+        from scroller import SPEEDS, Scroller
+        now_ts = now_ts or _time.time()
+        bg = Image.new("RGB", (self.w, self.h))
+        top = (self.h - 32) // 2
+        lanes = []
+        route = r.get("route") or {}
+        icao, iata = airline_codes(r.get("callsign", ""), route)
+        line2 = f"{route['orig']}-{route['dest']}" if route.get("orig") else "ROUTE ?"
+        self._flight_top(bg, lanes, top, self.airline_badge(icao or "???", iata), r["flight"], line2,
+                         PRICE if route.get("orig") else DIM_TEXT)
+        st = r.get("status")
+        if st == "air":
+            text, color = (f"OVER {r['place'].upper()}" if r.get("place") else "IN THE AIR"), PRICE
+        elif st == "landed":
+            text, color = f"LANDED {self.hm(r['landed_at'], tz)}" if r.get("landed_at") else "LANDED", self.CLIMB
+        elif st == "ground":
+            text, color = "ON THE GROUND", self.WAIT
+        elif st == "lost":
+            text = f"NO SIGNAL {self.hm(r['seen_at'], tz)}" if r.get("seen_at") else "NO SIGNAL"
+            color = self.WAIT
+        elif st == "checking":
+            text, color = "CHECKING", DIM_TEXT
+        else:
+            text, color = ("AIRLINE NOT FOUND" if r.get("error") == "airline not found" else "NOT DEPARTED"), self.WAIT
+        self._line(bg, lanes, top + 24, text, lcolor=color)
+        f = self.fonts["4x6"]
+        right = ""
+        if st == "air" and r.get("eta"):
+            right = "ETA " + self.hm(r["eta"], tz)
+        elif st == "landed":
+            right = "ARRIVED"
+        elif r.get("progress") is not None:
+            right = f"{r['progress'] * 100:.0f}%"
+        rw = f.width(right) + 3 if right else 0
+        if right:
+            f.draw(bg, self.w - f.width(right), top + 31, right, self.CLIMB if st == "landed" else PRICE)
+        x1 = self.w - rw - 1
+        d = ImageDraw.Draw(bg)
+        d.rectangle((0, top + 27, x1, top + 29), outline=(60, 60, 70))
+        prog = r.get("progress")
+        if prog is not None and st in ("air", "landed", "lost"):
+            fill = self.CLIMB if st == "landed" else self.PROGRESS if st == "air" else (110, 110, 120)
+            end = round(1 + prog * (x1 - 2))
+            if end >= 1:
+                d.line((1, top + 28, end, top + 28), fill=fill)
+            if st == "air":
+                d.point((end, top + 27), fill=PRICE)
+                d.point((end, top + 29), fill=PRICE)
+                d.point((min(x1 - 1, end + 1), top + 28), fill=PRICE)
         return Scroller(bg, lanes, speed=SPEEDS["normal"], min_hold=hold)
 
     # --- sports screen ---------------------------------------------------------

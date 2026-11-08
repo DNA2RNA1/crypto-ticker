@@ -39,7 +39,7 @@ from watchlist import REFRESH_CHOICES as WATCHLIST_REFRESH, Watchlist, entries_f
 from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
-from flights import RADIUS_CHOICES as FLIGHT_RADII, Flights
+from flights import RADIUS_CHOICES as FLIGHT_RADII, Flights, Tracker, tracked_from_env
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
@@ -170,6 +170,8 @@ class Config:
     odds_per_cycle: int = 3        # prediction markets per cycle (they rotate)
     flights_radius: int = 10       # miles around the weather location
     flights_per_cycle: int = 3     # closest planes shown each cycle
+    flights_overhead: bool = True  # planes near you (off = only the tracked flights)
+    flights_track: list = field(default_factory=list)  # flight numbers to follow, e.g. AA1234
     videos_max_age_days: int = 3
     videos_skip_shorts: bool = True
     sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
@@ -252,6 +254,8 @@ class Config:
         c.flights_radius = int(env("FLIGHTS_RADIUS", str(c.flights_radius),
                                    choices=tuple(str(r) for r in FLIGHT_RADII)))
         c.flights_per_cycle = env("FLIGHTS_PER_CYCLE", c.flights_per_cycle, int, lo=1, hi=5)
+        c.flights_overhead = env("FLIGHTS_OVERHEAD", True, bool)
+        c.flights_track = tracked_from_env(env("FLIGHTS_TRACK", ""))
         c.videos_max_age_days = env("VIDEOS_MAX_AGE_DAYS", c.videos_max_age_days, int, lo=1, hi=30)
         c.videos_skip_shorts = env("VIDEOS_SKIP_SHORTS", c.videos_skip_shorts, bool)
         c.sports = follow_from_env(os.environ)
@@ -369,6 +373,7 @@ class Ticker:
         self.markets = Markets(cfg.odds_markets)
         self.sports = Sports(cfg.sports)
         self.flights = Flights(cfg.weather_lat, cfg.weather_lon, cfg.flights_radius)
+        self.tracker = Tracker(cfg.flights_track, lookups=self.flights.lookups)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
         self.stale_since = None     # when those last good prices were fetched
@@ -557,7 +562,13 @@ class Ticker:
             self.extra_weather = self._make_extra_weather(new)
         if (new.weather_lat, new.weather_lon, new.flights_radius) != \
                 (old.weather_lat, old.weather_lon, old.flights_radius):
-            self.flights = Flights(new.weather_lat, new.weather_lon, new.flights_radius)
+            self.flights = Flights(new.weather_lat, new.weather_lon, new.flights_radius,
+                                   lookups=self.flights.lookups)
+            self.tracker.lookups = self.flights.lookups
+        if new.flights_track != old.flights_track:
+            self.tracker = Tracker(new.flights_track, lookups=self.flights.lookups)
+            if "flights" in new.screens and new.flights_track:
+                self.tracker.update()  # look them up now, so the phone page can show it
         if new.sports != old.sports:
             self.sports.follow = new.sports
             self.sports.next_fetch = 0  # fetch with the new teams right away
@@ -809,10 +820,15 @@ class Ticker:
                 for m in self.markets.next_batch(self.markets.rows(), self.cfg.odds_per_cycle):
                     out.append(lambda m=m: self.renderer.market(m, speed, stale=m["stale"], hold=sleep))
             elif name == "flights":
-                self.flights.update()    # background refresh every 30 s, only while this is on
-                metric = self.cfg.temp_unit == "C"
-                for p in self.flights.overhead(self.cfg.flights_per_cycle):
-                    out.append(lambda p=p: self.renderer.flight(p, metric, hold=sleep))
+                if self.cfg.flights_track:   # flights you're following come first
+                    self.tracker.update()    # background refresh every 60 s
+                    for r in self.tracker.rows():
+                        out.append(lambda r=r: self.renderer.tracked_flight(r, self.tz, hold=sleep))
+                if self.cfg.flights_overhead:
+                    self.flights.update()    # background refresh every 30 s, only while this is on
+                    metric = self.cfg.temp_unit == "C"
+                    for p in self.flights.overhead(self.cfg.flights_per_cycle):
+                        out.append(lambda p=p: self.renderer.flight(p, metric, hold=sleep))
             elif name == "coins":
                 out += self.coin_screens()
         return out

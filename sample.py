@@ -226,11 +226,32 @@ def sample_flights():
         {"callsign": "UAL1520", "reg": "N37502", "type": "B38M", "alt_ft": 8425, "speed_kt": 268.0,
          "vrate_fpm": 2112.0, "track": 285.0, "dist_mi": 2.4,
          "route": {"orig": "ORD", "dest": "DEN", "orig_city": "Chicago", "dest_city": "Denver",
-                   "airline": "United Airlines"}},
+                   "airline": "United Airlines", "airline_icao": "UAL", "airline_iata": "UA"}},
         {"callsign": "SWA2231", "reg": "N8710M", "type": "B738", "alt_ft": 3150, "speed_kt": 172.0,
          "vrate_fpm": -768.0, "track": 175.0, "dist_mi": 4.8,
          "route": {"orig": "MDW", "dest": "STL", "orig_city": "Chicago", "dest_city": "St Louis",
-                   "airline": "Southwest Airlines"}},
+                   "airline": "Southwest Airlines", "airline_icao": "SWA", "airline_iata": "WN"}},
         {"callsign": "N4521K", "reg": "N4521K", "type": "C172", "alt_ft": 2500, "speed_kt": 105.0,
          "vrate_fpm": 0.0, "track": 90.0, "dist_mi": 11.6, "route": None},
+    ]
+
+
+def sample_tracked(now_ts):
+    """Tracked flights for the screenshots: one in the air, one landed, one not yet departed."""
+    route = {"orig": "DEN", "dest": "BOS", "orig_city": "Denver", "dest_city": "Boston",
+             "orig_pos": (39.86, -104.67), "dest_pos": (42.36, -71.01), "airline": "Delta Air Lines",
+             "airline_icao": "DAL", "airline_iata": "DL"}
+    base = {"error": "", "type": "A321", "track": 80.0, "remaining_mi": None, "landed_at": None}
+    return [
+        dict(base, flight="DL1189", callsign="DAL1189", status="air", route=route, place="Des Moines, IA",
+             seen_at=now_ts, alt_ft=36000, speed_kt=455.0, vrate_fpm=0.0, progress=0.38,
+             eta=now_ts + 2 * 3600 + 25 * 60),
+        dict(base, flight="AA2410", callsign="AAL2410", status="landed",
+             route=dict(route, orig="LAX", dest="ORD", airline="American Airlines", airline_icao="AAL",
+                        airline_iata="AA"), place="", seen_at=now_ts - 1800, landed_at=now_ts - 1800,
+             alt_ft=0, speed_kt=12.0, vrate_fpm=0.0, progress=1.0, eta=None),
+        dict(base, flight="WN377", callsign="SWA377", status="waiting",
+             route=dict(route, orig="MDW", dest="AUS", airline="Southwest Airlines", airline_icao="SWA",
+                        airline_iata="WN"), place="", seen_at=None, alt_ft=None, speed_kt=None,
+             vrate_fpm=None, progress=None, eta=None),
     ]
