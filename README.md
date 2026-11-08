@@ -105,6 +105,29 @@ It shows solid **red, green, blue, white**, then a white border with colored cor
    ./install.sh
    ```
 
+   **If the repo is private** (it is), that `git clone` asks for a password and fails. Make the
+   Pi's deploy key first, add it on GitHub, then clone over SSH:
+
+   ```bash
+   sudo apt-get install -y git
+   mkdir -p ~/.ssh && chmod 700 ~/.ssh
+   ssh-keygen -q -t ed25519 -N "" -C "crypto-ticker@$(hostname)" -f ~/.ssh/crypto-ticker-deploy
+   cat ~/.ssh/crypto-ticker-deploy.pub
+   ```
+
+   On GitHub: the repo → **Settings → Deploy keys → Add deploy key**, paste the `ssh-ed25519 …`
+   line, leave **Allow write access** off, save. (Each Pi gets its own key; name them so you can
+   tell them apart.) Then:
+
+   ```bash
+   GIT_SSH_COMMAND="ssh -i ~/.ssh/crypto-ticker-deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+     git clone git@github.com:DNA2RNA1/crypto-ticker.git
+   cd crypto-ticker
+   ./install.sh
+   ```
+
+   `install.sh` keeps that key, and the Update button uses it from then on.
+
    `install.sh` installs packages, creates a Python virtual environment, builds the LED library
    (**20–40 minutes on a Pi Zero**; leave it running), turns off onboard audio (it conflicts
    with the panel timing), caps the system journal at 16 MB, asks for a 4–8 digit PIN for the
