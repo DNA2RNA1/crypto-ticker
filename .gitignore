@@ -4,8 +4,9 @@ __pycache__/
 /venv/
 /cache/
 /preview*.gif
-# your own coin pictures stay on the Pi, not on GitHub
+# your own coin and airline pictures stay on the Pi, not on GitHub
 /icons/*.png
+/icons/airlines/
 /logs/
 /.launcher/
 # never commit Wi-Fi profiles, certificates or keys
