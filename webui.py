@@ -21,6 +21,7 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image
 
+from flights import RADIUS_CHOICES
 from tv import DEFAULT_TV_PAGES, TV_PAGE_NAMES, TV_PAGES, parse_pages
 
 log = logging.getLogger("ticker.web")
@@ -93,7 +94,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "ODDS_PER_CYCLE": lambda v: _int(v, 1, 10),
     "VIDEOS_MAX_AGE_DAYS": lambda v: _int(v, 1, 30),
     "VIDEOS_SKIP_SHORTS": lambda v: _choice(v.strip().lower(), ("on", "off")),
-    "FLIGHTS_RADIUS": lambda v: _choice(v.strip(), ("3", "5", "10", "15", "25")),
+    "FLIGHTS_RADIUS": lambda v: _choice(v.strip(), tuple(str(r) for r in RADIUS_CHOICES)),
     "FLIGHTS_PER_CYCLE": lambda v: _int(v, 1, 5),
     "FLIGHTS_OVERHEAD": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "FLIGHTS_TRACK": lambda v: _tracked(v),
@@ -1264,7 +1265,7 @@ function flightRows(){
    <div class="row"><div class="grow">Planes overhead<div class="name" style="white-space:normal">The closest planes in the air near the weather location below.</div></div>
     <label class="switch"><input type="checkbox" id="fover" ${S.flights_overhead!='off'?'checked':''}><span></span></label></div>
    ${S.flights_overhead!='off'?`<div class="row"><div class="grow">Within</div>
-    <select id="fradius">${[3,5,10,15,25].map(n=>`<option value="${n}" ${S.flights_radius==n?'selected':''}>${n} mi</option>`).join('')}</select></div>
+    <select id="fradius">${[3,5,10,15,25,35,50,100].map(n=>`<option value="${n}" ${S.flights_radius==n?'selected':''}>${n} mi</option>`).join('')}</select></div>
    <div class="row"><div class="grow">Planes per cycle</div>
     <select id="fper">${[1,2,3,4,5].map(n=>`<option ${S.flights_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>`:''}
   </div>

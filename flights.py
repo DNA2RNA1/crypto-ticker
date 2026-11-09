@@ -51,7 +51,7 @@ REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 # Nominatim asks for an honest app name rather than a browser's
 GEOCODE_UA = "crypto-ticker-led-display/1.0 (personal LED panel; few requests)"
 
-RADIUS_CHOICES = (3, 5, 10, 15, 25)      # miles
+RADIUS_CHOICES = (3, 5, 10, 15, 25, 35, 50, 100)  # miles
 MAX_TRACKED = 4
 MAX_AGE = 120                            # seconds before positions count as too old to show
 ROUTE_TTL = 12 * 3600
