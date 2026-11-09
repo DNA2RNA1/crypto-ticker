@@ -108,7 +108,8 @@ def _fake_ticker(**cfg):
 def test_payload_only_feeds_what_the_pages_need():
     t = _fake_ticker()
     p = tv.payload(t, now=100)
-    assert p["settings"] == {"mode": "cycle", "pages": ["crypto", "weather"], "seconds": 15, "popup": True}
+    assert p["settings"] == {"mode": "cycle", "pages": ["crypto", "weather"], "seconds": 15, "popup": True,
+                             "odds": False}
     assert p["assets"][0]["symbol"] == "BTC" and len(p["assets"][0]["spark"]) == 42
     assert len(p["assets"][0]["candles"]) == 42 and p["weather"] == {"temp": 70}
     assert p["news"] == [] and p["overhead"] == [] and p["tracked"] == [] and p["fear_greed"] is None
@@ -229,3 +230,38 @@ def test_arcade_served_to_the_tv(server):
 def test_arcade_needs_login_from_elsewhere(server, monkeypatch):
     monkeypatch.setattr(server.RequestHandlerClass, "_local", lambda self: False)
     assert request(server, "GET", "/api/tv/arcade")[0] == 401
+
+
+def test_betting_lines_list_every_upcoming_game_with_a_line():
+    import sports as sp
+    s = sp.Sports.__new__(sp.Sports)
+    import threading
+    s._lock = threading.Lock()
+    lg = sp.BY_KEY["nfl"]
+    s.active = lambda now: [lg]
+    s.followed = lambda lg, games: (set(), {"7"})
+    line = {"spread": {"away": "+3.5", "home": "-3.5"}, "total": "47.5", "ml": None}
+
+    def game(gid, state, start, odds, away="1", home="2"):
+        return {"id": gid, "league": "nfl", "state": state, "start": start, "odds": odds,
+                "away": {"id": away, "abbr": "A" + gid}, "home": {"id": home, "abbr": "H" + gid}}
+    s.boards = {"nfl": (0, [game("3", "pre", 3000, line), game("1", "pre", 2000, line, away="7"),
+                            game("2", "pre", 2500, None), game("4", "in", 1000, None), game("5", "pre", 100, line)])}
+    out = s.lines(now=1000)
+    assert [g["id"] for g in out] == ["1", "3"]  # soonest first; no line, live or long past left out
+    assert out[0]["fav"] == {"away": True, "home": False}
+
+
+def test_payload_sends_lines_only_when_asked():
+    t = _fake_ticker(tv_pages=["scores"], sports_odds=False)
+    g = {"league": "nfl", "state": "pre", "start": 1, "detail": "", "odds": {"total": "40"},
+         "away": {"abbr": "A"}, "home": {"abbr": "B"}, "fav": {"away": False, "home": True}}
+    t.sports.games = lambda: [g]
+    t.sports.lines = lambda: [g]
+    p = tv.payload(t)
+    assert p["games"][0]["odds"] is None and p["lines"] == [] and p["settings"]["odds"] is False
+    t.cfg.sports_odds = True
+    assert tv.payload(t)["games"][0]["odds"] == {"total": "40"}
+    t.cfg.tv_pages = ["lines"]
+    p = tv.payload(t)
+    assert p["lines"][0]["odds"] == {"total": "40"} and p["lines"][0]["fav"]["home"] is True

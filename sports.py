@@ -520,6 +520,24 @@ class Sports:
         upcoming.sort(key=lambda g: g["start"])
         return (live + finals + upcoming)[:MAX_GAMES]
 
+    def lines(self, now=None, limit=24):
+        """Every upcoming game with a betting line on the scoreboards already fetched (the
+        leagues you have on), soonest first; your favorites' games are marked. For the TV's
+        Betting lines page. No extra requests."""
+        now = now or self.clock()
+        with self._lock:
+            boards = dict(self.boards)
+        out = []
+        for lg in self.active(now):
+            _, favs = self.followed(lg, (boards.get(lg.key) or (0, []))[1])
+            for g in (boards.get(lg.key) or (0, []))[1]:
+                if g["state"] == "pre" and g.get("odds") and g["start"] >= now - 600:
+                    g = dict(g)
+                    g["fav"] = {s: g[s]["id"] in favs for s in ("away", "home")}
+                    out.append(g)
+        out.sort(key=lambda g: (g["start"], g["league"]))
+        return out[:limit]
+
     # -- team search for the phone page -----------------------------------------------------
     def search_teams(self, key, query, limit=12):
         lg = BY_KEY.get(key)

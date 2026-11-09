@@ -1361,7 +1361,7 @@ const lg=k=>S.sports.find(l=>l.key==k);
 function sportsSection(){
   const on=(S.sports||[]).filter(l=>l.in_season), off=(S.sports||[]).filter(l=>!l.in_season);
   return `<h2>Sports</h2><div class="card" style="margin-bottom:12px">
-    <div class="row"><div class="grow">Betting lines<div class="name" style="white-space:normal">After each upcoming game: the spread for each team (the moneyline for baseball and hockey) and the over/under, from ESPN. Display only. Off by default.</div></div>
+    <div class="row"><div class="grow">Betting lines<div class="name" style="white-space:normal">After each upcoming game: the spread for each team (the moneyline for baseball and hockey) and the over/under, from ESPN. Display only. Off by default.${isTV()?' On the TV: shown under upcoming games on the Scores page and the single dashboard. For every game with a line, turn on the Betting lines page.':''}</div></div>
      <label class="switch"><input type="checkbox" id="sodds" ${S.sports_odds=='on'?'checked':''}><span></span></label></div>
    </div>${on.map(l=>`<div class="card" style="margin-bottom:12px">
     <div class="row"><div class="grow"><span class="sym">${esc(l.name)}</span></div>

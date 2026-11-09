@@ -17,11 +17,11 @@ ICON_DIR = os.path.join(HERE, "icons")
 AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
 
 TV_PAGES = ("flights", "tracked", "crypto", "chart", "weather", "news", "heatmap",
-            "feargreed", "sunmoon", "scores", "arcade")
+            "feargreed", "sunmoon", "scores", "lines", "arcade")
 TV_PAGE_NAMES = {"flights": "Flights overhead", "tracked": "Tracked flights", "crypto": "Crypto",
                  "chart": "Price charts", "weather": "Weather", "news": "Headlines",
                  "heatmap": "Crypto heatmap", "feargreed": "Fear & Greed", "sunmoon": "Sun & moon",
-                 "scores": "Scores", "arcade": "Arcade (chomper & ghosts)"}
+                 "scores": "Scores", "lines": "Betting lines", "arcade": "Arcade (chomper & ghosts)"}
 DEFAULT_TV_PAGES = ("flights", "tracked", "crypto", "chart", "weather", "news", "heatmap",
                     "sunmoon", "scores", "arcade")
 TV_MODES = ("cycle", "single")
@@ -29,7 +29,7 @@ TV_MODES = ("cycle", "single")
 # TV page -> the LED screen whose feed it needs (the hidden loop refreshes those)
 _FEEDS = {"flights": "flights", "tracked": "flights", "crypto": "coins", "chart": "coins",
           "heatmap": "coins", "weather": "weather", "sunmoon": "weather", "news": "news",
-          "feargreed": "feargreed", "scores": "sports"}
+          "feargreed": "feargreed", "scores": "sports", "lines": "sports"}
 
 
 def screens_for(pages, mode="cycle"):
@@ -160,11 +160,12 @@ def _asset(a):
             "candles": candles_4h(spark)}
 
 
-def _game(g):
+def _game(g, odds=False):
     def team(t):
         return {k: t.get(k) for k in ("abbr", "name", "color", "alt", "score", "record", "winner")}
     return {"league": g.get("league"), "state": g.get("state"), "start": g.get("start"),
-            "detail": g.get("detail"), "away": team(g["away"]), "home": team(g["home"])}
+            "detail": g.get("detail"), "away": team(g["away"]), "home": team(g["home"]),
+            "odds": g.get("odds") if odds else None}  # pre-game line (ESPN), display only
 
 
 def payload(ticker, now=None):
@@ -194,6 +195,8 @@ def payload(ticker, now=None):
         except Exception:  # one odd feed never blanks the TV
             return default
 
+    # betting lines: the phone's Betting lines switch, or the Betting lines page being on
+    odds = bool(getattr(cfg, "sports_odds", False)) or "lines" in pages
     news = [{"title": n.get("title"), "source": n.get("source"), "at": n.get("at")}
             for n in (ticker.news.data or [])[:12]] if "news" in need else []
     return {
@@ -204,13 +207,15 @@ def payload(ticker, now=None):
         "unit": cfg.temp_unit,
         "currency": cfg.currency,
         "settings": {"mode": cfg.tv_mode, "pages": pages, "seconds": cfg.tv_seconds,
-                     "popup": cfg.tv_flight_popup},
+                     "popup": cfg.tv_flight_popup, "odds": bool(getattr(cfg, "sports_odds", False))},
         "stale": bool(ticker.stale),
         "assets": [_asset(a) for a in (ticker.assets or [])] if "coins" in need else [],
         "weather": ticker.weather.data if "weather" in need else None,
         "fear_greed": ticker.fear_greed.data if "feargreed" in need else None,
         "news": news,
-        "games": safe(lambda: [_game(g) for g in ticker.sports.games()][:6], []) if "sports" in need else [],
+        "games": safe(lambda: [_game(g, odds) for g in ticker.sports.games()][:16], []) if "sports" in need else [],
+        "lines": safe(lambda: [dict(_game(g, True), fav=g.get("fav")) for g in ticker.sports.lines()], [])
+        if "lines" in pages else [],
         "overhead": safe(lambda: ticker.flights.overhead(cfg.flights_per_cycle + 2), [])
         if "flights" in need and cfg.flights_overhead else [],
         "tracked": safe(ticker.tracker.rows, []) if "flights" in need and cfg.flights_track else [],
