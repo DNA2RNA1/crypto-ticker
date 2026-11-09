@@ -612,9 +612,13 @@ def test_airline_picture_upload_and_reset(app, tmp_path, monkeypatch):
     assert Image.open(io.BytesIO(png)).size == (64, 64)
     app.reset_airline_icon("UAL")
     assert not (tmp_path / "air" / "UAL.png").exists()
-    for bad in ("../x", "UA", "UALX", "u1l"):
+    for bad in ("../x", "Z9", "UALX", "u1l"):  # Z9: a 2-letter code it doesn't know
         with pytest.raises(ValueError):
             app.save_airline_icon(bad, buf.getvalue())
+    app.save_airline_icon("ua", buf.getvalue())  # the 2-letter code works too
+    assert (tmp_path / "air" / "UAL.png").exists()
+    app.reset_airline_icon("UAL")
+    assert any(a["icao"] == "AAL" for a in app.settings()["airlines"])  # big airlines listed from the start
     with pytest.raises(ValueError):
         app.save_airline_icon("DAL", b"not a picture")
     with pytest.raises(ValueError):

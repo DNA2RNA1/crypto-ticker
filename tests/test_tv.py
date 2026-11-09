@@ -205,3 +205,27 @@ def test_airline_pictures_served_for_the_tv(server, monkeypatch, tmp_path):
     assert status == 200 and body[:4] == b"\x89PNG"
     assert _get_html(server, "/icons/airlines/dal.png")[0] != 200
     assert _get_html(server, "/icons/airlines/../settings.env")[0] != 200
+
+
+def test_arcade_scenes_for_the_tv():
+    import io
+    from PIL import Image
+    scenes = tv.arcade_list()
+    assert len(scenes) >= 6 and all(s["frames"] > 0 and s["fps"] > 0 for s in scenes)
+    sheet = Image.open(io.BytesIO(tv.arcade_sheet(0)))
+    assert sheet.size == (64, 32 * scenes[0]["frames"])
+    with pytest.raises(IndexError):
+        tv.arcade_sheet(99)
+    assert "arcade" in tv.DEFAULT_TV_PAGES and tv.screens_for(["arcade"]) == []  # needs no feed
+
+
+def test_arcade_served_to_the_tv(server):
+    status, body, _ = _get_html(server, "/api/tv/arcade/0.png")
+    assert status == 200 and body[:4] == b"\x89PNG"
+    assert request(server, "GET", "/api/tv/arcade")[1]["scenes"][0]["name"]
+    assert _get_html(server, "/api/tv/arcade/42.png")[0] == 404
+
+
+def test_arcade_needs_login_from_elsewhere(server, monkeypatch):
+    monkeypatch.setattr(server.RequestHandlerClass, "_local", lambda self: False)
+    assert request(server, "GET", "/api/tv/arcade")[0] == 401

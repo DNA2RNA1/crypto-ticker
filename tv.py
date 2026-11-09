@@ -17,13 +17,13 @@ ICON_DIR = os.path.join(HERE, "icons")
 AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
 
 TV_PAGES = ("flights", "tracked", "crypto", "chart", "weather", "news", "heatmap",
-            "feargreed", "sunmoon", "scores")
+            "feargreed", "sunmoon", "scores", "arcade")
 TV_PAGE_NAMES = {"flights": "Flights overhead", "tracked": "Tracked flights", "crypto": "Crypto",
                  "chart": "Price charts", "weather": "Weather", "news": "Headlines",
                  "heatmap": "Crypto heatmap", "feargreed": "Fear & Greed", "sunmoon": "Sun & moon",
-                 "scores": "Scores"}
+                 "scores": "Scores", "arcade": "Arcade (chomper & ghosts)"}
 DEFAULT_TV_PAGES = ("flights", "tracked", "crypto", "chart", "weather", "news", "heatmap",
-                    "sunmoon", "scores")
+                    "sunmoon", "scores", "arcade")
 TV_MODES = ("cycle", "single")
 
 # TV page -> the LED screen whose feed it needs (the hidden loop refreshes those)
@@ -73,6 +73,41 @@ class NullDisplay:
 
     def close(self):
         pass
+
+
+_arcade = []   # the panel's arcade scenes, built once
+_sheets = {}
+
+
+def _scenes():
+    if not _arcade:
+        import arcade
+        _arcade.extend(make() for make in arcade.SCENES)
+    return _arcade
+
+
+def arcade_list():
+    """The arcade scenes the TV can play: [{name, fps, frames}]."""
+    return [{"name": a.name, "fps": a.fps, "frames": len(a.frames)} for a in _scenes()]
+
+
+def arcade_sheet(i):
+    """Scene i as one PNG: its 64x32 frames stacked top to bottom (the TV draws them big)."""
+    import io
+    from PIL import Image
+    scenes = _scenes()
+    if not 0 <= i < len(scenes):
+        raise IndexError(i)
+    if i not in _sheets:
+        frames = scenes[i].frames
+        w, h = frames[0].size
+        sheet = Image.new("RGB", (w, h * len(frames)))
+        for k, f in enumerate(frames):
+            sheet.paste(f.convert("RGB"), (0, h * k))
+        buf = io.BytesIO()
+        sheet.save(buf, "PNG", optimize=True)
+        _sheets[i] = buf.getvalue()
+    return _sheets[i]
 
 
 def candles_4h(points):

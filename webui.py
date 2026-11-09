@@ -37,6 +37,12 @@ def tv_page():
         return fh.read()
 AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
 AIRLINE_RE = re.compile(r"[A-Z]{3}")
+COMMON_AIRLINES = {  # ICAO -> (IATA, name): listed on the phone page from the start
+    "AAL": ("AA", "American Airlines"), "UAL": ("UA", "United Airlines"), "DAL": ("DL", "Delta Air Lines"),
+    "SWA": ("WN", "Southwest Airlines"), "ASA": ("AS", "Alaska Airlines"), "JBU": ("B6", "JetBlue"),
+    "NKS": ("NK", "Spirit Airlines"), "FFT": ("F9", "Frontier Airlines"), "AAY": ("G4", "Allegiant Air"),
+    "HAL": ("HA", "Hawaiian Airlines"), "FDX": ("FX", "FedEx"), "UPS": ("5X", "UPS Airlines"),
+}
 MAX_UPLOAD = 8 * 1024 * 1024
 COIN_META = os.path.join(CACHE, "coins.json")
 
@@ -679,7 +685,7 @@ class WebApp:
         """Airlines with a picture on the panel: ones seen recently, ones you're tracking,
         and any with an uploaded logo. [{icao, iata, name, custom}] sorted by name."""
         from flights import FLIGHT_RE, IATA_ICAO
-        seen = {}
+        seen = dict(COMMON_AIRLINES)  # ready for a picture before one ever flies by
         flights = getattr(self.ticker, "flights", None)
         if flights is not None:
             seen.update(flights.lookups.seen_airlines())
@@ -706,10 +712,13 @@ class WebApp:
         return sorted(out, key=lambda a: (a["name"] or a["icao"]).lower())
 
     def save_airline_icon(self, code, data):
-        """Your own logo for an airline: icons/airlines/<ICAO>.png (shown instead of the tile)."""
-        code = (code or "").upper()
+        """Your own logo for an airline: icons/airlines/<ICAO>.png (shown instead of the tile).
+        Takes the 3-letter ICAO code (AAL) or a 2-character IATA code it knows (AA)."""
+        from flights import IATA_ICAO
+        code = (code or "").strip().upper()
+        code = IATA_ICAO.get(code, code)
         if not AIRLINE_RE.fullmatch(code):
-            raise ValueError("bad airline code")
+            raise ValueError("unknown airline code: use the 3-letter one (e.g. AMX)")
         img = self._read_picture(data)
         os.makedirs(AIRLINE_DIR, exist_ok=True)
         img.save(os.path.join(AIRLINE_DIR, f"{code}.png"))
@@ -955,6 +964,15 @@ def make_handler(app):
                     return self._send(200, fh.read(), "image/png")
             if url.path == "/api/state":
                 return self._send(200, {"authed": self._authed(), "pin_set": bool(app.pin())})
+            m = re.fullmatch(r"/api/tv/arcade(?:/(\d{1,2})\.png)?", url.path)
+            if m and (self._local() or self._authed()):
+                from tv import arcade_list, arcade_sheet
+                if m[1] is None:
+                    return self._send(200, {"scenes": arcade_list()})
+                try:
+                    return self._send(200, arcade_sheet(int(m[1])), "image/png")
+                except IndexError:
+                    return self._send(404, {"error": "no such scene"})
             if url.path in ("/tv", "/api/tv"):
                 # The TV's own browser (on this Pi) needs no PIN; anyone else signs in first.
                 if not (self._local() or self._authed()):
@@ -1189,7 +1207,9 @@ function holdingsString(){
 function coinRow(c,i,n){
   const img=c.image?`<img src="${esc(c.image)}" alt="">`:'<div class="ph"></div>';
   const sym=c.entry.split(':')[0], fav=(S.featured||[]).includes(sym);
-  const sub=c.custom_icon?`<a href="#" class="link" data-reset="${i}">Reset picture</a>`:esc(c.name||c.entry);
+  const lb='style="background:none;border:0;padding:0;font:inherit;color:var(--accent);cursor:pointer;text-align:left;white-space:nowrap"';
+  const sub=(c.custom_icon?`Your picture · <a href="#" class="link" data-reset="${i}">Reset</a>`:esc(c.name||c.entry))
+    +`</div><div style="font-size:13px"><button ${lb} data-pic="${i}">Change picture</button>`;
   return `<div class="row"><button class="pic" data-pic="${i}" aria-label="Change icon">${img}</button>
   <div class="grow"><div class="sym">${esc(c.symbol)}</div><div class="name">${sub}</div></div>
   <button class="btn star ${fav?'on':''}" data-star="${i}" aria-label="Feature">★</button>
@@ -1240,8 +1260,11 @@ function flightRows(){
    <div class="row"><div class="grow">Planes per cycle</div>
     <select id="fper">${[1,2,3,4,5].map(n=>`<option ${S.flights_per_cycle==n?'selected':''}>${n}</option>`).join('')}</select></div>`:''}
   </div>
-  ${(S.airlines||[]).length?`<h2>Airline pictures</h2><div class="card">${S.airlines.map(air).join('')}</div>
-  <p class="hint">Each airline gets a colored tile with its code. Tap one to use your own picture instead (it's shown 16×16 on the panel). Airlines appear here once they've flown by or you track one.</p>`:''}
+  <h2>Airline pictures</h2><div class="card">${(S.airlines||[]).map(air).join('')}
+   <div class="row"><input id="aircode" placeholder="Other airline code, e.g. AM or AMX" maxlength="3" autocapitalize="characters" style="flex:1;min-width:0">
+    <button class="btn" id="airadd" style="width:auto;padding:0 12px">Choose picture</button></div></div>
+  <p class="hint">Each airline gets a colored tile with its code. Tap one to use your own picture instead
+   (${isTV()?'shown full size on the TV':"it's shown 16×16 on the panel"}). Airlines that fly by or that you track are added here too. A square picture with a plain background looks best.</p>
   <p class="hint">Data: airplanes.live (adsb.fi as backup), adsbdb.com routes, OpenStreetMap place names. Free for personal use; checked only while this screen is on. Arrival times are estimates from distance and speed.</p>`;
 }
 function pickAirline(code){
@@ -1391,7 +1414,7 @@ function render(){
   app.innerHTML=`<h1>${isTV()?'TV dashboard':'Ticker'}</h1>
   ${isTV()?tvRows():''}
   <h2>Coins</h2><div class="card" id="coins">${S.coins.map((c,i)=>coinRow(c,i,S.coins.length)).join('')}</div>
-  <p class="hint">★ = featured: gets a big-picture screen before its price. Tap a coin's picture to use your own.</p>
+  <p class="hint">★ = featured: gets a big-picture screen before its price. <b>Change picture</b> uses your own art for a coin${isTV()?' (shown full size on the TV)':''}; a square picture works best.</p>
   <div class="card"><div class="row"><div class="grow">Focus<div class="name" style="white-space:normal">Show only ★ coins. Clock, Fear &amp; Greed and indices keep running.</div></div>
    <label class="switch"><input type="checkbox" id="focus" ${S.focus=='on'?'checked':''}><span></span></label></div></div>
   <p class="hint err" id="focushint" hidden>Focus is on but no coins are starred, so all coins are shown. Tap ★ on a coin.</p>
@@ -1613,6 +1636,8 @@ function bind(){
   if($('#fover'))$('#fover').onchange=e=>{S.flights_overhead=e.target.checked?'on':'off';save();render()};
   if($('#ftrack'))$('#ftrack').onchange=e=>{S.flights_track=e.target.value.split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);save(0);setTimeout(load,2500);setTimeout(load,10000)};
   document.querySelectorAll('[data-air]').forEach(el=>el.onclick=()=>pickAirline(el.dataset.air));
+  if($('#airadd'))$('#airadd').onclick=()=>{const c=$('#aircode').value.trim().toUpperCase();
+    if(!/^[A-Z0-9]{2,3}$/.test(c))return toast('Enter a 2-letter (AA) or 3-letter (AAL) airline code',true);pickAirline(c)};
   document.querySelectorAll('[data-airreset]').forEach(el=>el.onclick=async ev=>{ev.stopPropagation();
     try{await api('/api/airline-icon/reset?code='+encodeURIComponent(el.dataset.airreset),{});toast('Back to the code tile');load()}
     catch(e){if(e.message!='login')toast(e.message,true)}});
