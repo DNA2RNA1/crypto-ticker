@@ -33,6 +33,7 @@ COIN_META = os.path.join(CACHE, "coins.json")
 EDITABLE = {  # key -> validator returning the string to store
     "SYMBOLS": lambda v: _symbols(v),
     "LAYOUT": lambda v: _choice(v.strip().lower(), ("classic", "chart", "mix")),
+    "CHART_STYLE": lambda v: _choice(v.strip().lower(), ("line", "candles")),
     "TRANSITION": lambda v: _choice(v.strip().lower(), ("scroll", "slide", "none")),
     "BRIGHTNESS": lambda v: _int(v, 5, 100),
     "SLEEP": lambda v: _int(v, 2, 60),
@@ -93,7 +94,7 @@ LOCKOUT_SECONDS = 300
 # that the page shows to the user. Nothing is written unless every field passes.
 COIN_RE = re.compile(r"[a-z0-9.\-]{1,20}(:[a-z0-9][a-z0-9_.\-]{0,99})?")
 SYMBOL_RE = re.compile(r"[a-z0-9.\-]{1,20}")
-LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "BRIGHTNESS": "Brightness",
+LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "CHART_STYLE": "Chart style", "TRANSITION": "Transition", "BRIGHTNESS": "Brightness",
           "SLEEP": "Time per coin", "DIM_HOURS": "Dim hours", "DIM_BRIGHTNESS": "Night brightness",
           "CURRENCY": "Currency", "REFRESH_RATE": "Refresh rate", "FEATURED": "Featured coins",
           "SCREENS": "Screens", "WEATHER_LAT": "Latitude", "WEATHER_LON": "Longitude",
@@ -508,6 +509,7 @@ class WebApp:
         return {
             "coins": coins,
             "layout": clean("LAYOUT", "classic"),
+            "chart_style": clean("CHART_STYLE", "line"),
             "transition": clean("TRANSITION", "scroll"),
             "brightness": int(clean("BRIGHTNESS", "70")),
             "sleep": int(clean("SLEEP", "5")),
@@ -1275,6 +1277,7 @@ function render(){
   <h2>Display</h2><div class="card">
    <div class="row"><div class="grow">Layout</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('layout',[['classic','Icons'],['chart','Chart'],['mix','Mix']])}</div>
+   ${S.layout!='classic'?`<div class="row"><div class="grow">Chart style<div class="name" style="white-space:normal">Candles: one per ~10 hours over the week, green up, red down.</div></div><div style="width:170px">${seg('chart_style',[['line','Line'],['candles','Candles']])}</div></div>`:''}
    <div class="row"><div class="grow">Brightness</div><div class="val" id="bv">${S.brightness}%</div></div>
    <div class="row" style="border-top:0;padding-top:0"><input type="range" id="bright" min="5" max="100" value="${S.brightness}"></div>
    <div class="row"><div class="grow">Seconds per coin</div><div class="val" id="sv">${S.sleep}s</div></div>
@@ -1363,7 +1366,7 @@ async function loadStatus(){
 function save(extra){
   clearTimeout(saveTimer);
   saveTimer=setTimeout(async()=>{
-    const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),portfolio:S.portfolio,portfolio_private:S.portfolio_private,portfolio_pct:S.portfolio_pct,...(document.querySelector('[data-hq]')?{portfolio_holdings:holdingsString()}:{}),layout:S.layout,
+    const body={symbols:S.coins.map(c=>c.entry).join(','),featured:(S.featured||[]).join(','),portfolio:S.portfolio,portfolio_private:S.portfolio_private,portfolio_pct:S.portfolio_pct,...(document.querySelector('[data-hq]')?{portfolio_holdings:holdingsString()}:{}),layout:S.layout,chart_style:S.chart_style,
       screens:S.screens.join(','),indices_source:S.indices_source,indices_style:S.indices_style,indices_view:S.indices_view,temp_unit:S.temp_unit,
       weather_lat:S.weather_lat,weather_lon:S.weather_lon,weather_place:S.weather_place,weather_extra:(S.weather_extra||[]).join(';'),timezone:S.timezone,transition:S.transition,brightness:S.brightness,
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
@@ -1397,7 +1400,7 @@ function bind(){
     searchTimer=setTimeout(()=>search(q),350)};
   document.querySelectorAll('[data-seg]').forEach(s=>s.onclick=e=>{const b=e.target.closest('button');if(!b)return;
     S[s.dataset.seg]=b.dataset.v;s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x==b));save();
-    if(['list_view','indices_style'].includes(s.dataset.seg))render()});
+    if(['list_view','indices_style','layout'].includes(s.dataset.seg))render()});
   document.querySelectorAll('[data-screen]').forEach(cb=>cb.onchange=()=>{
     const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);
     saveScreens(screenOrder(),on)});

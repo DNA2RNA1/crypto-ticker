@@ -4,9 +4,13 @@ Crypto prices on an RGB LED matrix driven by a Raspberry Pi. This is an updated
 version of the [Howchoo crypto ticker](https://howchoo.com/pi/raspberry-pi-cryptocurrency-ticker)
 for current Raspberry Pi OS. The hardware is the same; the software is rewritten.
 
-| `LAYOUT=classic` | `LAYOUT=chart` |
-|--|--|
-| ![classic](docs/preview.gif) | ![chart](docs/preview-chart.gif) |
+| `LAYOUT=classic` | `LAYOUT=chart` | `LAYOUT=chart`, `CHART_STYLE=candles` |
+|--|--|--|
+| ![classic](docs/preview.gif) | ![chart](docs/preview-chart.gif) | ![candles](docs/screenshots/08b-coin-candles.png) |
+
+With the chart layout, **Chart style** on the phone page picks a filled line or **candles**:
+16 candlesticks across the week (about 10 hours each), green up and red down, built from the same
+hourly prices, so it costs no extra downloads.
 
 Each coin screen shows the coin's icon, ticker, 24h change with ▲/▼, a 7-day chart and the
 price (auto-sized: `$109,235`, `$4,012.37`, `$0.0₄1123`). Each cycle can also show a **clock**

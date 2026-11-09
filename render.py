@@ -130,10 +130,12 @@ def place_label(place):
 
 class Renderer:
     LAYOUTS = ("classic", "chart", "mix")
+    CHART_STYLES = ("line", "candles")
 
-    def __init__(self, width=64, height=32, currency="usd", icons=None, layout="classic"):
+    def __init__(self, width=64, height=32, currency="usd", icons=None, layout="classic", chart_style="line"):
         self.w, self.h = width, height
         self.layout = layout if layout in self.LAYOUTS else "classic"
+        self.chart_style = chart_style if chart_style in self.CHART_STYLES else "line"
         self._count = 0
         self._logos = {}            # your airline pictures, fitted to the panel
         self.currency = currency
@@ -209,6 +211,47 @@ class Renderer:
                 px[x, yy] = color
             prev = y
 
+    @staticmethod
+    def candles_from(points, n):
+        """Hourly prices -> n candles (open, high, low, close), oldest first. Each candle
+        covers an equal slice of the week and opens where the previous one closed."""
+        if len(points) < n + 1 or n < 1:
+            return []
+        out, per = [], (len(points) - 1) / n
+        for i in range(n):
+            a, b = round(i * per), round((i + 1) * per)
+            chunk = points[a:b + 1]
+            out.append((chunk[0], max(chunk), min(chunk), chunk[-1]))
+        return out
+
+    def _candle_chart(self, img, points, top, bottom):
+        """7-day candlesticks across the panel: 3px bodies with a 1px gap (16 candles on
+        a 64px panel, ~10 hours each), green up, red down, wick through the middle,
+        faint dotted line at the latest price."""
+        n = self.w // 4
+        candles = self.candles_from(points, n)
+        if not candles or bottom - top < 6:
+            return
+        lo = min(c[2] for c in candles)
+        hi = max(c[1] for c in candles)
+        span = (hi - lo) or 1.0
+        y = lambda v: bottom - round((v - lo) / span * (bottom - top))
+        px = img.load()
+        last = y(candles[-1][3])
+        for x in range(0, self.w, 3):                       # dotted current-price line
+            px[x, last] = (60, 60, 60)
+        x0 = self.w - n * 4 + 1
+        for i, (o, h, l, c) in enumerate(candles):
+            up = c >= o
+            color = UP if up else DOWN
+            cx = x0 + i * 4 + 1
+            for yy in range(y(h), y(l) + 1):                # wick
+                px[cx, yy] = tuple(v * 3 // 4 for v in color)
+            b0, b1 = sorted((y(o), y(c)))
+            for yy in range(b0, b1 + 1):                    # body
+                for xx in (cx - 1, cx, cx + 1):
+                    px[xx, yy] = color
+
     # --- screens ----------------------------------------------------------
     def asset(self, asset, stale=False):
         layout = self.layout
@@ -243,8 +286,13 @@ class Renderer:
         top_base = 12 if big else 10
         # tall panels put the change on its own line under the symbol
         chg_base = top_base + 11 if big else top_base
-        self._area_chart(img, asset.get("sparkline", []),
-                         top=chg_base + 3 if big else top_base + 1, bottom=self.h - 1)
+        chart_top = chg_base + 3 if big else top_base + 1
+        if self.chart_style == "candles":
+            # candles get their own band above the price, so the bodies stay crisp
+            self._candle_chart(img, asset.get("sparkline", []), top=chart_top + 1,
+                               bottom=self.h - (16 if big else 13))
+        else:
+            self._area_chart(img, asset.get("sparkline", []), top=chart_top, bottom=self.h - 1)
         cw = chg_font.width(ctext)
         # small coin icon in the top-left, unless it would push the symbol
         # into the 24h change on the right (long symbol + big move)

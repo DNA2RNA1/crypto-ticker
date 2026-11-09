@@ -138,6 +138,7 @@ class Config:
     sleep: float = 5
     transition: str = "scroll"     # scroll (up), slide (left) or none
     layout: str = "classic"
+    chart_style: str = "line"      # chart layout: line (filled area) or candles
     featured: list = field(default_factory=list)
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
     portfolio: bool = False        # portfolio screen (reset to off at every start)
@@ -213,6 +214,7 @@ class Config:
         c.sleep = env("SLEEP", c.sleep, float, lo=1, hi=300)
         c.transition = env("TRANSITION", c.transition, str.lower, choices=TRANSITIONS)
         c.layout = env("LAYOUT", c.layout, str.lower, choices=Renderer.LAYOUTS)
+        c.chart_style = env("CHART_STYLE", c.chart_style, str.lower, choices=Renderer.CHART_STYLES)
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.focus = env("FOCUS", False, bool)
         c.portfolio = env("PORTFOLIO", False, bool)
@@ -356,7 +358,7 @@ class Ticker:
         self.api = self._make_api(cfg)
         self.icons = IconStore(download=cfg.download_icons)
         self.renderer = Renderer(display.width, display.height, cfg.currency, self.icons,
-                                 layout=cfg.layout)
+                                 layout=cfg.layout, chart_style=cfg.chart_style)
         self.assets = []
         self.index_rows = []
         self.fear_greed = FearGreed()
@@ -593,6 +595,7 @@ class Ticker:
         if not self.failures:  # never cut short a backoff (e.g. after HTTP 429)
             self.next_fetch = min(self.next_fetch, time.time() + self.interval())
         self.renderer.layout = new.layout if new.layout in Renderer.LAYOUTS else "classic"
+        self.renderer.chart_style = new.chart_style if new.chart_style in Renderer.CHART_STYLES else "line"
         self.renderer.currency = new.currency
         self.icons.forget()  # pick up any newly uploaded icons
         self.cfg = new

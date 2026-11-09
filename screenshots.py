@@ -104,12 +104,12 @@ def main():
         frames = arcade.SCENES[i]().frames
         return frames[int(len(frames) * at)]
 
-    def chart(sym, stale=False):
-        r.layout = "chart"
+    def chart(sym, stale=False, style="line"):
+        r.layout, r.chart_style = "chart", style
         try:
             return r.asset(by_sym[sym], stale=stale)
         finally:
-            r.layout = "classic"
+            r.layout, r.chart_style = "classic", "line"
 
     shots = [
         ("01-loading", lambda: r.loading(2)),
@@ -120,6 +120,7 @@ def main():
         ("06-featured", lambda: r.featured(by_sym["SNEK"])),
         ("07-coin-classic", lambda: r.asset(by_sym["BTC"])),
         ("08-coin-chart", lambda: chart("ETH")),
+        ("08b-coin-candles", lambda: chart("BTC", style="candles")),
         ("09-coin-tiny-price", lambda: r.asset(by_sym["PEPE"])),
         ("10-coin-stale", lambda: r.asset(by_sym["ADA"], stale=True)),
         ("10b-coin-chart-stale", lambda: chart("ADA", stale=True)),
