@@ -460,6 +460,24 @@ time zones, coordinates), and nothing is written unless all fields pass; the pag
 field was wrong. Bad hand edits in `settings.env` don't break the page either.
 The page is only reachable on your home network.
 
+### Security
+
+- **Use a PIN**, 6 digits or more, especially on a ticker on a shared network (work, school):
+  anyone on the same Wi-Fi can open the page. Five wrong PINs lock that device out for 5 minutes;
+  20 wrong PINs within an hour from any devices pause all new sign-ins for an hour (phones that are
+  already signed in keep working). Changing the PIN signs every phone out.
+- **Other websites can't use the page**, even with no PIN: requests must name this Pi
+  (`<hostname>.local`, its IP address, or `localhost`), changes must come from the page itself, and
+  the page can't be shown inside another site. This blocks a web page on a phone on your
+  Wi-Fi from reaching the ticker through that phone. If you reach the Pi by another name
+  (e.g. a VPN name), add it: `WEB_ALLOWED_HOSTS=ticker.example.ts.net`.
+- The page is plain HTTP, so the PIN crosses your Wi-Fi unencrypted; WPA2/WPA3 encrypts the Wi-Fi
+  itself. Don't forward port 8080 on your router.
+- Updates come only from your GitHub repo, through a read-only deploy key. Turn on two-factor sign-in
+  on your GitHub account, since whoever controls the repo controls the update.
+- On the Pi: use a strong password (or SSH keys) for your user, and keep the system current
+  (`sudo apt update && sudo apt full-upgrade` now and then).
+
 At the bottom, **Status** shows when prices were last fetched, how long the ticker and the Pi
 have been running, the Wi-Fi signal (from `/proc/net/wireless`), and the last error, if any.
 **Software** shows the installed version with **Update** and **Roll back** buttons
