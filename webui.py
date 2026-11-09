@@ -101,6 +101,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "TV_PAGES": lambda v: _tv_pages(v),
     "TV_SECONDS": lambda v: _int(v, 5, 120),
     "TV_FLIGHT_POPUP": lambda v: _choice(v.strip().lower(), ("on", "off")),
+    "TV_ARCADE_STYLE": lambda v: _choice(v.strip().lower(), ("led", "pixels")),
 }
 
 MAX_FAILS = 5
@@ -171,7 +172,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "FLIGHTS_RADIUS": "Flight radius", "FLIGHTS_PER_CYCLE": "Planes per cycle",
           "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track",
           "TV_MODE": "TV display mode", "TV_PAGES": "TV pages", "TV_SECONDS": "Seconds per TV page",
-          "TV_FLIGHT_POPUP": "Flight pop-up"}
+          "TV_FLIGHT_POPUP": "Flight pop-up", "TV_ARCADE_STYLE": "Arcade look"}
 
 
 def _int(v, lo, hi):
@@ -661,6 +662,7 @@ class WebApp:
             "tv_pages": self._tv_pages_setting(clean),
             "tv_seconds": int(clean("TV_SECONDS", "15")),
             "tv_flight_popup": clean("TV_FLIGHT_POPUP", "on"),
+            "tv_arcade_style": clean("TV_ARCADE_STYLE", "led"),
             "tv_page_names": [[p, TV_PAGE_NAMES[p]] for p in TV_PAGES],
             "airlines": self._airlines(clean),
             "sports": self._sports(clean),
@@ -1402,7 +1404,9 @@ function tvRows(){const names=Object.fromEntries(S.tv_page_names||[]);const o=tv
    ${S.tv_mode!='single'?`<div class="row"><div class="grow">Seconds per page</div>
     <select id="tvsecs">${[...new Set([10,15,20,30,45,60,+S.tv_seconds])].sort((a,b)=>a-b).map(n=>`<option ${S.tv_seconds==n?'selected':''}>${n}</option>`).join('')}</select></div>`:''}
    <div class="row"><div class="grow">Flight pop-up<div class="name" style="white-space:normal">A flight you track takes over the screen for 30 seconds when it takes off or lands.</div></div>
-    <label class="switch"><input type="checkbox" id="tvpop" ${S.tv_flight_popup!='off'?'checked':''}><span></span></label></div></div>
+    <label class="switch"><input type="checkbox" id="tvpop" ${S.tv_flight_popup!='off'?'checked':''}><span></span></label></div>
+   <div class="row"><div class="grow">Arcade look</div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('tv_arcade_style',[['led','LED dots'],['pixels','Crisp pixels']])}</div></div>
   ${S.tv_mode!='single'?`<h2>TV pages</h2><div class="card">${o.map((k,i)=>`<div class="row"><div class="grow">${esc(names[k]||k)}</div>
      <button class="btn" data-tup="${k}" ${i==0?'disabled':''} aria-label="Move up">↑</button>
      <button class="btn" data-tdown="${k}" ${i==o.length-1?'disabled':''} aria-label="Move down">↓</button>
@@ -1561,7 +1565,7 @@ function save(extra){
       sports_odds:S.sports_odds,odds_markets:(S.odds_markets||[]).join('\n'),odds_per_cycle:S.odds_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta,
-      ...(isTV()?{tv_mode:S.tv_mode,tv_pages:(S.tv_pages||[]).join(','),tv_seconds:S.tv_seconds,tv_flight_popup:S.tv_flight_popup}:{})};
+      ...(isTV()?{tv_mode:S.tv_mode,tv_pages:(S.tv_pages||[]).join(','),tv_seconds:S.tv_seconds,tv_flight_popup:S.tv_flight_popup,tv_arcade_style:S.tv_arcade_style}:{})};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
     catch(e){if(e.message!='login'){toast('Not saved: '+e.message,true);setTimeout(load,1800)}}
   },extra===0?0:450);

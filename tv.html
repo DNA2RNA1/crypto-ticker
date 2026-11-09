@@ -333,15 +333,15 @@ PAGES.arcade={has:()=>ARC.list&&Object.keys(ARC.sheets).length===ARC.list.length
   start(el){  // play whole scenes until the page's time is used up; returns how long the page stays
     const want=((D&&D.settings.seconds)||15)*1000,plan=[];let total=0;
     while(total<want||!plan.length){const i=ARC.next++%ARC.list.length,sc=ARC.list[i];plan.push([i,sc]);total+=sc.frames/sc.fps*1000}
-    const cv=el.querySelector('#arc'),g=cv.getContext('2d'),C=29,t0=performance.now();let last=-1;
+    const cv=el.querySelector('#arc'),g=cv.getContext('2d'),C=29,t0=performance.now(),crisp=D&&D.settings.arcade==='pixels';let last=-1;
     g.fillStyle='#000';g.fillRect(0,0,cv.width,cv.height);
     const draw=now=>{if(!cv.isConnected)return;let ms=now-t0,k=0;
       while(k<plan.length-1&&ms>=plan[k][1].frames/plan[k][1].fps*1000){ms-=plan[k][1].frames/plan[k][1].fps*1000;k++}
       const [i,sc]=plan[k],f=Math.min(sc.frames-1,Math.floor(ms*sc.fps/1000)),key=k*10000+f;
       if(key!==last){last=key;const d=ARC.sheets[i].data,base=f*64*32*4;g.fillStyle='#000';g.fillRect(0,0,cv.width,cv.height);
         for(let y=0;y<32;y++)for(let x=0;x<64;x++){const o=base+(y*64+x)*4,r=d[o],gr=d[o+1],b=d[o+2];
-          if(r+gr+b<24){g.fillStyle='#0B0E12';g.fillRect(x*C+3,y*C+3,C-6,C-6);continue}  // an unlit LED
-          g.fillStyle=`rgb(${r},${gr},${b})`;g.fillRect(x*C+2,y*C+2,C-4,C-4)}}
+          if(r+gr+b<24){if(!crisp){g.fillStyle='#0B0E12';g.fillRect(x*C+3,y*C+3,C-6,C-6)}continue}  // an unlit LED
+          g.fillStyle=`rgb(${r},${gr},${b})`;crisp?g.fillRect(x*C,y*C,C,C):g.fillRect(x*C+2,y*C+2,C-4,C-4)}}
       requestAnimationFrame(draw)};
     requestAnimationFrame(draw);return total}};
 

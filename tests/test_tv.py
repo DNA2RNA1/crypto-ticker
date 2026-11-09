@@ -109,7 +109,7 @@ def test_payload_only_feeds_what_the_pages_need():
     t = _fake_ticker()
     p = tv.payload(t, now=100)
     assert p["settings"] == {"mode": "cycle", "pages": ["crypto", "weather"], "seconds": 15, "popup": True,
-                             "odds": False}
+                             "odds": False, "arcade": "led"}
     assert p["assets"][0]["symbol"] == "BTC" and len(p["assets"][0]["spark"]) == 42
     assert len(p["assets"][0]["candles"]) == 42 and p["weather"] == {"temp": 70}
     assert p["news"] == [] and p["overhead"] == [] and p["tracked"] == [] and p["fear_greed"] is None
@@ -267,3 +267,14 @@ def test_payload_sends_lines_only_when_asked():
     t.cfg.tv_pages = ["lines"]
     p = tv.payload(t)
     assert p["lines"][0]["odds"] == {"total": "40"} and p["lines"][0]["fav"]["home"] is True
+
+
+def test_arcade_look_setting(app, monkeypatch):
+    app.save({"tv_arcade_style": "pixels"})
+    assert "TV_ARCADE_STYLE=pixels" in open(app.env_path).read() and app.settings()["tv_arcade_style"] == "pixels"
+    with pytest.raises(ValueError):
+        app.save({"tv_arcade_style": "blurry"})
+    monkeypatch.setenv("TV_ARCADE_STYLE", "PIXELS")
+    assert Config.from_env().tv_arcade_style == "pixels"
+    monkeypatch.setenv("TV_ARCADE_STYLE", "nonsense")
+    assert Config.from_env().tv_arcade_style == "led"

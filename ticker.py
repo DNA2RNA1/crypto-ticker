@@ -144,6 +144,7 @@ class Config:
     tv_pages: list = field(default_factory=lambda: list(DEFAULT_TV_PAGES))
     tv_seconds: int = 15           # TV: seconds per page
     tv_flight_popup: bool = True   # TV: a tracked flight takes over on takeoff and landing
+    tv_arcade_style: str = "led"   # TV arcade: "led" (round-ish dots, like the panel) or "pixels" (crisp, no gaps)
     featured: list = field(default_factory=list)
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
     portfolio: bool = False        # portfolio screen (reset to off at every start)
@@ -225,6 +226,7 @@ class Config:
         c.tv_pages = parse_pages(raw_pages) if raw_pages is not None else list(DEFAULT_TV_PAGES)
         c.tv_seconds = env("TV_SECONDS", c.tv_seconds, int, lo=5, hi=120)
         c.tv_flight_popup = env("TV_FLIGHT_POPUP", True, bool)
+        c.tv_arcade_style = "pixels" if env("TV_ARCADE_STYLE", "led").strip().lower() == "pixels" else "led"
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.focus = env("FOCUS", False, bool)
         c.portfolio = env("PORTFOLIO", False, bool)
