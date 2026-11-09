@@ -979,8 +979,8 @@ class Renderer:
 
     def game_odds(self, game, league, stale=False):
         """The betting line for an upcoming game, shown after its normal screen (display
-        only): the total (O/U) on top, each team's spread on its row (the moneyline for
-        baseball and hockey, or when there's no spread). None if the game has no line."""
+        only): the total (O/U) on top, each team's spread and moneyline on its row (just the
+        moneyline for baseball and hockey, or when there's no spread). None if no line."""
         from sports import MONEYLINE_LEAGUES
         odds = game.get("odds")
         if not odds:
@@ -1006,7 +1006,9 @@ class Renderer:
         for y, side in ((top + 9, "away"), (top + 21, "home")):
             left, _ = self.team_line(game[side], game.get("fav", {}).get(side), game)
             text = (per_team or {}).get(side) or ""
-            font = f["6x10"] if left.width + 3 + f["6x10"].width(text) <= self.w else f["5x8"]
+            if not use_ml and odds.get("ml") and text:  # spread and moneyline: "-3 -170"
+                text = f"{text} {odds['ml'][side]}"
+            font = next((ft for ft in (f["6x10"], f["5x8"]) if left.width + 3 + ft.width(text) <= self.w), f["4x6"])
             room = self.w - (font.width(text) + 3 if text else 0)
             img.paste(left.crop((0, 0, min(left.width, room), left.height)), (0, y))
             if text:

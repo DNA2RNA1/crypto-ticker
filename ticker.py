@@ -34,6 +34,8 @@ from retry import backoff_delay
 from news import DEFAULT_FEEDS, DEFAULT_GENERAL_FEEDS, DEFAULT_POLITICS_FEEDS, News
 from videos import TAG_COLOR as VIDEO_TAG, Videos, parse_entry as parse_channel
 from arcade import Animation, Arcade
+
+LINES_PER_CYCLE = 6  # LED: other games' betting lines shown per sports cycle (they rotate)
 from markets import Markets, entries_from_env as markets_from_env
 from watchlist import REFRESH_CHOICES as WATCHLIST_REFRESH, Watchlist, entries_from_env as watchlist_from_env
 from scroller import SPEEDS, Scroller
@@ -389,6 +391,7 @@ class Ticker:
         self.watchlist = Watchlist(cfg.watchlist, cfg.watchlist_refresh)
         self.markets = Markets(cfg.odds_markets)
         self.sports = Sports(cfg.sports)
+        self._lines_at = 0  # which upcoming lines the next sports cycle starts from
         self.flights = Flights(cfg.weather_lat, cfg.weather_lon, cfg.flights_radius)
         self.tracker = Tracker(cfg.flights_track, lookups=self.flights.lookups)
         self.tz = get_tz(cfg.timezone)
@@ -828,7 +831,8 @@ class Ticker:
             elif name == "sports":
                 self.sports.update()     # background refresh: 60 s while live, else 15 min
                 now_ts = time.time()
-                for g in self.sports.games(now_ts):
+                games = self.sports.games(now_ts)
+                for g in games:
                     age = now_ts - g["fetched"]
                     stale = age > (3 * LIVE_EVERY if g["state"] == "in" else 2 * IDLE_EVERY)
                     out.append(lambda g=g, stale=stale: self.renderer.game(
@@ -837,6 +841,18 @@ class Ticker:
                         # the line flips in place after the game's own screen
                         out.append(lambda g=g, stale=stale: (self.renderer.game_odds(
                             g, LEAGUE_BY_KEY[g["league"]], stale=stale), max(2.0, sleep * 0.8), False))
+                if self.cfg.sports_odds:
+                    # every other upcoming game with a line, not just your teams': a few per
+                    # cycle, picking up where the last cycle left off, soonest games first
+                    shown = {g.get("id") for g in games}
+                    extra = [g for g in self.sports.lines(now_ts) if g.get("id") not in shown]
+                    if extra:
+                        k = self._lines_at % len(extra)
+                        batch = (extra[k:] + extra[:k])[:LINES_PER_CYCLE]
+                        self._lines_at = k + len(batch)
+                        for g in batch:
+                            out.append(lambda g=g: (self.renderer.game_odds(
+                                g, LEAGUE_BY_KEY[g["league"]]), sleep, False))
             elif name == "odds":
                 self.markets.update()    # background refresh every 5 minutes
                 speed = SPEEDS[self.cfg.news_speed]

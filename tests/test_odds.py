@@ -316,3 +316,29 @@ def test_settings_page(app):
     for bad in ({"sports_odds": "maybe"}, {"odds_markets": "https://example.com/bet"}, {"odds_per_cycle": 11}):
         with pytest.raises(ValueError):
             app.save(bad)
+
+
+def test_led_shows_every_line_a_few_per_cycle():
+    import ticker as tk
+    on, games = sports_ticker(True)
+    pre = pre_game("nfl")
+    others = [dict(pre, id=f"x{i}") for i in range(tk.LINES_PER_CYCLE + 3)]  # not your teams' games
+    on.sports.lines = lambda now=None: others
+    base = len(sports_ticker(True)[0].screens())
+    first, second = on.screens(), on.screens()
+    assert len(first) == base + tk.LINES_PER_CYCLE      # a few per cycle...
+    assert len(second) == base + tk.LINES_PER_CYCLE  # ...then the other 3, wrapping round to the first
+    assert on._lines_at % len(others) == (2 * tk.LINES_PER_CYCLE) % len(others)
+    assert all(isinstance(x, tuple) and x[0] is not None for x in (s() for s in first[base:]))
+    off, _ = sports_ticker(False)
+    off.sports.lines = lambda now=None: others
+    assert len(off.screens()) == len(sports_ticker(False)[0].screens())  # switch off: none
+
+
+def test_spread_and_moneyline_together():
+    r = Renderer()
+    nfl = pre_game("nfl")
+    assert nfl["odds"]["spread"] and nfl["odds"]["ml"]
+    both = r.game_odds(nfl, BY_KEY["nfl"])
+    spread_only = r.game_odds(dict(nfl, odds=dict(nfl["odds"], ml=None)), BY_KEY["nfl"])
+    assert both.tobytes() != spread_only.tobytes()

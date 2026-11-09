@@ -306,10 +306,11 @@ PAGES.spotlight={has:()=>D.assets&&D.assets.length,
 
 /* ---------- betting lines (ESPN's pre-game line; display only) ---------- */
 const sgn=v=>String(v).replace('-','−');
-function lineShort(g){  // "KC −3.5 · O/U 47.5" (spread), or "NYY −150 · O/U 8.5" (moneyline sports)
+function lineShort(g){  // "KC −3.5 (−170) · O/U 47.5": spread (moneyline), or "NYY −150 · O/U 8.5" for baseball/hockey
   const o=g.odds;if(!o)return '';const out=[];
   if(o.spread){const fav=String(o.spread.home).startsWith('-')?'home':String(o.spread.away).startsWith('-')?'away':null;
-    out.push(fav?`${g[fav].abbr} ${sgn(o.spread[fav])}`:'Pick\'em')}
+    const ml=o.ml&&fav?` (${sgn(o.ml[fav])})`:'';  // the favorite's moneyline next to its spread
+    out.push(fav?`${g[fav].abbr} ${sgn(o.spread[fav])}${ml}`:'Pick\'em')}
   else if(o.ml){const fav=parseFloat(o.ml.home)<parseFloat(o.ml.away)?'home':'away';out.push(`${g[fav].abbr} ${sgn(o.ml[fav])}`)}
   if(o.total)out.push('O/U '+o.total);return out.join(' · ')}
 PAGES.lines={has:()=>D.lines&&D.lines.length,html(f){
