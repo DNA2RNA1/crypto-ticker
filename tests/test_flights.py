@@ -632,3 +632,34 @@ def test_airline_routes_need_login_and_check_codes(server):
     auth = login(server)
     assert request(server, "GET", "/api/airline-badge?code=../x", headers=auth)[0] == 400
     assert request(server, "POST", "/api/airline-icon?code=UAL", b"not a picture", auth)[0] == 400
+
+
+# --- out-of-date routes ---------------------------------------------------------------
+DFW, MFE, DCA, BOS = (32.897, -97.038), (26.176, -98.239), (38.852, -77.037), (42.364, -71.005)
+
+
+def _route(a, b, names):
+    return {"orig": names[0], "dest": names[1], "orig_pos": a, "dest_pos": b}
+
+
+def test_route_must_fit_where_the_plane_is():
+    from flights import route_fits
+    near_mfe = (26.35, -98.10)  # a plane over Edinburg
+    assert route_fits(_route(DFW, MFE, "DM"), *near_mfe)
+    assert not route_fits(_route(DCA, BOS, "DB"), *near_mfe)   # the AAL2029 mix-up
+    assert route_fits(_route(DCA, BOS, "DB"), 40.6, -74.0)     # over New York: fine
+    assert route_fits(_route(DFW, MFE, "DM"), 29.5, -97.2)     # mid-route, a little off the line
+    assert route_fits(None, *near_mfe) and route_fits({"orig": "X"}, *near_mfe)  # nothing to judge by
+    assert route_fits(_route(DCA, BOS, "DB"), None, None)
+
+
+def test_overhead_drops_a_route_the_plane_cant_be_on():
+    import flights as fl
+    f = fl.Flights.__new__(fl.Flights)
+    f.data = [{"callsign": "AAL2029", "lat": 26.35, "lon": -98.10, "dist_mi": 5.0},
+              {"callsign": "AAL1450", "lat": 26.4, "lon": -98.0, "dist_mi": 9.0}]
+    f.fetched = 1000
+    routes = {"AAL2029": _route(DCA, BOS, "DB"), "AAL1450": _route(DFW, MFE, "DM")}
+    f.route = lambda cs, now=None: routes[cs]
+    out = f.overhead(2, now=1000)
+    assert out[0]["route"] is None and out[1]["route"]["orig"] == "D"

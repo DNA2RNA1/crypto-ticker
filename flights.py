@@ -184,6 +184,23 @@ def parse_aircraft(data, lat, lon, radius_mi):
     return out
 
 
+ROUTE_SLACK = 1.3       # a plane may fly 30% further than the straight line between its airports...
+ROUTE_SLACK_MI = 150    # ...plus this much (departures, holding, approaches, weather)
+
+
+def route_fits(route, lat, lon):
+    """Is a plane at (lat, lon) plausibly flying this route? The route databases go by
+    flight number, and airlines reuse numbers on other routes, so a lookup can be days
+    or years out of date (AAL2029 listed as DCA-BOS while flying DFW-MFE). The test:
+    origin -> plane -> destination can't be much longer than origin -> destination.
+    True when there's nothing to judge by (no airport or plane position)."""
+    if not route or lat is None or lon is None or not route.get("orig_pos") or not route.get("dest_pos"):
+        return True
+    total = distance_mi(*route["orig_pos"], *route["dest_pos"])
+    via = distance_mi(*route["orig_pos"], lat, lon) + distance_mi(lat, lon, *route["dest_pos"])
+    return via <= total * ROUTE_SLACK + ROUTE_SLACK_MI
+
+
 def parse_route(data):
     """adsbdb /callsign -> {orig, dest, orig_city, dest_city, orig_pos, dest_pos, airline,
     airline_icao, airline_iata}, or None if unknown or unusable."""
@@ -412,7 +429,11 @@ class Flights(Feed):
         now = now or time.time()
         if not self.data or now - self.fetched > MAX_AGE:
             return []
-        return [{**p, "route": self.route(p["callsign"], now)} for p in self.data[:n]]
+        out = []
+        for p in self.data[:n]:
+            route = self.route(p["callsign"], now)
+            out.append({**p, "route": route if route_fits(route, p.get("lat"), p.get("lon")) else None})
+        return out
 
 
 # --- tracked flights -----------------------------------------------------------------
@@ -492,6 +513,8 @@ class Tracker(Feed):
         self.lookups.lookup_route(cs, now)
         route = self.lookups.route(cs, now)
         p = self._position(cs)
+        if p and not route_fits(route, p.get("lat"), p.get("lon")):
+            route = None  # an out-of-date route for this flight number: don't use it
         status = st.get("status", "waiting")
         if status == "landed" and now - st.get("landed_at", now) > LANDED_SHOW:
             status = "waiting"
@@ -561,6 +584,8 @@ class Tracker(Feed):
             cs = st.get("callsign", "")
             route = self.lookups.route(cs, now) if cs else None
             last = st.get("last") or {}
+            if not route_fits(route, last.get("lat"), last.get("lon")):
+                route = None  # out of date for this flight number (see route_fits)
             status = st.get("status", "waiting")
             if self.data is None and flight not in self.state:
                 status = "checking"                        # first lookup still running
