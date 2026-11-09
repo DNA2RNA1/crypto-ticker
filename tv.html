@@ -349,11 +349,15 @@ PAGES.arcade={has:()=>ARC.list&&Object.keys(ARC.sheets).length===ARC.list.length
     requestAnimationFrame(draw);return total}};
 
 /* ---------- single dashboard ---------- */
-function dashGames(){  // live and final scores first; with betting lines on, upcoming games with a line fill the rest
-  const gs=(D.games||[]).slice();if(!D.settings.odds)return gs.slice(0,5);
-  const key=g=>g.league+g.away.abbr+g.home.abbr,seen=new Set(gs.map(key));
-  for(const g of D.lines||[])if(!seen.has(key(g))){gs.push(g);seen.add(key(g))}
-  return gs.slice(0,5)}
+function dashGames(){  // live games, then (with betting lines on) upcoming games with a line, then finals
+  const gs=D.games||[];if(!D.settings.odds)return gs.slice(0,5);
+  const key=g=>g.league+g.away.abbr+g.home.abbr,seen=new Set();
+  const live=gs.filter(g=>g.state==='in'),finals=gs.filter(g=>g.state==='post');
+  const upcoming=[...gs.filter(g=>g.state==='pre'),...(D.lines||[])].filter(g=>!seen.has(key(g))&&seen.add(key(g)))
+    .sort((a,b)=>(!!b.odds-!!a.odds)||(a.start-b.start));  // games with a line first, soonest first
+  // keep at least 3 rows for upcoming lines when there are that many (live games still come first)
+  const n=Math.max(0,5-live.length),up=upcoming.slice(0,Math.max(Math.min(3,upcoming.length),n-finals.length));
+  return [...live,...up,...finals].slice(0,5)}
 function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
   const flights=`<section class="card" style="flex:1.55;padding:24px 26px;display:flex;flex-direction:column;gap:14px;min-width:0"><div style="display:flex;justify-content:space-between"><div class="lbl" style="color:var(--accent);font-size:22px">FLIGHTS</div></div>
     ${(D.tracked||[]).slice(0,2).map(t=>{const r=t.route||{};const [i,a]=codes(t.callsign,r);const col=t.status==='landed'?'var(--up)':'var(--blue)';
