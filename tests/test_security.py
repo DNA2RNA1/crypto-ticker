@@ -19,9 +19,11 @@ def test_host_name(header, name):
 
 def test_host_allowed():
     me = os.uname().nodename.lower()
-    for ok in ("", "localhost", me, me + ".local", me + ".local.", "192.168.1.20", "fe80::1", "fe80::1%wlan0"):
+    for ok in ("", "localhost", me, me + ".local", me + ".local.", me + ".lan", me + ".home.arpa",
+               "192.168.1.20", "fe80::1", "fe80::1%wlan0"):
         assert webui.host_allowed(ok), ok
-    for bad in ("evil.example", "ticker.local.evil.example", "192.168.1.20.nip.io"):
+    for bad in ("evil.example", "ticker.local.evil.example", "192.168.1.20.nip.io", me + ".evil.example",
+                "other.lan"):
         assert not webui.host_allowed(bad), bad
     assert webui.host_allowed("ticker.tailnet.ts.net", {"ticker.tailnet.ts.net"})
 

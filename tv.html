@@ -34,6 +34,7 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
 #stage.crawl #pages .page{bottom:84px}
 #offline{position:absolute;right:24px;top:16px;background:#5A2A2A;color:#FFD6D1;font-size:22px;padding:8px 16px;border-radius:10px;z-index:5}
 #offline[hidden]{display:none}
+[data-row].off{display:none!important}
 @keyframes run{from{transform:translateX(0)}to{transform:translateX(-100%)}}
 .tile{display:flex;align-items:center;justify-content:center;font-weight:700;border-radius:18px;flex:none}
 .bar{height:10px;background:#2A313B;border-radius:5px;overflow:hidden}.bar>div{height:100%;border-radius:5px}
@@ -351,14 +352,12 @@ PAGES.arcade={has:()=>ARC.list&&Object.keys(ARC.sheets).length===ARC.list.length
 
 /* ---------- single dashboard ---------- */
 function dashGames(){  // live games, then (with betting lines on) upcoming games with a line, then finals
-  const gs=D.games||[];if(!D.settings.odds)return gs.slice(0,5);
+  const gs=D.games||[];if(!D.settings.odds)return gs.slice();
   const key=g=>g.league+g.away.abbr+g.home.abbr,seen=new Set();
   const live=gs.filter(g=>g.state==='in'),finals=gs.filter(g=>g.state==='post');
   const upcoming=[...gs.filter(g=>g.state==='pre'),...(D.lines||[])].filter(g=>!seen.has(key(g))&&seen.add(key(g)))
     .sort((a,b)=>(!!b.odds-!!a.odds)||(a.start-b.start));  // games with a line first, soonest first
-  // keep at least 3 rows for upcoming lines when there are that many (live games still come first)
-  const n=Math.max(0,5-live.length),up=upcoming.slice(0,Math.max(Math.min(3,upcoming.length),n-finals.length));
-  return [...live,...up,...finals].slice(0,5)}
+  return [...live,...upcoming,...finals]}  // all of them: the box pages through as many as fit
 function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
   const flights=`<section class="card" style="flex:1.55;padding:24px 26px;display:flex;flex-direction:column;gap:14px;min-width:0"><div style="display:flex;justify-content:space-between"><div class="lbl" style="color:var(--accent);font-size:22px">FLIGHTS</div></div>
     ${(D.tracked||[]).slice(0,2).map(t=>{const r=t.route||{};const [i,a]=codes(t.callsign,r);const col=t.status==='landed'?'var(--up)':'var(--blue)';
@@ -372,10 +371,10 @@ function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
     ${(D.assets||[]).slice(0,6).map(a=>`<div style="display:flex;align-items:center;gap:16px;height:96px;border-top:1px solid var(--line)">${coinBadge(a,48)}
     <div style="width:140px"><div style="font-size:26px;font-weight:700">${esc(a.symbol)}</div><div class="mono ${cls(a.change)}" style="font-size:20px">${pct(a.change)}</div></div>
     <div style="width:140px">${spark(a.spark,140,48,a.change>=0?'#2BD37E':'#FF6B5E',2.5)}</div><div class="mono" style="flex:1;text-align:right;font-size:30px;font-weight:700">${money(a.price)}</div></div>`).join('')}</section>`;
-  const side=`<div style="flex:.8;display:flex;flex-direction:column;gap:22px;min-width:0"><section class="card" style="padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">FORECAST</div>
+  const side=`<div style="flex:.8;display:flex;flex-direction:column;gap:22px;min-width:0;min-height:0"><section class="card" style="padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">FORECAST</div>
     ${(w&&w.days||[]).slice(0,5).map((d,i)=>`<div style="display:flex;align-items:center;gap:14px;height:52px;border-top:1px solid var(--line);font-size:22px"><b style="width:70px">${i?new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'Today'}</b>${icon(wx(d.code)[1],30)}<span style="flex:1;color:var(--muted);font-size:19px">${wx(d.code)[0]}</span><span class="mono"><b>${temp(d.high)}</b> <span style="color:var(--dim)">${temp(d.low)}</span></span></div>`).join('')}</section>
-    <section class="card" style="flex:1;padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">SCORES</div>
-    ${dashGames().map(g=>`<div style="display:flex;align-items:center;justify-content:space-between;min-height:64px;padding:4px 0;border-top:1px solid var(--line)"><div class="mono" style="font-size:21px"><div><b style="display:inline-block;width:80px">${esc(g.away.abbr)}</b>${g.state==='pre'?'':esc(g.away.score??'')}</div><div><b style="display:inline-block;width:80px">${esc(g.home.abbr)}</b>${g.state==='pre'?'':esc(g.home.score??'')}</div></div><div style="text-align:right">${lgTag(g,14)}<div style="font-size:18px;color:${g.state==='in'?'var(--up)':'var(--muted)'}">${esc(g.state==='pre'?tfmt(g.start,{weekday:'short',hour:'numeric'}):g.detail)}</div>${g.state==='pre'&&D.settings.odds&&lineShort(g)?`<div class="mono" style="font-size:17px;color:var(--accent)">${esc(lineShort(g))}</div>`:''}</div></div>`).join('')}</section></div>`;
+    <section class="card" data-fit style="flex:1;min-height:0;overflow:hidden;padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px;display:flex;justify-content:space-between">SCORES<span data-count style="color:var(--muted);letter-spacing:0;font-size:18px"></span></div>
+    ${dashGames().map(g=>`<div data-row style="display:flex;align-items:center;justify-content:space-between;min-height:64px;padding:4px 0;border-top:1px solid var(--line)"><div class="mono" style="font-size:21px"><div><b style="display:inline-block;width:80px">${esc(g.away.abbr)}</b>${g.state==='pre'?'':esc(g.away.score??'')}</div><div><b style="display:inline-block;width:80px">${esc(g.home.abbr)}</b>${g.state==='pre'?'':esc(g.home.score??'')}</div></div><div style="text-align:right">${lgTag(g,14)}<div style="font-size:18px;color:${g.state==='in'?'var(--up)':'var(--muted)'}">${esc(g.state==='pre'?tfmt(g.start,{weekday:'short',hour:'numeric'}):g.detail)}</div>${g.state==='pre'&&D.settings.odds&&lineShort(g)?`<div class="mono" style="font-size:17px;color:var(--accent)">${esc(lineShort(g))}</div>`:''}</div></div>`).join('')}</section></div>`;
   const cols=[flights,coins,side];if(swapped)cols.reverse();
   return `<div style="position:absolute;inset:0;padding:32px 36px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:22px">
     <header style="display:flex;justify-content:space-between;align-items:center;height:112px${swapped?';flex-direction:row-reverse':''}"><div style="display:flex;align-items:flex-end;gap:28px"><div class="tnow" style="font-size:104px;font-weight:600;line-height:.9">${esc(hm(now()))}</div>
@@ -389,9 +388,25 @@ function standby(){return `<div style="position:absolute;inset:0;display:flex;fl
   <div style="font-size:220px;font-weight:600">${esc(D?hm(now()):'')}</div><div style="font-size:40px;color:var(--muted)">${D?'Waiting for data…':'Connecting to the ticker…'}</div></div>`}
 
 /* ---------- rotation ---------- */
+let scoresAt=0,scoresShown=0,scoresSince=0;  // which games the Scores box shows; carries over when the dashboard redraws
+function pageRows(sec){const rows=[...sec.querySelectorAll('[data-row]')],n=rows.length,count=sec.querySelector('[data-count]');
+  if(!n)return 0;if(scoresAt>=n)scoresAt=0;rows.forEach(r=>r.classList.add('off'));let shown=0;
+  for(let i=scoresAt;i<n;i++){rows[i].classList.remove('off');
+    if(shown&&sec.scrollHeight>sec.clientHeight+1){rows[i].classList.add('off');break}shown++}
+  while(scoresAt+shown>=n&&scoresAt>0){  // last view with room left: fill it with the games just before
+    rows[scoresAt-1].classList.remove('off');
+    if(sec.scrollHeight>sec.clientHeight+1){rows[scoresAt-1].classList.add('off');break}scoresAt--;shown++}
+  if(count)count.textContent=shown<n?`${shown>1?scoresAt+1+'–':''}${scoresAt+shown} of ${n}`:'';scoresShown=shown;scoresSince=Date.now();return shown}
 let pageHold=null;  // ms the current page asked for (the arcade plays whole scenes)
 function show(html,key){const box=$('#pages');const old=[...box.children];const el=document.createElement('div');el.className='page';el.innerHTML=html;
   if(key==='single'||key==='arcade')el.style.padding='0';box.appendChild(el);
+  // the dashboard's Scores box shows as many games as fit and pages through the rest
+  el.querySelectorAll('[data-fit]').forEach(sec=>{
+    const age=Date.now()-scoresSince,keep=scoresShown&&age<8000;  // a redraw mid-way keeps the same games up
+    if(scoresShown&&!keep)scoresAt+=scoresShown;
+    const since=scoresSince;pageRows(sec);if(keep)scoresSince=since;
+    const tick=()=>{if(!sec.isConnected)return;scoresAt+=scoresShown;pageRows(sec);setTimeout(tick,8000)};
+    setTimeout(tick,keep?8000-age:8000)});
   pageHold=null;if(PAGES[key]&&PAGES[key].start){try{pageHold=PAGES[key].start(el)}catch(e){console.error(e)}}requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.add('on')));
   // fade out and remove every older page, not just the last one: two quick changes
   // (a setting changed on the phone, a flight pop-up) used to leave one behind

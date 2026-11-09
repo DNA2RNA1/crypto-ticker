@@ -130,6 +130,9 @@ def host_name(host_header):
     return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
 
 
+LAN_SUFFIXES = (".local", ".lan", ".home", ".localdomain", ".home.arpa", ".internal", ".localnet")
+
+
 def host_allowed(name, extra=()):
     """Requests must name this Pi: its own name, name.local, localhost, an IP address, or a
     name in WEB_ALLOWED_HOSTS. Blocks DNS rebinding (a web page that points its own
@@ -142,7 +145,10 @@ def host_allowed(name, extra=()):
     except ValueError:
         pass
     me = os.uname().nodename.lower()
-    return name.rstrip(".") in {"localhost", me, me + ".local", *extra}
+    name = name.rstrip(".")
+    # this Pi's name under the home-network endings routers hand out; none of them can be
+    # registered on the public internet, so an outside website can't use them
+    return name in {"localhost", me, *extra} or any(name == me + sfx for sfx in LAN_SUFFIXES)
 
 
 # --- validation --------------------------------------------------------------
