@@ -66,8 +66,9 @@ class Weather(Feed):
         r = self.session.get(self.URL, params={
             "latitude": self.lat, "longitude": self.lon,
             "current": "temperature_2m,weather_code,is_day",
-            "hourly": "temperature_2m", "daily": "temperature_2m_max,temperature_2m_min",
-            "forecast_days": 2, "timezone": "auto",
+            "hourly": "temperature_2m",
+            "daily": "temperature_2m_max,temperature_2m_min,weather_code,sunrise,sunset",
+            "forecast_days": 6, "timezone": "auto",
             "temperature_unit": self.unit}, timeout=15)
         r.raise_for_status()
         return parse_weather(r.json())
@@ -102,6 +103,23 @@ def parse_weather(js):
         out["high"] = _finite((daily.get("temperature_2m_max") or [None])[0])
         out["low"] = _finite((daily.get("temperature_2m_min") or [None])[0])
     except (AttributeError, TypeError, IndexError):
+        pass
+    try:  # the next days (TV forecast) and today's sunrise/sunset, local "2026-11-08T06:58"
+        daily = js.get("daily") or {}
+        dates = daily.get("time") or []
+        his, los = daily.get("temperature_2m_max") or [], daily.get("temperature_2m_min") or []
+        codes = daily.get("weather_code") or []
+        days = []
+        for i, d in enumerate(dates[:6]):
+            hi, lo = _finite(his[i]) if i < len(his) else None, _finite(los[i]) if i < len(los) else None
+            if hi is not None and lo is not None and isinstance(d, str):
+                days.append({"date": d[:10], "high": hi, "low": lo,
+                             "code": int(_finite(codes[i]) or 0) if i < len(codes) else 0})
+        out["days"] = days
+        rise, sets = daily.get("sunrise") or [], daily.get("sunset") or []
+        if rise and sets and isinstance(rise[0], str) and isinstance(sets[0], str):
+            out["sunrise"], out["sunset"] = rise[0][:16], sets[0][:16]
+    except (AttributeError, TypeError, IndexError, ValueError):
         pass
     try:
         hourly = js.get("hourly") or {}

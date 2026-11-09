@@ -181,6 +181,7 @@ class CoinGecko:
                 "change_24h": _num(row.get("price_change_percentage_24h")),
                 "sparkline": spark,
                 "image": image if isinstance(image, str) else None,
+                "market_cap": _num(row.get("market_cap")),
                 "updated": row.get("last_updated") if isinstance(row.get("last_updated"), str) else None,
             })
         return assets

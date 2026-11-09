@@ -20,11 +20,20 @@ from urllib.parse import parse_qs, urlparse
 
 from PIL import Image
 
+from tv import DEFAULT_TV_PAGES, TV_PAGE_NAMES, TV_PAGES, parse_pages
+
 log = logging.getLogger("ticker.web")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "cache")
 ICON_DIR = os.path.join(HERE, "icons")
+TV_HTML = os.path.join(HERE, "tv.html")
+
+
+def tv_page():
+    """The TV dashboard page (tv.html, read each time so an update shows on reload)."""
+    with open(TV_HTML, "rb") as fh:
+        return fh.read()
 AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
 AIRLINE_RE = re.compile(r"[A-Z]{3}")
 MAX_UPLOAD = 8 * 1024 * 1024
@@ -81,6 +90,10 @@ EDITABLE = {  # key -> validator returning the string to store
     "FLIGHTS_PER_CYCLE": lambda v: _int(v, 1, 5),
     "FLIGHTS_OVERHEAD": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "FLIGHTS_TRACK": lambda v: _tracked(v),
+    "TV_MODE": lambda v: _choice(v.strip().lower(), ("cycle", "single")),
+    "TV_PAGES": lambda v: _tv_pages(v),
+    "TV_SECONDS": lambda v: _int(v, 5, 120),
+    "TV_FLIGHT_POPUP": lambda v: _choice(v.strip().lower(), ("on", "off")),
 }
 
 MAX_FAILS = 5
@@ -112,7 +125,9 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "ODDS_PER_CYCLE": "Markets per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts",
           "FLIGHTS_RADIUS": "Flight radius", "FLIGHTS_PER_CYCLE": "Planes per cycle",
-          "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track"}
+          "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track",
+          "TV_MODE": "TV display mode", "TV_PAGES": "TV pages", "TV_SECONDS": "Seconds per TV page",
+          "TV_FLIGHT_POPUP": "Flight pop-up"}
 
 
 def _int(v, lo, hi):
@@ -293,6 +308,18 @@ def _watchlist(v):
     Empty is allowed (nothing on the watchlist yet)."""
     from watchlist import format_entries, parse_entries
     return format_entries(parse_entries(v))
+
+
+def _tv_pages(v):
+    """'crypto,chart' -> the same, every name checked (all off is saved as 'none')."""
+    from tv import TV_PAGES
+    names = [p.strip().lower() for p in str(v).split(",") if p.strip()]
+    if names == ["none"]:
+        names = []
+    bad = [p for p in names if p not in TV_PAGES]
+    if bad or len(set(names)) != len(names):
+        raise ValueError("unknown or repeated TV page")
+    return ",".join(names) or "none"  # "none", not empty: empty means "the default pages"
 
 
 def _tracked(v):
@@ -568,9 +595,26 @@ class WebApp:
             "flights_overhead": clean("FLIGHTS_OVERHEAD", "on"),
             "flights_track": [f for f in clean("FLIGHTS_TRACK", "").split(",") if f],
             "flights_status": self._flights_status(),
+            "device": "tv" if s.get("DEVICE", "").strip().lower() == "tv" else "led",
+            "tv_mode": clean("TV_MODE", "cycle"),
+            "tv_pages": self._tv_pages_setting(clean),
+            "tv_seconds": int(clean("TV_SECONDS", "15")),
+            "tv_flight_popup": clean("TV_FLIGHT_POPUP", "on"),
+            "tv_page_names": [[p, TV_PAGE_NAMES[p]] for p in TV_PAGES],
             "airlines": self._airlines(clean),
             "sports": self._sports(clean),
         }
+
+    @staticmethod
+    def _tv_pages_setting(clean):
+        raw = clean("TV_PAGES", None)
+        return parse_pages(raw) if raw is not None else list(DEFAULT_TV_PAGES)
+
+    def tv_data(self):
+        if not self.ticker or not hasattr(self.ticker, "weather"):
+            raise ValueError("the ticker isn't running")
+        from tv import payload
+        return payload(self.ticker)
 
     def _flights_status(self):
         tracker = getattr(self.ticker, "tracker", None)
@@ -820,6 +864,10 @@ def make_handler(app):
         def _authed(self):
             return app.authed(self.headers.get("Cookie"))
 
+        def _local(self):
+            """A request from this Pi itself (the TV's kiosk browser)."""
+            return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
+
         def do_GET(self):
             url = urlparse(self.path)
             if url.path == "/":
@@ -832,6 +880,18 @@ def make_handler(app):
                     return self._send(200, fh.read(), "image/png")
             if url.path == "/api/state":
                 return self._send(200, {"authed": self._authed(), "pin_set": bool(app.pin())})
+            if url.path in ("/tv", "/api/tv"):
+                # The TV's own browser (on this Pi) needs no PIN; anyone else signs in first.
+                if not (self._local() or self._authed()):
+                    if url.path == "/tv":
+                        return self._send(302, b"", headers={"Location": "/"})
+                    return self._send(401, {"error": "login required"})
+                if url.path == "/tv":
+                    return self._send(200, tv_page(), "text/html; charset=utf-8")
+                try:
+                    return self._send(200, app.tv_data())
+                except ValueError as exc:
+                    return self._send(503, {"error": str(exc)})
             if not self._authed():
                 return self._send(401, {"error": "login required"})
             if url.path == "/api/settings":
@@ -1222,9 +1282,32 @@ async function teamSearch(key,q,box){
   }catch(e){if(e.message!='login')box.innerHTML=`<div class="row"><div class="grow err">${esc(e.message)}</div></div>`}
 }
 function hourSel(id,val){return `<select id="${id}">${[...Array(24).keys()].map(h=>`<option value="${h}" ${h==val?'selected':''}>${(h%12||12)+(h<12?' am':' pm')}</option>`).join('')}</select>`}
+const TV_FEEDS={flights:'flights',tracked:'flights',crypto:'coins',chart:'coins',heatmap:'coins',weather:'weather',sunmoon:'weather',news:'news',feargreed:'feargreed',scores:'sports'};
+function isTV(){return S.device=='tv'}
+function tvOrder(){const all=(S.tv_page_names||[]).map(x=>x[0]);const o=(S.tv_order||[]).filter(k=>all.includes(k));
+  for(const k of S.tv_pages||[])if(all.includes(k)&&!o.includes(k))o.push(k);for(const k of all)if(!o.includes(k))o.push(k);return S.tv_order=o}
+function shows(k){  // does this Pi use screen k's settings? (LED: the screen is on; TV: a page needs it)
+  if(!isTV())return S.screens.includes(k);
+  if(S.tv_mode=='single'&&['flights','coins','weather','sports','news'].includes(k))return true;
+  return (S.tv_pages||[]).some(p=>TV_FEEDS[p]==k)}
+function tvRows(){const names=Object.fromEntries(S.tv_page_names||[]);const o=tvOrder();
+  return `<h2>TV dashboard</h2><div class="card">
+   <div class="row"><div class="grow">Mode<div class="name" style="white-space:normal">${S.tv_mode=='single'?'Everything on one screen. Columns trade places now and then so nothing burns in.':'One full-screen page at a time, with a crawl of prices and headlines along the bottom.'}</div></div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('tv_mode',[['cycle','Cycle pages'],['single','Single dashboard']])}</div>
+   ${S.tv_mode!='single'?`<div class="row"><div class="grow">Seconds per page</div>
+    <select id="tvsecs">${[10,15,20,30,45,60].map(n=>`<option ${S.tv_seconds==n?'selected':''}>${n}</option>`).join('')}</select></div>`:''}
+   <div class="row"><div class="grow">Flight pop-up<div class="name" style="white-space:normal">A flight you track takes over the screen for 30 seconds when it takes off or lands.</div></div>
+    <label class="switch"><input type="checkbox" id="tvpop" ${S.tv_flight_popup!='off'?'checked':''}><span></span></label></div></div>
+  ${S.tv_mode!='single'?`<h2>TV pages</h2><div class="card">${o.map((k,i)=>`<div class="row"><div class="grow">${esc(names[k]||k)}</div>
+     <button class="btn" data-tup="${k}" ${i==0?'disabled':''} aria-label="Move up">↑</button>
+     <button class="btn" data-tdown="${k}" ${i==o.length-1?'disabled':''} aria-label="Move down">↓</button>
+     <label class="switch"><input type="checkbox" data-tvpage="${k}" ${(S.tv_pages||[]).includes(k)?'checked':''}><span></span></label></div>`).join('')}</div>
+  <p class="hint">Shown in this order. A page with nothing to show right now (no planes nearby, no games today) is skipped. Your coins, flights, news, sports and weather settings below feed the pages.</p>`:''}`}
+function saveTvPages(order,on){S.tv_pages=order.filter(k=>on.has(k));save();render()}
 function render(){
   const dim=S.dim_hours?S.dim_hours.split('-').map(Number):null;
-  app.innerHTML=`<h1>Ticker</h1>
+  app.innerHTML=`<h1>${isTV()?'TV dashboard':'Ticker'}</h1>
+  ${isTV()?tvRows():''}
   <h2>Coins</h2><div class="card" id="coins">${S.coins.map((c,i)=>coinRow(c,i,S.coins.length)).join('')}</div>
   <p class="hint">★ = featured: gets a big-picture screen before its price. Tap a coin's picture to use your own.</p>
   <div class="card"><div class="row"><div class="grow">Focus<div class="name" style="white-space:normal">Show only ★ coins. Clock, Fear &amp; Greed and indices keep running.</div></div>
@@ -1234,7 +1317,7 @@ function render(){
   <input type="file" id="file" accept="image/*" hidden>
   <h2>Add a coin</h2><input id="q" type="search" placeholder="Search name or ticker, e.g. cardano" autocomplete="off" autocorrect="off" autocapitalize="off">
   <div class="card" id="results" style="margin-top:8px"></div>
-  <h2>Screens</h2><div class="card">
+  ${isTV()?'':`<h2>Screens</h2><div class="card">
    ${screenOrder().map((k,i,a)=>`<div class="row"><div class="grow">${SCREEN_LABELS[k]}</div>
      <button class="btn" data-sup="${k}" ${i==0?'disabled':''} aria-label="Move up">↑</button>
      <button class="btn" data-sdown="${k}" ${i==a.length-1?'disabled':''} aria-label="Move down">↓</button>
@@ -1249,15 +1332,15 @@ function render(){
      ?'Flips from % to the change in index points halfway through.'
      :'Flips from % to the $ change halfway through. S&amp;P and Nasdaq are tokenized-fund prices ($ per share, not index points); switch the source to Yahoo for real points. The Dow is always points.'}</div></div>
      <label class="switch"><input type="checkbox" id="iview" ${S.indices_view=='both'?'checked':''}><span></span></label></div>`:''}`:''}
-  </div>
-  ${S.screens.includes('news')?newsRows():''}
-  ${S.screens.includes('videos')?videosRows():''}
-  ${S.screens.includes('arcade')?arcadeRows():''}
-  ${S.screens.includes('watchlist')?watchlistRows():''}
-  ${S.screens.includes('odds')?oddsRows():''}
-  ${S.screens.includes('flights')?flightRows():''}
-  <p class="hint">Shown in this order at the start of each cycle, then your coins (if Crypto prices is on). If everything is off, the coins show. The weather screen uses the location below.</p>
-  ${S.screens.includes('sports')?sportsSection():''}
+  </div>`}
+  ${shows('news')?newsRows():''}
+  ${!isTV()&&S.screens.includes('videos')?videosRows():''}
+  ${!isTV()&&S.screens.includes('arcade')?arcadeRows():''}
+  ${!isTV()&&S.screens.includes('watchlist')?watchlistRows():''}
+  ${!isTV()&&S.screens.includes('odds')?oddsRows():''}
+  ${shows('flights')?flightRows():''}
+  ${isTV()?'':`<p class="hint">Shown in this order at the start of each cycle, then your coins (if Crypto prices is on). If everything is off, the coins show. The weather screen uses the location below.</p>`}
+  ${shows('sports')?sportsSection():''}
   <h2>Weather on the clock</h2><div class="card">
    <div class="row"><div class="grow">Location<div class="name" id="wplace">${esc(S.weather_place||(S.weather_lat+', '+S.weather_lon))}</div></div></div>
    <div class="row" style="border-top:0;padding-top:0;gap:8px">
@@ -1272,7 +1355,7 @@ function render(){
    <div id="xplaces"></div>`:''}
    <div class="row"><div class="grow">Temperature</div><div style="width:120px">${seg('temp_unit',[['F','°F'],['C','°C']])}</div></div>
   </div>
-  <h2>Display</h2><div class="card">
+  ${isTV()?'':`<h2>Display</h2><div class="card">
    <div class="row"><div class="grow">Layout</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('layout',[['classic','Icons'],['chart','Chart'],['mix','Mix']])}</div>
    <div class="row"><div class="grow">Brightness</div><div class="val" id="bv">${S.brightness}%</div></div>
@@ -1292,7 +1375,7 @@ function render(){
    ${dim?`<div class="row"><div class="grow">From</div>${hourSel('dfrom',dim[0])}<div>to</div>${hourSel('dto',dim[1])}</div>
    <div class="row"><div class="grow">Night brightness</div><div class="val" id="dbv">${S.dim_brightness}%</div></div>
    <div class="row" style="border-top:0;padding-top:0"><input type="range" id="dbright" min="1" max="60" value="${S.dim_brightness}"></div>`:''}
-  </div>
+  </div>`}
   <h2>Prices</h2><div class="card">
    <div class="row"><div class="grow">Currency</div><select id="cur">${['usd','eur','gbp','cad','aud','jpy'].map(c=>`<option ${S.currency==c?'selected':''}>${c}</option>`).join('')}</select></div>
    <div class="row"><div class="grow">Refresh prices every</div><select id="rr">${[['auto','Auto'],['60','1 min'],['120','2 min'],['180','3 min'],['300','5 min'],['600','10 min'],['900','15 min'],['1800','30 min']].map(([v,l])=>`<option value="${v}" ${String(S.refresh_rate)==v?'selected':''}>${l}</option>`).join('')}</select></div>
@@ -1372,7 +1455,8 @@ function save(extra){
       flights_radius:S.flights_radius,flights_per_cycle:S.flights_per_cycle,flights_overhead:S.flights_overhead,flights_track:(S.flights_track||[]).join('\n'),
       sports_odds:S.sports_odds,odds_markets:(S.odds_markets||[]).join('\n'),odds_per_cycle:S.odds_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
-        ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta};
+        ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta,
+      ...(isTV()?{tv_mode:S.tv_mode,tv_pages:(S.tv_pages||[]).join(','),tv_seconds:S.tv_seconds,tv_flight_popup:S.tv_flight_popup}:{})};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
     catch(e){if(e.message!='login'){toast('Not saved: '+e.message,true);setTimeout(load,1800)}}
   },extra===0?0:450);
@@ -1397,13 +1481,20 @@ function bind(){
     searchTimer=setTimeout(()=>search(q),350)};
   document.querySelectorAll('[data-seg]').forEach(s=>s.onclick=e=>{const b=e.target.closest('button');if(!b)return;
     S[s.dataset.seg]=b.dataset.v;s.querySelectorAll('button').forEach(x=>x.classList.toggle('on',x==b));save();
-    if(['list_view','indices_style'].includes(s.dataset.seg))render()});
+    if(['list_view','indices_style','tv_mode'].includes(s.dataset.seg))render()});
   document.querySelectorAll('[data-screen]').forEach(cb=>cb.onchange=()=>{
     const on=new Set(S.screens);cb.checked?on.add(cb.dataset.screen):on.delete(cb.dataset.screen);
     saveScreens(screenOrder(),on)});
   document.querySelectorAll('[data-sup],[data-sdown]').forEach(b=>b.onclick=()=>{
     const o=screenOrder(),k=b.dataset.sup||b.dataset.sdown,i=o.indexOf(k),j=b.dataset.sup?i-1:i+1;
     [o[i],o[j]]=[o[j],o[i]];S.screen_order=o;saveScreens(o,new Set(S.screens))});
+  document.querySelectorAll('[data-tvpage]').forEach(cb=>cb.onchange=()=>{
+    const on=new Set(S.tv_pages||[]);cb.checked?on.add(cb.dataset.tvpage):on.delete(cb.dataset.tvpage);saveTvPages(tvOrder(),on)});
+  document.querySelectorAll('[data-tup],[data-tdown]').forEach(b=>b.onclick=()=>{
+    const o=tvOrder(),k=b.dataset.tup||b.dataset.tdown,i=o.indexOf(k),j=b.dataset.tup?i-1:i+1;
+    [o[i],o[j]]=[o[j],o[i]];S.tv_order=o;saveTvPages(o,new Set(S.tv_pages||[]))});
+  if($('#tvsecs'))$('#tvsecs').onchange=e=>{S.tv_seconds=+e.target.value;save()};
+  if($('#tvpop'))$('#tvpop').onchange=e=>{S.tv_flight_popup=e.target.checked?'on':'off';save()};
   if($('#feeds'))$('#feeds').onchange=e=>{S.news_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
   if($('#gfeeds'))$('#gfeeds').onchange=e=>{S.news_general_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
   if($('#ncrypto'))$('#ncrypto').onchange=e=>{S.news_crypto=e.target.checked?'on':'off';save();render()};
@@ -1473,9 +1564,9 @@ function bind(){
   if($('#xzipgo')){$('#xzipgo').onclick=addCity;$('#xzip').onkeydown=e=>{if(e.key=='Enter')addCity()}}
   document.querySelectorAll('[data-xdel]').forEach(b=>b.onclick=()=>{
     S.weather_extra=(S.weather_extra||[]).filter((_,i)=>i!=+b.dataset.xdel);save(0);render()});
-  $('#bright').oninput=e=>{S.brightness=+e.target.value;$('#bv').textContent=S.brightness+'%';save()};
-  $('#sleep').oninput=e=>{S.sleep=+e.target.value;$('#sv').textContent=S.sleep+'s';save()};
-  $('#listview').onchange=e=>{S.list_view=e.target.checked?'4':'off';save();render()};
+  if($('#bright'))$('#bright').oninput=e=>{S.brightness=+e.target.value;$('#bv').textContent=S.brightness+'%';save()};
+  if($('#sleep'))$('#sleep').oninput=e=>{S.sleep=+e.target.value;$('#sv').textContent=S.sleep+'s';save()};
+  if($('#listview'))$('#listview').onchange=e=>{S.list_view=e.target.checked?'4':'off';save();render()};
   $('#focus').onchange=e=>{S.focus=e.target.checked?'on':'off';focusHint();save()};
   if($('#lpage'))$('#lpage').oninput=e=>{S.list_page_seconds=+e.target.value;$('#lpv').textContent=S.list_page_seconds+'s';save()};
   focusHint();
@@ -1484,7 +1575,7 @@ function bind(){
   document.querySelectorAll('[data-hq],[data-hc]').forEach(i=>i.onchange=()=>{
     const h={};holdingsString().split(',').filter(Boolean).forEach(e=>{const b=e.split(':');h[b[0]]=[+b[1],b[2]?+b[2]:null]});
     S.portfolio_holdings=h;save()});
-  $('#dim').onchange=e=>{S.dim_hours=e.target.checked?'22-7':'';render();save()};
+  if($('#dim'))$('#dim').onchange=e=>{S.dim_hours=e.target.checked?'22-7':'';render();save()};
   if($('#dfrom')){const f=()=>{S.dim_hours=$('#dfrom').value+'-'+$('#dto').value;save()};$('#dfrom').onchange=f;$('#dto').onchange=f;
     $('#dbright').oninput=e=>{S.dim_brightness=+e.target.value;$('#dbv').textContent=S.dim_brightness+'%';save()}}
   $('#cur').onchange=e=>{S.currency=e.target.value;save()};

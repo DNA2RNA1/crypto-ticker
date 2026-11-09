@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>TV dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0B0D10;--panel:#14181E;--line:#252B33;--text:#EAEDF1;--soft:#C9D1DB;--muted:#9AA3AE;--dim:#7D8794;
+  --accent:#F5B400;--up:#2BD37E;--down:#FF6B5E;--blue:#3BA0FF;--sans:'Space Grotesk',system-ui,'DejaVu Sans',sans-serif;
+  --mono:'JetBrains Mono','DejaVu Sans Mono',monospace}
+html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
+#stage{position:absolute;left:0;top:0;width:1920px;height:1080px;transform-origin:0 0;background:var(--bg);color:var(--text);
+  font-family:var(--sans);overflow:hidden}
+#shift{position:absolute;inset:0;transition:transform 2s ease}
+.page{position:absolute;inset:0;box-sizing:border-box;padding:44px 64px 0;display:flex;flex-direction:column;gap:28px;
+  opacity:0;transition:opacity .8s ease}
+.page.on{opacity:1}
+.mono{font-family:var(--mono)}
+.hdr{display:flex;justify-content:space-between;align-items:center;min-height:72px}
+.hdr.flip{flex-direction:row-reverse}
+.ttl{display:flex;align-items:baseline;gap:26px}
+.ttl h1{margin:0;font-size:56px;font-weight:700;letter-spacing:2px}
+.ttl .sub{font-size:26px;color:var(--muted)}
+.clk{display:flex;gap:24px;font-size:34px}.clk b{font-weight:600}.clk span{color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:22px}
+.lbl{font-size:20px;letter-spacing:3px;color:var(--dim)}
+.up{color:var(--up)}.down{color:var(--down)}
+.tick{height:84px;margin:auto -64px 0;display:flex;align-items:center;background:#12161B;border-top:1px solid var(--line);
+  overflow:hidden;white-space:nowrap;font-family:var(--mono);font-size:28px;position:relative}
+.tick .run{display:inline-flex;gap:48px;padding-left:100%;animation:run linear infinite}
+@keyframes run{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+.tile{display:flex;align-items:center;justify-content:center;font-weight:700;border-radius:18px;flex:none}
+.bar{height:10px;background:#2A313B;border-radius:5px;overflow:hidden}.bar>div{height:100%;border-radius:5px}
+.grid2{display:grid;gap:26px}
+.empty{flex:1;display:flex;align-items:center;justify-content:center;font-size:40px;color:var(--dim)}
+</style>
+</head>
+<body>
+<div id="stage"><div id="shift"><div id="pages"></div></div></div>
+<script>
+'use strict';
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let D=null, idx=-1, chartIdx=0, popup=null, lastStatus={}, swapped=false, current='';
+
+/* ---------- fit 1920x1080 to the screen ---------- */
+function fit(){const k=Math.min(innerWidth/1920,innerHeight/1080);const st=$('#stage');
+  st.style.transform=`translate(${(innerWidth-1920*k)/2}px,${(innerHeight-1080*k)/2}px) scale(${k})`}
+addEventListener('resize',fit);fit();
+/* burn-in care: nudge everything a few pixels every 3 minutes */
+setInterval(()=>{const r=()=>Math.round(Math.random()*12-6);$('#shift').style.transform=`translate(${r()}px,${r()}px)`},180000);
+
+/* ---------- formatting ---------- */
+const CUR={usd:'$',eur:'€',gbp:'£',jpy:'¥',cad:'C$',aud:'A$'};
+function money(v){if(v==null)return '—';const c=CUR[(D&&D.currency)||'usd']??'';const a=Math.abs(v);
+  const d=a>=10000?0:a>=1?2:a>=0.01?4:6;return c+v.toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d})}
+const pct=v=>v==null?'':(v>=0?'▲ ':'▼ ')+Math.abs(v).toFixed(1)+'%';
+const cls=v=>v==null?'':v>=0?'up':'down';
+function tfmt(ts,opt){try{return new Intl.DateTimeFormat('en-US',Object.assign({timeZone:D.tz||undefined},opt)).format(new Date(ts*1000))}
+  catch(e){return new Intl.DateTimeFormat('en-US',opt).format(new Date(ts*1000))}}
+const hm=ts=>tfmt(ts,{hour:'numeric',minute:'2-digit'});
+const now=()=>Date.now()/1000;
+function ago(ts){if(!ts)return '';const m=Math.max(0,Math.round((now()-ts)/60));return m<60?m+' min ago':m<1440?Math.round(m/60)+' hr ago':Math.round(m/1440)+' days ago'}
+const deg=()=>D&&D.unit==='C'?'°':'°';
+const temp=v=>v==null?'—':Math.round(v)+'°';
+function clock(){const w=D&&D.weather;return `<div class="clk"><b>${esc(hm(now()))}</b>${w?`<span>${temp(w.temp)}</span>`:''}</div>`}
+function hdr(title,sub,flip){return `<div class="hdr ${flip?'flip':''}"><div class="ttl"><h1>${esc(title)}</h1>${sub?`<div class="sub">${esc(sub)}</div>`:''}</div>${clock()}</div>`}
+
+/* ---------- weather words & icons ---------- */
+function wx(code){code=+code||0;
+  if(code===0)return['Clear','sun'];if(code<=2)return['Partly cloudy','part'];if(code===3)return['Cloudy','cloud'];
+  if(code<=48)return['Fog','cloud'];if(code<=57)return['Drizzle','rain'];if(code<=67)return['Rain','rain'];
+  if(code<=77)return['Snow','snow'];if(code<=82)return['Showers','rain'];return['Thunderstorms','storm']}
+function icon(kind,size){const s=size||40,y='#F5B400',g='#C9D1DB',b='#78BEFF';
+  const sun=`<circle cx="12" cy="12" r="4.5" stroke="${y}"/><path stroke="${y}" d="M12 2v2.5M12 19.5V22M2 12h2.5M19.5 12H22M4.9 4.9l1.8 1.8M17.3 17.3l1.8 1.8M4.9 19.1l1.8-1.8M17.3 6.7l1.8-1.8"/>`;
+  const cloud=c=>`<path stroke="${c||g}" d="M17.5 19H8a5 5 0 1 1 4.8-6.5A4 4 0 1 1 17.5 19z"/>`;
+  const body={sun,part:`<path stroke="${y}" d="M8 3v1.5M3.5 7.5H5M4.6 4.6l1 1M14.5 7a4 4 0 0 0-7.2 2"/>`+cloud(),cloud:cloud(),
+    rain:cloud()+`<path stroke="${b}" d="M9 21l-1 2M13 21l-1 2M17 21l-1 2"/>`,snow:cloud()+`<path stroke="#fff" d="M9 22h.01M13 22h.01M17 22h.01"/>`,
+    storm:cloud()+`<path stroke="${y}" d="M13 19l-2 3h3l-2 3"/>`}[kind]||cloud();
+  return `<svg width="${s}" height="${s}" viewBox="0 0 24 26" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`}
+
+/* ---------- airline tile (code on brand color; no logos) ---------- */
+const AIR={UAL:['#003CBE','#fff'],DAL:['#BE142D','#fff'],AAL:['#006EC8','#fff'],SWA:['#2846BE','#FFC800'],JBU:['#002D8C','#fff'],
+  ASA:['#005A82','#fff'],NKS:['#F0D200','#000'],FFT:['#00783C','#fff'],AAY:['#F08C00','#fff'],HAL:['#6E288C','#fff'],
+  SKW:['#1E3C78','#fff'],ENY:['#006EC8','#fff'],RPA:['#003CBE','#fff'],AMX:['#0A1E5A','#fff'],VOI:['#B4003C','#fff'],
+  FDX:['#50148C','#FF8C00'],UPS:['#5A3C1E','#FFBE00']};
+function airTile(icao,iata,size){const sz=size||84;if(!icao)return `<div class="tile" style="width:${sz}px;height:${sz}px;background:#16202C">
+  <svg width="${sz*.66}" height="${sz*.66}" viewBox="0 0 24 24" fill="none" stroke="#78BEFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20M3 11l9-3 9 3M8 20l4-1.5 4 1.5"/></svg></div>`;
+  let [bg,ink]=AIR[icao]||[null,'#fff'];if(!bg){let h=0;for(const c of icao)h=(h*31+c.charCodeAt(0))%360;bg=`hsl(${h},70%,38%)`}
+  return `<div class="tile" style="width:${sz}px;height:${sz}px;background:${bg};color:${ink};font-size:${sz*.45}px">${esc(iata||icao)}</div>`}
+function codes(cs,route){route=route||{};const icao=route.airline_icao||(/^[A-Z]{3}\d/.test(cs||'')?cs.slice(0,3):'');
+  return [icao,route.airline_iata||Object.keys(IATA).find(k=>IATA[k]===icao)||'']}
+const IATA={AA:'AAL',UA:'UAL',DL:'DAL',WN:'SWA',B6:'JBU',AS:'ASA',NK:'NKS',F9:'FFT',G4:'AAY',HA:'HAL',OO:'SKW',MQ:'ENY',YX:'RPA',AM:'AMX',Y4:'VOI',FX:'FDX','5X':'UPS'};
+const shortAir=n=>String(n||'').replace(/\s+(Air Lines|Airlines|Airways|Air Line|Aviation)$/i,'');
+const ft=v=>v==null?'—':Math.round(v).toLocaleString('en-US')+' ft';
+const mph=kt=>kt==null?'—':Math.round(kt*1.15078)+' mph';
+const arrow=vr=>vr==null||Math.abs(vr)<300?'':vr>0?'<span class="up">▲</span>':'<span class="down">▼</span>';
+const compass=t=>t==null?'':'N NE E SE S SW W NW'.split(' ')[Math.floor(((t%360)+22.5)/45)%8];
+
+/* ---------- bottom ticker ---------- */
+function ticker(){const a=(D.assets||[]).map(x=>`<span><b>${esc(x.symbol)}</b> <span class="${cls(x.change)}">${pct(x.change)}</span></span>`);
+  const n=(D.news||[]).slice(0,6).map(x=>`<span><b style="color:var(--accent)">${esc((x.source||'').toUpperCase())}</b> <span style="font-family:var(--sans)">${esc(x.title)}</span></span>`);
+  const items=[];const m=Math.max(a.length,n.length);for(let i=0;i<m;i++){if(a[i])items.push(a[i]);if(n[i])items.push(n[i])}
+  if(!items.length)return '';const secs=Math.max(30,items.length*7);
+  return `<div class="tick"><div class="run" style="animation-duration:${secs}s">${items.join('')}</div></div>`}
+
+/* ---------- pages ---------- */
+const PAGES={};
+PAGES.flights={has:()=>D.overhead&&D.overhead.length,html(f){
+  const rows=D.overhead.slice(0,5).map(p=>{const r=p.route||{};const [icao,iata]=codes(p.callsign,r);
+    return `<div style="display:grid;grid-template-columns:96px 1.2fr 1.9fr .8fr 1.3fr 1fr .8fr;gap:0 22px;align-items:center;height:132px;border-top:1px solid var(--line);padding:0 8px">
+    ${airTile(icao,iata)}<div><div class="mono" style="font-size:40px;font-weight:700">${esc(p.callsign||p.reg||'—')}</div><div style="font-size:22px;color:var(--muted)">${esc(shortAir(r.airline)||(icao?'':'Private'))}</div></div>
+    <div><div class="mono" style="font-size:40px;font-weight:600">${r.orig?esc(r.orig+' → '+r.dest):'Heading '+compass(p.track)}</div><div style="font-size:22px;color:var(--muted)">${r.orig_city?esc(r.orig_city+' to '+r.dest_city):''}</div></div>
+    <div class="mono" style="font-size:32px;color:var(--soft)">${esc(p.type||'')}</div>
+    <div class="mono" style="font-size:36px">${ft(p.alt_ft)} ${arrow(p.vrate_fpm)}</div>
+    <div class="mono" style="font-size:36px;color:var(--soft)">${mph(p.speed_kt)}</div>
+    <div class="mono" style="font-size:36px;color:var(--muted);text-align:right">${p.dist_mi<10?p.dist_mi.toFixed(1):Math.round(p.dist_mi)} mi</div></div>`}).join('');
+  return hdr('Flights overhead','live · closest first',f)+`<div style="flex:1">${rows}</div>`+ticker()}};
+
+function pickTracked(){const t=D.tracked||[];if(popup){const p=t.find(x=>x.flight===popup.flight);if(p)return p}
+  return t.find(x=>x.status==='air')||t.find(x=>x.status==='landed')||t[0]}
+PAGES.tracked={has:()=>D.tracked&&D.tracked.length,html(f){const t=pickTracked();if(!t)return '';
+  const r=t.route||{};const [icao,iata]=codes(t.callsign,r);const prog=t.progress==null?null:Math.round(t.progress*100);
+  const st={air:['In flight','var(--up)'],landed:['Landed'+(t.landed_at?' '+hm(t.landed_at):''),'var(--up)'],ground:['On the ground','var(--accent)'],
+    lost:['No signal'+(t.seen_at?' since '+hm(t.seen_at):''),'var(--accent)'],waiting:['Not departed yet','var(--accent)'],checking:['Checking…','var(--muted)']}[t.status]||['','var(--muted)'];
+  const bigRight=t.status==='air'&&t.eta?['ESTIMATED ARRIVAL',hm(t.eta)]:t.status==='landed'?['LANDED',t.landed_at?hm(t.landed_at):'']:['STATUS',st[0]];
+  const stat=(l,v,n,c)=>`<div class="card" style="padding:26px 30px;display:flex;flex-direction:column;gap:8px"><div class="lbl">${l}</div><div class="mono" style="font-size:52px;font-weight:700">${v}</div><div style="font-size:22px;color:${c||'var(--muted)'}">${n}</div></div>`;
+  return `<div class="hdr ${f?'flip':''}"><div style="display:flex;align-items:center;gap:16px"><div style="background:var(--accent);color:#000;font-weight:700;font-size:22px;letter-spacing:3px;padding:10px 18px;border-radius:10px">TRACKING</div>
+    <div style="font-size:24px;color:var(--muted)">${D.tracked.length>1?D.tracked.length+' flights followed':'Flight you’re following'}</div></div>${clock()}</div>
+  <div style="display:flex;align-items:center;gap:44px">${airTile(icao,iata,190)}
+    <div style="display:flex;flex-direction:column;gap:10px"><div style="font-size:34px;color:var(--soft)">${esc([shortAir(r.airline),t.type].filter(Boolean).join(' · '))}</div>
+    <div class="mono" style="font-size:116px;font-weight:700;line-height:1">${esc(t.flight)}</div></div>
+    <div style="margin-left:auto;text-align:right"><div class="lbl" style="font-size:26px">${bigRight[0]}</div><div style="font-size:100px;font-weight:600;line-height:1.05;color:${t.status==='landed'?'var(--up)':'var(--text)'}">${esc(bigRight[1])}</div></div></div>
+  <div class="card" style="padding:36px 48px;display:flex;flex-direction:column;gap:24px">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end">
+      <div><div class="mono" style="font-size:84px;font-weight:700;line-height:1">${esc(r.orig||'—')}</div><div style="font-size:28px;color:var(--muted)">${esc(r.orig_city||'')}</div></div>
+      <div style="text-align:center"><div class="lbl" style="font-size:24px">${t.status==='air'?'NOW OVER':'STATUS'}</div><div style="font-size:44px;font-weight:600;color:${st[1]}">${esc(t.status==='air'&&t.place?t.place:st[0])}</div></div>
+      <div style="text-align:right"><div class="mono" style="font-size:84px;font-weight:700;line-height:1">${esc(r.dest||'—')}</div><div style="font-size:28px;color:var(--muted)">${esc(r.dest_city||'')}</div></div></div>
+    <div style="position:relative;height:56px"><div style="position:absolute;left:0;right:0;top:25px;height:6px;background:#2A313B;border-radius:3px"></div>
+      ${prog!=null?`<div style="position:absolute;left:0;width:${prog}%;top:25px;height:6px;background:${t.status==='landed'?'var(--up)':'var(--blue)'};border-radius:3px"></div>
+      <svg width="56" height="56" viewBox="0 0 24 24" fill="#EAEDF1" aria-hidden="true" style="position:absolute;left:calc(${prog}% - 28px);top:0"><path transform="rotate(90 12 12)" d="M21 16v-2l-8-5V3.5a1.5 1.5 0 0 0-3 0V9l-8 5v2l8-2.5V19l-2 1.5V22l3.5-1 3.5 1v-1.5L13 19v-5.5l8 2.5z"/></svg>`:''}</div>
+    <div style="display:flex;justify-content:space-between;font-size:26px;color:var(--muted)"><div>${prog!=null?prog+'% of the way'+(t.remaining_mi!=null&&t.status!=='landed'?' · '+Math.round(t.remaining_mi).toLocaleString()+' mi to go':''):''}</div><div>Arrival time is an estimate</div></div></div>
+  <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px">
+    ${stat('ALTITUDE',t.alt_ft!=null&&t.status!=='landed'?ft(t.alt_ft):'—','')}${stat('SPEED',t.status==='landed'?'—':mph(t.speed_kt),'ground speed')}
+    ${stat('HEADING',t.track!=null&&t.status==='air'?compass(t.track)+' '+Math.round(t.track)+'°':'—','')}${stat('STATUS',esc(st[0]),t.seen_at?'updated '+ago(t.seen_at):'',st[1])}</div>`}};
+
+function spark(pts,w,h,color,stroke){if(!pts||pts.length<2)return '';const lo=Math.min(...pts),hi=Math.max(...pts),sp=(hi-lo)||1;
+  const d=pts.map((v,i)=>(i*(w-4)/(pts.length-1)+2).toFixed(1)+','+(h-2-(v-lo)/sp*(h-4)).toFixed(1)).join(' ');
+  return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" fill="none" aria-hidden="true"><polyline points="${d}" stroke="${color}" stroke-width="${stroke||3}" stroke-linejoin="round" stroke-linecap="round"/></svg>`}
+function coinBadge(a,size){const s=size||64;return a.image?`<img src="${esc(a.image)}" alt="" width="${s}" height="${s}" style="border-radius:50%;flex:none">`
+  :`<div class="tile" style="width:${s}px;height:${s}px;border-radius:50%;background:#2A313B;font-size:${s*.45}px">${esc((a.symbol||'?')[0])}</div>`}
+PAGES.crypto={has:()=>D.assets&&D.assets.length,html(f){
+  const cards=D.assets.slice(0,6).map(a=>{const c=a.change>=0?'var(--up)':'var(--down)';const wk=a.spark&&a.spark.length>1?(a.spark[a.spark.length-1]>=a.spark[0]?'var(--up)':'var(--down)'):c;
+    return `<div class="card" style="padding:28px 32px;display:flex;flex-direction:column;gap:12px;min-height:0">
+    <div style="display:flex;align-items:center;gap:18px">${coinBadge(a)}<div><div style="font-size:38px;font-weight:700">${esc(a.symbol)}</div><div style="font-size:22px;color:var(--muted)">${esc(a.name)}</div></div>
+    <div class="mono ${cls(a.change)}" style="margin-left:auto;font-size:32px;font-weight:700">${pct(a.change)}</div></div>
+    <div class="mono" style="font-size:60px;font-weight:700;line-height:1.1">${money(a.price)}</div>${spark(a.spark,520,100,wk.replace('var(--up)','#2BD37E').replace('var(--down)','#FF6B5E'),4)}</div>`}).join('');
+  return hdr('Crypto','24h change · 7-day trend',f)+`<div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;min-height:0;padding-bottom:4px">${cards}</div>`+ticker()}};
+
+PAGES.chart={has:()=>D.assets&&D.assets.some(a=>a.candles&&a.candles.length>4),html(f){
+  const list=D.assets.filter(a=>a.candles&&a.candles.length>4);const a=list[chartIdx%list.length];
+  const cs=a.candles,W=1640,H=680;let lo=Math.min(...cs.map(c=>c[2])),hi=Math.max(...cs.map(c=>c[1]));const pad=(hi-lo)*.08||1;lo-=pad;hi+=pad;
+  const y=v=>H-(v-lo)/(hi-lo)*H,step=W/cs.length,bw=step*.62;
+  const body=cs.map((c,i)=>{const [o,h,l,cl]=c,up=cl>=o,col=up?'#4CD68A':'#E5485F',cx=i*step+step/2;
+    return `<line x1="${cx}" x2="${cx}" y1="${y(h)}" y2="${y(l)}" stroke="${col}" stroke-width="3"/><rect x="${cx-bw/2}" y="${y(Math.max(o,cl))}" width="${bw}" height="${Math.max(3,Math.abs(y(o)-y(cl)))}" fill="${up?'#0B0D10':col}" stroke="${col}" stroke-width="3"/>`}).join('');
+  const ticks=[];for(let k=0;k<5;k++){const v=lo+(hi-lo)*(k+.5)/5;ticks.push(`<line x1="0" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="#1E242C" stroke-width="2"/><text x="${W+18}" y="${y(v)+8}" fill="#7D8794" font-size="24" font-family="JetBrains Mono">${esc(money(v))}</text>`)}
+  const last=cs[cs.length-1][3],first=cs[0][0],dv=last-first,col=dv>=0?'#4CD68A':'#E5485F';
+  return `<div class="hdr ${f?'flip':''}"><div style="display:flex;align-items:center;gap:22px">${coinBadge(a,76)}<div><div style="font-size:48px;font-weight:700;line-height:1">${esc(a.symbol)} <span style="font-size:30px;color:var(--muted);font-weight:500">${esc(a.name)}</span></div>
+    <div class="mono" style="font-size:30px;color:${col}">${esc(money(a.price))}  ${dv>=0?'+':'−'}${esc(money(Math.abs(dv)))} (${dv>=0?'+':'−'}${Math.abs(dv/first*100).toFixed(2)}%) · 7 days</div></div></div>
+    <div style="display:flex;align-items:center;gap:26px"><div class="mono" style="font-size:26px;padding:8px 16px;border-radius:10px;background:#262C35;font-weight:700">4H candles</div>${clock()}</div></div>
+  <svg width="1808" height="${H+20}" viewBox="0 0 1808 ${H+20}" role="img" aria-label="${esc(a.symbol)} 7-day candles">${ticks.join('')}${body}
+    <line x1="0" x2="${W}" y1="${y(last)}" y2="${y(last)}" stroke="${col}" stroke-width="2" stroke-dasharray="4 8"/>
+    <rect x="${W+4}" y="${y(last)-22}" width="164" height="44" rx="8" fill="${col}"/><text x="${W+86}" y="${y(last)+9}" fill="#fff" font-size="24" font-weight="700" font-family="JetBrains Mono" text-anchor="middle">${esc(money(a.price))}</text></svg>`+ticker()},
+  next(){chartIdx++}};
+
+PAGES.weather={has:()=>D.weather,html(f){const w=D.weather,[txt,ic]=wx(w.code),hours=(w.hourly||[]).slice(1,9),h0=w.hour??new Date().getHours();
+  const hrs=hours.map((t,i)=>{const h=(h0+i+1)%24;return `<div class="card" style="padding:18px 0;display:flex;flex-direction:column;align-items:center;gap:10px;border-radius:18px"><div style="font-size:24px;color:var(--muted)">${(h%12||12)+(h<12?' AM':' PM')}</div><div class="mono" style="font-size:40px;font-weight:700">${temp(t)}</div></div>`}).join('');
+  const days=(w.days||[]).slice(0,5).map((d,i)=>{const [dt,di]=wx(d.code);const name=i===0?'Today':new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'});
+    return `<div class="card" style="padding:24px 28px;display:flex;flex-direction:column;justify-content:space-between"><div style="display:flex;justify-content:space-between;align-items:center"><div style="font-size:34px;font-weight:700">${name}</div>${icon(di,46)}</div><div style="font-size:26px;color:var(--muted)">${dt}</div>
+    <div class="mono" style="font-size:44px"><b>${temp(d.high)}</b> <span style="color:var(--dim)">${temp(d.low)}</span></div></div>`}).join('');
+  return hdr('Weather',D.place||'',f)+`<div style="display:flex;align-items:center;gap:56px">${icon(ic,200)}<div style="font-size:230px;font-weight:600;line-height:.9;letter-spacing:-6px">${temp(w.temp)}</div>
+    <div style="display:flex;flex-direction:column;gap:14px"><div style="font-size:56px;font-weight:600">${txt}</div><div style="font-size:32px;color:var(--soft)">High ${temp(w.high)} · Low ${temp(w.low)}</div></div></div>
+    ${hrs?`<div style="display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:16px">${hrs}</div>`:''}
+    <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:20px;flex:1;padding-bottom:6px">${days}</div>`+ticker()}};
+
+PAGES.news={has:()=>D.news&&D.news.length,html(f){const [top,...rest]=D.news;
+  return hdr('Headlines','',f)+`<div class="card" style="padding:40px 48px;display:flex;flex-direction:column;gap:18px"><div style="display:flex;gap:18px;align-items:center">
+    <div style="background:var(--accent);color:#000;font-weight:700;font-size:24px;letter-spacing:2px;padding:8px 16px;border-radius:10px">${esc((top.source||'').toUpperCase())}</div><div style="font-size:26px;color:var(--muted)">${ago(top.at)}</div></div>
+    <div style="font-size:62px;font-weight:600;line-height:1.15">${esc(top.title)}</div></div>
+    <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;padding-bottom:6px">${rest.slice(0,3).map(n=>`<div class="card" style="padding:28px 32px;display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;gap:14px"><div style="font-weight:700;font-size:22px;letter-spacing:2px;color:#78BEFF">${esc((n.source||'').toUpperCase())}</div><div style="font-size:22px;color:var(--dim)">${ago(n.at)}</div></div>
+    <div style="font-size:36px;font-weight:500;line-height:1.25">${esc(n.title)}</div></div>`).join('')}</div>`+ticker()}};
+
+function treemap(items,x,y,w,h,out){if(!items.length)return out;if(items.length===1){out.push([items[0],x,y,w,h]);return out}
+  const tot=items.reduce((s,i)=>s+i.v,0);let acc=0,k=0;while(k<items.length-1&&acc+items[k].v<tot/2){acc+=items[k].v;k++}if(k===0){acc=items[0].v;k=1}
+  const a=items.slice(0,k),b=items.slice(k),r=acc/tot;
+  if(w>=h){treemap(a,x,y,w*r,h,out);treemap(b,x+w*r,y,w*(1-r),h,out)}else{treemap(a,x,y,w,h*r,out);treemap(b,x,y+h*r,w,h*(1-r),out)}return out}
+PAGES.heatmap={has:()=>D.assets&&D.assets.length>=3,html(f){
+  const items=D.assets.map(a=>({a,v:Math.max(1,a.market_cap||a.price||1)})).sort((p,q)=>q.v-p.v).slice(0,12);
+  const bg=c=>c==null?'#2A313B':c>=3?'#1A9E5A':c>=1?'#1F7A47':c>=0?'#1F4A35':c>-2?'#5A2A2A':c>-4?'#8A2B25':'#B3261E';
+  const W=1792,H=780;const tiles=treemap(items,0,0,W,H,[]).map(([it,x,y,w,h])=>{const fs=Math.max(26,Math.min(110,Math.sqrt(w*h)/5));
+    return `<div style="position:absolute;left:${x+5}px;top:${y+5}px;width:${w-10}px;height:${h-10}px;background:${bg(it.a.change)};border-radius:16px;padding:18px 22px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:space-between;overflow:hidden">
+    <div style="font-size:${fs}px;font-weight:700;line-height:1">${esc(it.a.symbol)}</div><div class="mono" style="display:flex;justify-content:space-between;gap:10px;font-size:${Math.max(18,fs*.3)}px"><span style="opacity:.85">${money(it.a.price)}</span><b>${it.a.change==null?'':(it.a.change>=0?'+':'−')+Math.abs(it.a.change).toFixed(1)+'%'}</b></div></div>`}).join('');
+  return hdr('Crypto heatmap','size = market value · color = 24h change',f)+`<div style="position:relative;width:${W}px;height:${H}px">${tiles}</div>`}};
+
+PAGES.feargreed={has:()=>D.fear_greed&&D.fear_greed.value!=null,html(f){const g=D.fear_greed,v=g.value,a=Math.PI*(1-v/100);
+  const lab=v<25?['Extreme fear','#E8726A']:v<45?['Fear','#F0A35E']:v<=55?['Neutral','#C9D1DB']:v<=75?['Greed','#58C27D']:['Extreme greed','#58C27D'];
+  const hist=g.history||[];const back=n=>hist.length>n?hist[hist.length-1-n]:null;
+  const card=(w,val)=>val==null?'':`<div class="card" style="padding:20px 24px"><div style="font-size:22px;color:var(--dim)">${w}</div><div class="mono" style="font-size:52px;font-weight:700">${val}</div></div>`;
+  return hdr('Fear & Greed','crypto market mood, 0 to 100',f)+`<div style="flex:1;display:flex;align-items:center;gap:80px"><div style="position:relative;width:1000px;height:600px;flex:none">
+    <svg width="1000" height="600" viewBox="0 0 1000 600" role="img" aria-label="Gauge at ${v}">
+    <path d="M100 520 A400 400 0 0 1 223 232" fill="none" stroke="#C0392B" stroke-width="70"/><path d="M227 228 A400 400 0 0 1 376 140" fill="none" stroke="#E67E22" stroke-width="70"/>
+    <path d="M381 138 A400 400 0 0 1 619 138" fill="none" stroke="#7D8794" stroke-width="70"/><path d="M624 140 A400 400 0 0 1 773 228" fill="none" stroke="#58C27D" stroke-width="70"/>
+    <path d="M777 232 A400 400 0 0 1 900 520" fill="none" stroke="#1A9E5A" stroke-width="70"/>
+    <line x1="500" y1="520" x2="${(500+330*Math.cos(a)).toFixed(1)}" y2="${(520-330*Math.sin(a)).toFixed(1)}" stroke="#EAEDF1" stroke-width="12" stroke-linecap="round"/><circle cx="500" cy="520" r="28" fill="#EAEDF1"/></svg>
+    <div class="mono" style="position:absolute;left:0;right:0;top:330px;text-align:center;font-size:120px;font-weight:700">${v}</div></div>
+    <div style="flex:1;display:flex;flex-direction:column;gap:22px"><div style="font-size:88px;font-weight:700;color:${lab[1]};line-height:1">${lab[0]}</div>
+    <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:18px">${card('Yesterday',back(1))}${card('Last week',back(7))}${card('Last month',back(29))}</div></div></div>`}};
+
+function moon(ts){const syn=29.530588853,ref=Date.UTC(2000,0,6,18,14)/1000;const age=(((ts-ref)/86400)%syn+syn)%syn;const frac=(1-Math.cos(2*Math.PI*age/syn))/2;
+  const names=['New moon','Waxing crescent','First quarter','Waxing gibbous','Full moon','Waning gibbous','Last quarter','Waning crescent'];
+  return {age,frac,name:names[Math.floor((age/syn)*8+.5)%8],waxing:age<syn/2}}
+function localTs(s){if(!s)return null;try{const d=new Date(s+':00');return d.getTime()/1000}catch(e){return null}}
+PAGES.sunmoon={has:()=>D.weather&&D.weather.sunrise,html(f){const w=D.weather,rise=localTs(w.sunrise),set=localTs(w.sunset),m=moon(now());
+  const day=set-rise,frac=Math.max(0,Math.min(1,(now()-rise)/day)),up=now()>rise&&now()<set;
+  const bx=t=>80+960*t,by=t=>480-4*540*t*(1-t)*0.98;const sx=bx(frac),sy=by(frac);
+  const r=140,k=Math.cos(2*Math.PI*m.age/29.530588853),lit=m.waxing?1:-1;
+  const moonPath=`M160 20 A140 140 0 0 ${m.waxing?1:0} 160 300 A${Math.abs(k*r).toFixed(1)} 140 0 0 ${(k>0)===(m.waxing)?0:1} 160 20 Z`;
+  const dl=Math.round(day/60);
+  return hdr('Sun & moon',(D.place||'')+' · '+tfmt(now(),{weekday:'long',month:'short',day:'numeric'}),f)+`<div style="flex:1;display:flex;gap:56px;align-items:center">
+  <div style="width:1120px;display:flex;flex-direction:column;gap:6px"><svg width="1120" height="560" viewBox="0 0 1120 560" role="img" aria-label="Sun position">
+    <line x1="40" y1="480" x2="1080" y2="480" stroke="#3A424D" stroke-width="3"/><path d="M80 480 Q560 -60 1040 480" fill="none" stroke="#3A424D" stroke-width="4" stroke-dasharray="4 12" stroke-linecap="round"/>
+    ${up?`<circle cx="${sx}" cy="${sy}" r="44" fill="#F5B400"/><circle cx="${sx}" cy="${sy}" r="64" fill="none" stroke="#F5B400" stroke-opacity=".35" stroke-width="8"/>`:''}
+    <text x="80" y="536" fill="#9AA3AE" font-size="28" text-anchor="middle">East</text><text x="1040" y="536" fill="#9AA3AE" font-size="28" text-anchor="middle">West</text></svg>
+    <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:18px">
+    <div class="card" style="padding:20px 26px"><div class="lbl">SUNRISE</div><div class="mono" style="font-size:48px;font-weight:700">${hm(rise)}</div></div>
+    <div class="card" style="padding:20px 26px"><div class="lbl">SUNSET</div><div class="mono" style="font-size:48px;font-weight:700">${hm(set)}</div></div>
+    <div class="card" style="padding:20px 26px"><div class="lbl">DAYLIGHT</div><div class="mono" style="font-size:48px;font-weight:700">${Math.floor(dl/60)}h ${dl%60}m</div></div></div></div>
+  <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:22px"><svg width="320" height="320" viewBox="0 0 320 320" role="img" aria-label="${m.name}">
+    <circle cx="160" cy="160" r="140" fill="#2A313B"/><path d="${moonPath}" fill="#E6E2D3"/></svg>
+    <div style="font-size:52px;font-weight:700">${m.name}</div><div style="font-size:28px;color:var(--muted)">${Math.round(m.frac*100)}% lit</div></div></div>`}};
+
+function teamColor(t){const c=(t&&t.color)||'';return /^[0-9a-fA-F]{6}$/.test(c)?'#'+c:'#3A424D'}
+PAGES.scores={has:()=>D.games&&D.games.length,html(f){const gs=D.games;const g=gs.find(x=>x.state==='in')||gs[0];
+  const st=x=>x.state==='in'?['● LIVE','var(--up)']:x.state==='pre'?[tfmt(x.start,{weekday:'short',hour:'numeric',minute:'2-digit'}),'var(--accent)']:['FINAL','var(--muted)'];
+  const side=(t,right)=>`<div style="background:${teamColor(t)};display:flex;align-items:center;justify-content:space-between;padding:0 48px;${right?'flex-direction:row-reverse':''}">
+    <div style="${right?'text-align:right':''}"><div style="font-size:64px;font-weight:700">${esc(t.abbr)}</div><div style="font-size:26px;opacity:.85">${esc(t.record||t.name||'')}</div></div>
+    <div class="mono" style="font-size:140px;font-weight:700">${g.state==='pre'?'':esc(t.score??'')}</div></div>`;
+  const [s0,c0]=st(g);
+  const others=gs.filter(x=>x!==g).slice(0,3).map(x=>{const [s,c]=st(x);const row=t=>`<div style="display:flex;justify-content:space-between;align-items:center"><div style="display:flex;align-items:center;gap:14px"><div style="width:14px;height:44px;border-radius:4px;background:${teamColor(t)}"></div><div style="font-size:40px;font-weight:700">${esc(t.abbr)}</div></div><div class="mono" style="font-size:48px;font-weight:700">${x.state==='pre'?'':esc(t.score??'')}</div></div>`;
+    return `<div class="card" style="padding:26px 30px;display:flex;flex-direction:column;justify-content:center;gap:14px"><div style="font-size:22px;color:${c};letter-spacing:2px;font-weight:600">${esc(s)}${x.detail&&x.state!=='pre'?' · '+esc(x.detail):''}</div>${row(x.away)}${row(x.home)}</div>`}).join('');
+  return hdr('Scores','',f)+`<div class="card" style="overflow:hidden;display:grid;grid-template-columns:1fr 280px 1fr;height:260px">${side(g.away)}
+    <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:#0F1318"><div style="font-size:28px;color:${c0};font-weight:600;letter-spacing:2px">${esc(s0)}</div><div class="mono" style="font-size:34px;text-align:center;padding:0 10px">${esc(g.state==='pre'?'':g.detail||'')}</div></div>
+    ${side(g.home,true)}</div><div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;padding-bottom:30px">${others}</div>`}};
+
+/* ---------- single dashboard ---------- */
+function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
+  const flights=`<section class="card" style="flex:1.55;padding:24px 26px;display:flex;flex-direction:column;gap:14px;min-width:0"><div style="display:flex;justify-content:space-between"><div class="lbl" style="color:var(--accent);font-size:22px">FLIGHTS</div></div>
+    ${(D.tracked||[]).slice(0,2).map(t=>{const r=t.route||{};const [i,a]=codes(t.callsign,r);const col=t.status==='landed'?'var(--up)':'var(--blue)';
+      return `<div style="display:flex;gap:18px;align-items:center;background:#1A1F27;border-radius:14px;padding:16px 18px">${airTile(i,a,64)}<div style="flex:1;display:flex;flex-direction:column;gap:8px;min-width:0">
+      <div style="display:flex;justify-content:space-between"><div class="mono" style="font-size:30px;font-weight:700">${esc(t.flight)} <span style="color:var(--soft);font-weight:500">${r.orig?esc(r.orig+' → '+r.dest):''}</span></div>
+      <div style="font-size:26px;font-weight:600;color:${t.status==='landed'?'var(--up)':'var(--text)'}">${t.status==='air'&&t.eta?'ETA '+hm(t.eta):t.status==='landed'?'Landed':esc(t.status)}</div></div>
+      <div class="bar"><div style="width:${Math.round((t.progress||0)*100)}%;background:${col}"></div></div></div></div>`}).join('')}
+    ${(D.overhead||[]).slice(0,4).map(p=>{const r=p.route||{};const [i,a]=codes(p.callsign,r);return `<div style="display:grid;grid-template-columns:48px 1.3fr 1.4fr .8fr 1.2fr .9fr;gap:0 14px;align-items:center;height:58px;border-top:1px solid var(--line);font-family:var(--mono);font-size:22px">
+      ${airTile(i,a,40)}<b>${esc(p.callsign||p.reg)}</b><span style="color:var(--soft)">${r.orig?esc(r.orig+' → '+r.dest):''}</span><span style="color:var(--muted)">${esc(p.type)}</span><span style="white-space:nowrap">${ft(p.alt_ft)} ${arrow(p.vrate_fpm)}</span><span style="color:var(--muted);text-align:right">${p.dist_mi.toFixed(1)} mi</span></div>`}).join('')||'<div style="color:var(--dim);font-size:22px">No planes nearby right now</div>'}</section>`;
+  const coins=`<section class="card" style="flex:1;padding:24px 26px;display:flex;flex-direction:column;min-width:0"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">CRYPTO</div>
+    ${(D.assets||[]).slice(0,6).map(a=>`<div style="display:flex;align-items:center;gap:16px;height:96px;border-top:1px solid var(--line)">${coinBadge(a,48)}
+    <div style="width:140px"><div style="font-size:26px;font-weight:700">${esc(a.symbol)}</div><div class="mono ${cls(a.change)}" style="font-size:20px">${pct(a.change)}</div></div>
+    <div style="width:140px">${spark(a.spark,140,48,a.change>=0?'#2BD37E':'#FF6B5E',2.5)}</div><div class="mono" style="flex:1;text-align:right;font-size:30px;font-weight:700">${money(a.price)}</div></div>`).join('')}</section>`;
+  const side=`<div style="flex:.8;display:flex;flex-direction:column;gap:22px;min-width:0"><section class="card" style="padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">FORECAST</div>
+    ${(w&&w.days||[]).slice(0,5).map((d,i)=>`<div style="display:flex;align-items:center;gap:14px;height:52px;border-top:1px solid var(--line);font-size:22px"><b style="width:70px">${i?new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'Today'}</b>${icon(wx(d.code)[1],30)}<span style="flex:1;color:var(--muted);font-size:19px">${wx(d.code)[0]}</span><span class="mono"><b>${temp(d.high)}</b> <span style="color:var(--dim)">${temp(d.low)}</span></span></div>`).join('')}</section>
+    <section class="card" style="flex:1;padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">SCORES</div>
+    ${(D.games||[]).slice(0,3).map(g=>`<div style="display:flex;align-items:center;justify-content:space-between;height:64px;border-top:1px solid var(--line)"><div class="mono" style="font-size:21px"><div><b style="display:inline-block;width:80px">${esc(g.away.abbr)}</b>${g.state==='pre'?'':esc(g.away.score??'')}</div><div><b style="display:inline-block;width:80px">${esc(g.home.abbr)}</b>${g.state==='pre'?'':esc(g.home.score??'')}</div></div><div style="font-size:18px;color:${g.state==='in'?'var(--up)':'var(--muted)'}">${esc(g.state==='pre'?tfmt(g.start,{weekday:'short',hour:'numeric'}):g.detail)}</div></div>`).join('')}</section></div>`;
+  const cols=[flights,coins,side];if(swapped)cols.reverse();
+  return `<div style="position:absolute;inset:0;padding:32px 36px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:22px">
+    <header style="display:flex;justify-content:space-between;align-items:center;height:112px${swapped?';flex-direction:row-reverse':''}"><div style="display:flex;align-items:flex-end;gap:28px"><div style="font-size:104px;font-weight:600;line-height:.9">${esc(hm(now()))}</div>
+    <div style="padding-bottom:6px"><div style="font-size:30px;font-weight:500">${esc(tfmt(now(),{weekday:'long',month:'long',day:'numeric'}))}</div><div style="font-size:22px;color:var(--muted)">${esc(D.place||'')}</div></div></div>
+    ${w?`<div style="display:flex;align-items:center;gap:24px">${icon(ic,84)}<div style="font-size:96px;font-weight:600;line-height:1">${temp(w.temp)}</div><div><div style="font-size:30px;font-weight:500">${txt}</div><div style="font-size:22px;color:var(--muted)">High ${temp(w.high)} · Low ${temp(w.low)}</div></div></div>`:''}</header>
+    <main style="display:flex;gap:22px;flex:1;min-height:0">${cols.join('')}</main><div style="margin:0 -36px">${ticker().replace('margin:auto -64px 0','margin:0')}</div></div>`}
+setInterval(()=>{swapped=!swapped},45*60000);  // single dashboard: columns trade places every 45 min
+
+/* ---------- standby (nothing to show yet) ---------- */
+function standby(){return `<div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px">
+  <div style="font-size:220px;font-weight:600">${esc(D?hm(now()):'')}</div><div style="font-size:40px;color:var(--muted)">${D?'Waiting for data…':'Connecting to the ticker…'}</div></div>`}
+
+/* ---------- rotation ---------- */
+function show(html,key){const box=$('#pages');const old=box.firstElementChild;const el=document.createElement('div');el.className='page';el.innerHTML=html;
+  if(key==='single')el.style.padding='0';box.appendChild(el);requestAnimationFrame(()=>requestAnimationFrame(()=>el.classList.add('on')));
+  if(old){old.classList.remove('on');setTimeout(()=>old.remove(),900)}current=key}
+function available(){return (D.settings.pages||[]).filter(p=>PAGES[p]&&PAGES[p].has())}
+function step(){if(!D){show(standby(),'standby');return}
+  if(popup&&now()<popup.until){show(PAGES.tracked.html(false),'tracked');return}popup=null;
+  if(D.settings.mode==='single'){show(single(),'single');return}
+  const list=available();if(!list.length){show(standby(),'standby');return}
+  idx=(idx+1)%list.length;const key=list[idx];const html=PAGES[key].html(idx%2===1);show(html,key);if(PAGES[key].next)PAGES[key].next()}
+let timer=null;function schedule(){clearTimeout(timer);const s=(D&&D.settings.seconds)||15;timer=setTimeout(()=>{step();schedule()},(D&&D.settings.mode==='single'?30:s)*1000)}
+
+/* flight pop-up: a tracked flight that just took off or landed takes over for 30 s */
+function watchFlights(){if(!D.settings.popup)return;for(const t of D.tracked||[]){const was=lastStatus[t.flight];
+  if(was&&was!==t.status&&(t.status==='landed'||(t.status==='air'&&(was==='waiting'||was==='ground')))){popup={flight:t.flight,until:now()+30};step();schedule()}
+  lastStatus[t.flight]=t.status}}
+
+async function load(){try{const r=await fetch('/api/tv',{cache:'no-store'});if(!r.ok)throw new Error(r.status);const first=!D;D=await r.json();watchFlights();if(first){step();schedule()}}
+  catch(e){if(!D){show(standby(),'standby')}}}
+load();setInterval(load,10000);
+setInterval(()=>{const c=document.querySelectorAll('.clk b');c.forEach(x=>x.textContent=hm(now()))},15000);
+</script>
+</body>
+</html>

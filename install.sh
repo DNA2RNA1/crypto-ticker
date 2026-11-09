@@ -12,6 +12,8 @@
 #   ./install.sh --remove-enterprise-wifi  only remove that work Wi-Fi profile
 #   ./install.sh --add-wifi      only save another ordinary Wi-Fi network (e.g. a phone hotspot)
 #   ./install.sh --list-wifi     only list saved Wi-Fi networks and the ones in range
+#   ./install.sh --tv            set up a Pi 4/5 with Raspberry Pi OS *with desktop* as the TV
+#                                dashboard: no LED library, browser opens full-screen at boot
 # A normal run never changes Wi-Fi settings; only the Wi-Fi options above do.
 set -euo pipefail
 
@@ -19,10 +21,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$(dirname "$HERE")/rpi-rgb-led-matrix"
 VENV="$HERE/venv"
 SERVICE=crypto-ticker
-PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0 WIFI=""
+PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0 WIFI="" TV=0
 DEPLOY_KEY="$HOME/.ssh/crypto-ticker-deploy"
 
-usage() { sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --pin) PIN="${2:-}"; ASK_PIN=0; shift ;;
@@ -34,6 +36,7 @@ while [ $# -gt 0 ]; do
         --remove-enterprise-wifi) WIFI=remove ;;
         --add-wifi) WIFI=add-psk ;;
         --list-wifi) WIFI=list ;;
+        --tv) TV=1; BUILD=0 ;;
         -h|--help) usage 0 ;;
         *) echo "Unknown option: $1" >&2; usage 1 ;;
     esac
@@ -173,8 +176,11 @@ if [ -r /etc/os-release ]; then
     esac
 fi
 MODEL="$(tr -d '\0' </proc/device-tree/model 2>/dev/null || true)"
+[ -f "$HERE/settings.env" ] && grep -q '^DEVICE=tv' "$HERE/settings.env" && { TV=1; BUILD=0; }  # a re-run keeps it a TV
 if [ -n "$MODEL" ]; then
     echo "Detected: $MODEL"
+elif [ "$TV" -eq 1 ]; then
+    warn "This doesn't look like a Raspberry Pi; the TV setup may not fit."
 else
     warn "This doesn't look like a Raspberry Pi; the LED library may not work."
 fi
@@ -187,6 +193,12 @@ say "Installing system packages"
 sudo apt-get update
 sudo apt-get install -y git openssh-client python3 python3-venv python3-dev python3-pip cython3 cmake build-essential \
     libjpeg-dev zlib1g-dev libopenjp2-7 libtiff6
+if [ "$TV" -eq 1 ]; then
+    # the browser, curl for the kiosk's wait, cec-ctl to switch the TV on/off over HDMI
+    sudo apt-get install -y curl v4l-utils fonts-dejavu-core
+    sudo apt-get install -y chromium || sudo apt-get install -y chromium-browser \
+        || die "Couldn't install Chromium. The TV needs Raspberry Pi OS with desktop."
+fi
 
 python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' \
     || die "Python 3.9 or newer is needed (found $(python3 --version 2>&1))."
@@ -233,16 +245,39 @@ if [ "$BUILD" -eq 1 ]; then
     # warns if Pillow changes later (the library then needs rebuilding: ./install.sh).
     echo "$PIL_VER" > "$VENV/.led-built-with-pillow"
 fi
-"$VENV/bin/python" -c 'import rgbmatrix' 2>/dev/null \
-    || warn "The rgbmatrix module isn't importable yet. Run again without --skip-build."
+if [ "$TV" -eq 0 ]; then
+    "$VENV/bin/python" -c 'import rgbmatrix' 2>/dev/null \
+        || warn "The rgbmatrix module isn't importable yet. Run again without --skip-build."
+fi
 
 # --- Pi configuration -----------------------------------------------------
-say "Turning off onboard audio (it uses the same hardware timer as the LED panel)"
-echo "blacklist snd_bcm2835" | sudo tee /etc/modprobe.d/blacklist-rgb-matrix.conf >/dev/null
-CONFIG_TXT=/boot/firmware/config.txt
-[ -f "$CONFIG_TXT" ] || CONFIG_TXT=/boot/config.txt
-if [ -f "$CONFIG_TXT" ] && grep -q "^dtparam=audio=on" "$CONFIG_TXT"; then
-    sudo sed -i 's/^dtparam=audio=on/dtparam=audio=off/' "$CONFIG_TXT"
+if [ "$TV" -eq 0 ]; then
+    say "Turning off onboard audio (it uses the same hardware timer as the LED panel)"
+    echo "blacklist snd_bcm2835" | sudo tee /etc/modprobe.d/blacklist-rgb-matrix.conf >/dev/null
+    CONFIG_TXT=/boot/firmware/config.txt
+    [ -f "$CONFIG_TXT" ] || CONFIG_TXT=/boot/config.txt
+    if [ -f "$CONFIG_TXT" ] && grep -q "^dtparam=audio=on" "$CONFIG_TXT"; then
+        sudo sed -i 's/^dtparam=audio=on/dtparam=audio=off/' "$CONFIG_TXT"
+    fi
+else
+    say "Setting up the TV: desktop at boot, no screen blanking, dashboard full-screen"
+    if command -v raspi-config >/dev/null; then
+        sudo raspi-config nonint do_boot_behaviour B4 || warn "couldn't turn on desktop autologin (raspi-config: System > Boot)"
+        sudo raspi-config nonint do_wayland W3 2>/dev/null || true   # labwc, the current Pi desktop
+        sudo raspi-config nonint do_blanking 1 || warn "couldn't turn off screen blanking (raspi-config: Display > Screen Blanking)"
+    else
+        warn "raspi-config not found: turn on desktop autologin and turn off screen blanking yourself"
+    fi
+    AUTOSTART="$HOME/.config/labwc/autostart"
+    mkdir -p "$(dirname "$AUTOSTART")"
+    touch "$AUTOSTART"
+    grep -q "tv-kiosk.sh" "$AUTOSTART" || echo "$HERE/tv-kiosk.sh &" >> "$AUTOSTART"
+    # older X11 desktops (LXDE) read this one instead
+    LXDE="$HOME/.config/lxsession/LXDE-pi/autostart"
+    if [ -d "$(dirname "$LXDE")" ] && ! grep -q "tv-kiosk.sh" "$LXDE" 2>/dev/null; then
+        echo "@$HERE/tv-kiosk.sh" >> "$LXDE"
+    fi
+    chmod +x "$HERE/tv-kiosk.sh"
 fi
 
 say "Capping the system journal at 16 MB (small SD card)"
@@ -258,7 +293,7 @@ if [ ! -f "$HERE/settings.env" ]; then
     cp "$HERE/settings.env.example" "$HERE/settings.env"
     NEW_SETTINGS=1
     say "Created settings.env from the example"
-    case "$MODEL" in  # a sensible starting point for panel timing
+    [ "$TV" -eq 1 ] || case "$MODEL" in  # a sensible starting point for panel timing
         *"Pi 4"*|*"Pi 5"*) sed -i 's/^LED_SLOWDOWN_GPIO=.*/LED_SLOWDOWN_GPIO=4/' "$HERE/settings.env" ;;
         *"Pi 3"*|*"Zero 2"*)          sed -i 's/^LED_SLOWDOWN_GPIO=.*/LED_SLOWDOWN_GPIO=2/' "$HERE/settings.env" ;;
     esac
@@ -271,6 +306,11 @@ set_setting() {  # set_setting KEY VALUE  (VALUE is already validated: digits on
         echo "$1=$2" >> "$HERE/settings.env"
     fi
 }
+
+if [ "$TV" -eq 1 ]; then
+    if grep -q "^DEVICE=" "$HERE/settings.env"; then sed -i "s/^DEVICE=.*/DEVICE=tv/" "$HERE/settings.env"
+    else echo "DEVICE=tv" >> "$HERE/settings.env"; fi
+fi
 
 if [ -n "$PIN" ]; then
     set_setting WEB_PIN "$PIN"
@@ -314,8 +354,9 @@ cat <<EOF
 
 Done.
 $( [ "$NEW_SETTINGS" -eq 1 ] && echo "Edit your coins and panel settings first:  nano $HERE/settings.env" )
-Reboot once so the audio change takes effect:   sudo reboot
-After that the ticker starts on its own at boot.
+$( [ "$TV" -eq 1 ] && echo "Reboot once:   sudo reboot
+After that the dashboard opens full-screen on the TV by itself." || echo "Reboot once so the audio change takes effect:   sudo reboot
+After that the ticker starts on its own at boot." )
   status:   sudo systemctl status $SERVICE
   logs:     journalctl -u $SERVICE -f     (or: tail -f $HERE/logs/ticker.log)
   restart:  sudo systemctl restart $SERVICE   (after editing settings.env by hand)

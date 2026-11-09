@@ -38,6 +38,7 @@ More screenshots (rendered by the emulator) are in [`docs/screenshots/`](docs/sc
    - [Watchlist: stocks, funds and futures](#watchlist-stocks-funds-and-futures)
    - [Odds: betting lines and prediction markets](#odds-betting-lines-and-prediction-markets)
    - [Flights: tracked flights and planes overhead](#flights-tracked-flights-and-planes-overhead)
+   - [TV dashboard (Pi 4 + any TV)](#tv-dashboard-pi-4--any-tv)
 6. [Phone settings page](#phone-settings-page)
 7. [Updating (and rolling back)](#updating-and-rolling-back)
 8. [iPhone widget](#iphone-widget)
@@ -443,6 +444,45 @@ minute; positions more than two minutes old are never shown as current.
 | Overhead | Small plane | Tracked, in the air | Tracked, landed |
 |--|--|--|--|
 | ![](docs/screenshots/24-flight-climbing.png) | ![](docs/screenshots/24c-flight-small-plane.png) | ![](docs/screenshots/25-flight-tracked-air.png) | ![](docs/screenshots/25b-flight-tracked-landed.png) |
+
+### TV dashboard (Pi 4 + any TV)
+
+The same software can drive a TV instead of an LED panel. A Pi 4 (or 5) plugged into the TV's
+HDMI runs the ticker with no panel attached and shows a full-screen dashboard in its browser.
+Prices, weather, news, sports and flights come from the same feeds and the same settings.
+
+**Setup:** flash **Raspberry Pi OS with desktop** (not Lite), clone the repo as usual, then
+
+```bash
+./install.sh --tv
+sudo reboot
+```
+
+`--tv` sets `DEVICE=tv`, skips the LED library and the audio change, installs Chromium, turns on
+desktop auto-login, turns off screen blanking, and adds `tv-kiosk.sh` to the desktop's autostart,
+so the dashboard opens full-screen at every boot (and reopens if the browser ever closes).
+Re-running `./install.sh` later keeps it a TV.
+
+**Two modes** (phone page, *TV dashboard*):
+
+- **Cycle pages**: one full-screen page at a time, with prices and headlines crawling along
+  the bottom. Pages: flights overhead, tracked flight, crypto cards, price chart (4-hour candles,
+  one coin after another), weather (now, next 8 hours, 5 days), headlines, crypto heatmap,
+  Fear & Greed, sun & moon, and scores. Switch each on or off and change the order on the phone.
+  A page with nothing to show (no planes nearby, no games) is skipped.
+- **Single dashboard**: clock, weather, flights, crypto, forecast and scores on one screen.
+
+**Flight pop-up:** when a flight you track takes off or lands, it takes over the screen for
+30 seconds.
+
+**Coin pictures:** the TV shows each coin's logo. A picture you upload for a coin on the phone page
+(tap the coin's picture) is used on the TV too, at full size.
+
+**Burn-in:** the page changes every few seconds, the whole picture shifts a few pixels every
+3 minutes, and on the single dashboard the side columns trade places every 45 minutes.
+
+The page is at `http://<pi-name>.local:8080/tv`. The TV's own browser needs no PIN; any other
+device signs in with the PIN first.
 
 ## Phone settings page
 

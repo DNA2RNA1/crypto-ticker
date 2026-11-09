@@ -40,6 +40,7 @@ from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
 from flights import RADIUS_CHOICES as FLIGHT_RADII, Flights, Tracker, tracked_from_env
+from tv import DEFAULT_TV_PAGES, TV_MODES, NullDisplay, parse_pages, screens_for
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
@@ -138,6 +139,11 @@ class Config:
     sleep: float = 5
     transition: str = "scroll"     # scroll (up), slide (left) or none
     layout: str = "classic"
+    device: str = "led"            # led = LED panel; tv = no panel, a TV shows /tv in a browser
+    tv_mode: str = "cycle"         # TV: cycle full-screen pages, or one single dashboard
+    tv_pages: list = field(default_factory=lambda: list(DEFAULT_TV_PAGES))
+    tv_seconds: int = 15           # TV: seconds per page
+    tv_flight_popup: bool = True   # TV: a tracked flight takes over on takeoff and landing
     featured: list = field(default_factory=list)
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
     portfolio: bool = False        # portfolio screen (reset to off at every start)
@@ -213,6 +219,12 @@ class Config:
         c.sleep = env("SLEEP", c.sleep, float, lo=1, hi=300)
         c.transition = env("TRANSITION", c.transition, str.lower, choices=TRANSITIONS)
         c.layout = env("LAYOUT", c.layout, str.lower, choices=Renderer.LAYOUTS)
+        c.device = env("DEVICE", c.device, str.lower, choices=("led", "tv"))
+        c.tv_mode = env("TV_MODE", c.tv_mode, str.lower, choices=TV_MODES)
+        raw_pages = env("TV_PAGES", None)
+        c.tv_pages = parse_pages(raw_pages) if raw_pages is not None else list(DEFAULT_TV_PAGES)
+        c.tv_seconds = env("TV_SECONDS", c.tv_seconds, int, lo=5, hi=120)
+        c.tv_flight_popup = env("TV_FLIGHT_POPUP", True, bool)
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.focus = env("FOCUS", False, bool)
         c.portfolio = env("PORTFOLIO", False, bool)
@@ -280,6 +292,8 @@ class Config:
         c.rgb_sequence = env("LED_RGB_SEQUENCE", c.rgb_sequence)
         c.panel_type = env("LED_PANEL_TYPE", "")
         c.no_hardware_pulse = env("LED_NO_HARDWARE_PULSE", False, bool)
+        if c.device == "tv":  # no panel: keep fresh whatever the TV pages show
+            c.screens = screens_for(c.tv_pages, c.tv_mode)
         return c
 
 
@@ -1022,8 +1036,11 @@ def main():
     cfg = Config.from_env()
     signal.signal(signal.SIGTERM, _stop)  # systemctl stop -> clean shutdown
 
-    from display import MatrixDisplay
-    display = MatrixDisplay(cfg, emulate=args.emulate, adapter=args.emulator_adapter)
+    if cfg.device == "tv" and not args.emulate:
+        display = NullDisplay()  # a TV shows /tv in its browser; there's no panel to drive
+    else:
+        from display import MatrixDisplay
+        display = MatrixDisplay(cfg, emulate=args.emulate, adapter=args.emulator_adapter)
     if args.test_pattern:
         try:
             test_pattern(display, Renderer(display.width, display.height))
