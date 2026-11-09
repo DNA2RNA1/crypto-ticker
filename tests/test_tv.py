@@ -261,7 +261,9 @@ def test_payload_sends_lines_only_when_asked():
     p = tv.payload(t)
     assert p["games"][0]["odds"] is None and p["lines"] == [] and p["settings"]["odds"] is False
     t.cfg.sports_odds = True
-    assert tv.payload(t)["games"][0]["odds"] == {"total": "40"}
+    p = tv.payload(t)
+    assert p["games"][0]["odds"] == {"total": "40"} and p["lines"]  # the dashboard fills in from these
+    t.cfg.sports_odds = False
     t.cfg.tv_pages = ["lines"]
     p = tv.payload(t)
     assert p["lines"][0]["odds"] == {"total": "40"} and p["lines"][0]["fav"]["home"] is True

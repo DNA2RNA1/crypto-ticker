@@ -16,18 +16,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ICON_DIR = os.path.join(HERE, "icons")
 AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
 
-TV_PAGES = ("flights", "tracked", "crypto", "chart", "weather", "news", "heatmap",
+TV_PAGES = ("flights", "tracked", "spotlight", "crypto", "chart", "weather", "news", "heatmap",
             "feargreed", "sunmoon", "scores", "lines", "arcade")
-TV_PAGE_NAMES = {"flights": "Flights overhead", "tracked": "Tracked flights", "crypto": "Crypto",
-                 "chart": "Price charts", "weather": "Weather", "news": "Headlines",
+TV_PAGE_NAMES = {"flights": "Flights overhead", "tracked": "Tracked flights", "crypto": "Crypto overview",
+                 "spotlight": "Coins one at a time", "chart": "Price charts", "weather": "Weather", "news": "Headlines",
                  "heatmap": "Crypto heatmap", "feargreed": "Fear & Greed", "sunmoon": "Sun & moon",
                  "scores": "Scores", "lines": "Betting lines", "arcade": "Arcade (chomper & ghosts)"}
-DEFAULT_TV_PAGES = ("flights", "tracked", "crypto", "chart", "weather", "news", "heatmap",
+DEFAULT_TV_PAGES = ("flights", "tracked", "spotlight", "crypto", "chart", "weather", "news", "heatmap",
                     "sunmoon", "scores", "arcade")
 TV_MODES = ("cycle", "single")
 
 # TV page -> the LED screen whose feed it needs (the hidden loop refreshes those)
-_FEEDS = {"flights": "flights", "tracked": "flights", "crypto": "coins", "chart": "coins",
+_FEEDS = {"flights": "flights", "tracked": "flights", "spotlight": "coins", "crypto": "coins", "chart": "coins",
           "heatmap": "coins", "weather": "weather", "sunmoon": "weather", "news": "news",
           "feargreed": "feargreed", "scores": "sports", "lines": "sports"}
 
@@ -215,7 +215,7 @@ def payload(ticker, now=None):
         "news": news,
         "games": safe(lambda: [_game(g, odds) for g in ticker.sports.games()][:16], []) if "sports" in need else [],
         "lines": safe(lambda: [dict(_game(g, True), fav=g.get("fav")) for g in ticker.sports.lines()], [])
-        if "lines" in pages else [],
+        if odds and "sports" in need else [],
         "overhead": safe(lambda: ticker.flights.overhead(cfg.flights_per_cycle + 2), [])
         if "flights" in need and cfg.flights_overhead else [],
         "tracked": safe(ticker.tracker.rows, []) if "flights" in need and cfg.flights_track else [],

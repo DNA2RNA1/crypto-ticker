@@ -271,6 +271,36 @@ PAGES.scores={has:()=>D.games&&D.games.length,html(f){const gs=D.games;const g=g
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:#0F1318"><div style="font-size:28px;color:${c0};font-weight:600;letter-spacing:2px">${esc(s0)}</div><div class="mono" style="font-size:34px;text-align:center;padding:0 10px">${esc(g.state==='pre'?lineShort(g):g.detail||'')}</div></div>
     ${side(g.home,true)}</div><div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;padding-bottom:30px">${others}</div>`}};
 
+/* ---------- coins one at a time: each coin big, like the LED ticker ---------- */
+const PER_COIN=7000;
+function bigNum(v){if(v==null)return '—';const c=CUR[(D&&D.currency)||'usd']??'';
+  return v>=1e12?c+(v/1e12).toFixed(2)+'T':v>=1e9?c+(v/1e9).toFixed(1)+'B':v>=1e6?c+(v/1e6).toFixed(1)+'M':money(v)}
+function area(pts,w,h,col){if(!pts||pts.length<2)return '';const lo=Math.min(...pts),hi=Math.max(...pts),sp=(hi-lo)||1;
+  const P=pts.map((v,i)=>[i*w/(pts.length-1),8+(h-16)*(1-(v-lo)/sp)]),line=P.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join('');
+  const id='g'+Math.random().toString(36).slice(2,8);
+  return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true">
+    <defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="${col}" stop-opacity=".35"/><stop offset="1" stop-color="${col}" stop-opacity="0"/></linearGradient></defs>
+    <path d="${line}L${w} ${h}L0 ${h}Z" fill="url(#${id})"/><path d="${line}" fill="none" stroke="${col}" stroke-width="5" stroke-linejoin="round" vector-effect="non-scaling-stroke"/></svg>`}
+function spotHtml(a,i,n){const sp=a.spark||[],wk=sp.length>1?(sp[sp.length-1]-sp[0])/sp[0]*100:null,col=(wk??a.change??0)>=0?'#2BD37E':'#FF6B5E';
+  const chip=(l,v)=>v==null?'':`<div class="mono ${cls(v)}" style="font-size:40px;font-weight:700;background:#1A1F27;border-radius:14px;padding:10px 22px"><span style="color:var(--muted);font-weight:500;font-size:28px">${l}</span> ${pct(v)}</div>`;
+  const stat=(l,v)=>`<div><div class="lbl">${l}</div><div class="mono" style="font-size:40px;font-weight:600">${v}</div></div>`;
+  return `<div class="hdr"><div style="display:flex;gap:10px;align-items:center">${Array.from({length:n},(_,k)=>`<div style="width:${k===i?36:14}px;height:14px;border-radius:7px;background:${k===i?'var(--accent)':'#2A313B'}"></div>`).join('')}</div>${clock()}</div>
+  <div style="display:flex;align-items:center;gap:64px">${coinBadge(a,280)}
+    <div style="min-width:0"><div style="display:flex;align-items:baseline;gap:28px"><div style="font-size:130px;font-weight:700;line-height:1">${esc(a.symbol)}</div><div style="font-size:44px;color:var(--muted)">${esc(a.name)}</div></div>
+      <div class="mono" style="font-size:150px;font-weight:700;line-height:1.1;letter-spacing:-3px">${money(a.price)}</div>
+      <div style="display:flex;gap:20px;margin-top:10px">${chip('24h',a.change)}${chip('7d',wk)}</div></div></div>
+  <div style="flex:1;min-height:0;display:flex;flex-direction:column;gap:14px">
+    <div style="display:flex;gap:80px">${stat('7-DAY HIGH',sp.length?money(Math.max(...sp)):'—')}${stat('7-DAY LOW',sp.length?money(Math.min(...sp)):'—')}${a.market_cap?stat('MARKET VALUE',bigNum(a.market_cap)):''}</div>
+    <div style="flex:1;min-height:0">${area(sp,1792,300,col)}</div></div>`}
+PAGES.spotlight={has:()=>D.assets&&D.assets.length,
+  html(){return '<div class="spot" style="position:absolute;inset:0;padding:44px 64px 24px;box-sizing:border-box;display:flex;flex-direction:column;gap:30px;transition:opacity .5s"></div>'},
+  start(el){const box=el.querySelector('.spot'),syms=D.assets.map(a=>a.symbol),n=syms.length;let i=0;
+    const draw=()=>{if(!box.isConnected||i>=n)return;const a=D.assets.find(x=>x.symbol===syms[i])||D.assets[i%D.assets.length];
+      const k=i++;const put=()=>{box.innerHTML=spotHtml(a,k,n);box.style.opacity=1};
+      if(k===0)put();else{box.style.opacity=0;setTimeout(put,500)}
+      setTimeout(draw,PER_COIN)};
+    draw();return n*PER_COIN}};
+
 /* ---------- betting lines (ESPN's pre-game line; display only) ---------- */
 const sgn=v=>String(v).replace('-','−');
 function lineShort(g){  // "KC −3.5 · O/U 47.5" (spread), or "NYY −150 · O/U 8.5" (moneyline sports)
@@ -316,6 +346,11 @@ PAGES.arcade={has:()=>ARC.list&&Object.keys(ARC.sheets).length===ARC.list.length
     requestAnimationFrame(draw);return total}};
 
 /* ---------- single dashboard ---------- */
+function dashGames(){  // live and final scores first; with betting lines on, upcoming games with a line fill the rest
+  const gs=(D.games||[]).slice();if(!D.settings.odds)return gs.slice(0,5);
+  const key=g=>g.league+g.away.abbr+g.home.abbr,seen=new Set(gs.map(key));
+  for(const g of D.lines||[])if(!seen.has(key(g))){gs.push(g);seen.add(key(g))}
+  return gs.slice(0,5)}
 function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
   const flights=`<section class="card" style="flex:1.55;padding:24px 26px;display:flex;flex-direction:column;gap:14px;min-width:0"><div style="display:flex;justify-content:space-between"><div class="lbl" style="color:var(--accent);font-size:22px">FLIGHTS</div></div>
     ${(D.tracked||[]).slice(0,2).map(t=>{const r=t.route||{};const [i,a]=codes(t.callsign,r);const col=t.status==='landed'?'var(--up)':'var(--blue)';
@@ -332,7 +367,7 @@ function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
   const side=`<div style="flex:.8;display:flex;flex-direction:column;gap:22px;min-width:0"><section class="card" style="padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">FORECAST</div>
     ${(w&&w.days||[]).slice(0,5).map((d,i)=>`<div style="display:flex;align-items:center;gap:14px;height:52px;border-top:1px solid var(--line);font-size:22px"><b style="width:70px">${i?new Date(d.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short'}):'Today'}</b>${icon(wx(d.code)[1],30)}<span style="flex:1;color:var(--muted);font-size:19px">${wx(d.code)[0]}</span><span class="mono"><b>${temp(d.high)}</b> <span style="color:var(--dim)">${temp(d.low)}</span></span></div>`).join('')}</section>
     <section class="card" style="flex:1;padding:22px 24px"><div class="lbl" style="color:var(--accent);font-size:22px;margin-bottom:8px">SCORES</div>
-    ${(D.games||[]).slice(0,5).map(g=>`<div style="display:flex;align-items:center;justify-content:space-between;min-height:64px;padding:4px 0;border-top:1px solid var(--line)"><div class="mono" style="font-size:21px"><div><b style="display:inline-block;width:80px">${esc(g.away.abbr)}</b>${g.state==='pre'?'':esc(g.away.score??'')}</div><div><b style="display:inline-block;width:80px">${esc(g.home.abbr)}</b>${g.state==='pre'?'':esc(g.home.score??'')}</div></div><div style="text-align:right"><div style="font-size:18px;color:${g.state==='in'?'var(--up)':'var(--muted)'}">${esc(g.state==='pre'?tfmt(g.start,{weekday:'short',hour:'numeric'}):g.detail)}</div>${g.state==='pre'&&D.settings.odds&&lineShort(g)?`<div class="mono" style="font-size:17px;color:var(--accent)">${esc(lineShort(g))}</div>`:''}</div></div>`).join('')}</section></div>`;
+    ${dashGames().map(g=>`<div style="display:flex;align-items:center;justify-content:space-between;min-height:64px;padding:4px 0;border-top:1px solid var(--line)"><div class="mono" style="font-size:21px"><div><b style="display:inline-block;width:80px">${esc(g.away.abbr)}</b>${g.state==='pre'?'':esc(g.away.score??'')}</div><div><b style="display:inline-block;width:80px">${esc(g.home.abbr)}</b>${g.state==='pre'?'':esc(g.home.score??'')}</div></div><div style="text-align:right"><div style="font-size:18px;color:${g.state==='in'?'var(--up)':'var(--muted)'}">${esc(g.state==='pre'?tfmt(g.start,{weekday:'short',hour:'numeric'}):g.detail)}</div>${g.state==='pre'&&D.settings.odds&&lineShort(g)?`<div class="mono" style="font-size:17px;color:var(--accent)">${esc(lineShort(g))}</div>`:''}</div></div>`).join('')}</section></div>`;
   const cols=[flights,coins,side];if(swapped)cols.reverse();
   return `<div style="position:absolute;inset:0;padding:32px 36px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:22px">
     <header style="display:flex;justify-content:space-between;align-items:center;height:112px${swapped?';flex-direction:row-reverse':''}"><div style="display:flex;align-items:flex-end;gap:28px"><div class="tnow" style="font-size:104px;font-weight:600;line-height:.9">${esc(hm(now()))}</div>
