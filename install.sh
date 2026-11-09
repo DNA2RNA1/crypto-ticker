@@ -336,8 +336,18 @@ mkdir -p "$HERE/.launcher"
 cp "$HERE/launcher.py" "$HERE/.launcher/launcher.py"
 
 say "Installing the systemd service"
-sed "s#__DIR__#$HERE#g" "$HERE/crypto-ticker.service" \
-    | sudo tee /etc/systemd/system/$SERVICE.service >/dev/null
+if [ "$TV" -eq 1 ]; then
+    # The TV drives no LED panel, so it doesn't need root: run as you, so a bug in the
+    # web page can't touch the rest of the system.
+    sudo chown -R "$(id -un):$(id -gn)" "$HERE/logs" "$HERE/cache"
+    sed -e "s#__DIR__#$HERE#g" -e "s#^User=root#User=$(id -un)#" \
+        -e "s#^\# The LED library needs root.*#\# A TV has no LED panel, so the service runs as the Pi's user, not root.#" \
+        -e "s#^User=\(.*\)#User=\1\nNoNewPrivileges=yes\nProtectSystem=full\nPrivateTmp=yes#" \
+        "$HERE/crypto-ticker.service" | sudo tee /etc/systemd/system/$SERVICE.service >/dev/null
+else
+    sed "s#__DIR__#$HERE#g" "$HERE/crypto-ticker.service" \
+        | sudo tee /etc/systemd/system/$SERVICE.service >/dev/null
+fi
 sudo systemctl daemon-reload
 if [ "$ENABLE_SERVICE" -eq 1 ]; then
     sudo systemctl enable $SERVICE.service

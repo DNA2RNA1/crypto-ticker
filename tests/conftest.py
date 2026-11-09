@@ -128,7 +128,10 @@ def server(app):
 
 def request(server, method, path, body=b"", headers=None):
     c = httpclient.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
-    c.request(method, path, body=body, headers=headers or {})
+    headers = dict(headers or {})
+    if method == "POST":
+        headers.setdefault("Content-Type", "application/json")  # what the phone page sends
+    c.request(method, path, body=body, headers=headers)
     r = c.getresponse()
     return r.status, json.loads(r.read() or b"{}"), r.getheader("Set-Cookie")
 

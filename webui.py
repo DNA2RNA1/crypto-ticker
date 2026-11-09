@@ -7,6 +7,7 @@ Protected by WEB_PIN from settings.env. Uses only the Python standard library.
 import hashlib
 import hmac
 import io
+import ipaddress
 import json
 import logging
 import os
@@ -98,6 +99,43 @@ EDITABLE = {  # key -> validator returning the string to store
 
 MAX_FAILS = 5
 LOCKOUT_SECONDS = 300
+# wrong PINs from all devices together; stops guessing from many addresses at once
+GLOBAL_MAX_FAILS = 20          # within GLOBAL_WINDOW...
+GLOBAL_WINDOW = 3600
+GLOBAL_LOCKOUT = 3600          # ...locks every new sign-in for an hour (signed-in phones keep working)
+
+# Sent with every page. Inline script/style are how the pages are built; everything
+# else is limited to this Pi, coin logos (https images) and the TV's web font.
+CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline'; "
+       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; "
+       "img-src 'self' data: blob: https:; connect-src 'self'; object-src 'none'; base-uri 'none'; "
+       "form-action 'self'; frame-ancestors 'none'")
+SECURITY_HEADERS = {"X-Frame-Options": "DENY", "X-Content-Type-Options": "nosniff",
+                    "Referrer-Policy": "no-referrer", "Content-Security-Policy": CSP,
+                    "Cross-Origin-Opener-Policy": "same-origin"}
+
+
+def host_name(host_header):
+    """'ticker.local:8080' -> 'ticker.local'; '[fe80::1]:8080' -> 'fe80::1'."""
+    h = (host_header or "").strip().lower()
+    if h.startswith("["):
+        return h[1:h.find("]")] if "]" in h else ""
+    return h.rsplit(":", 1)[0] if h.count(":") == 1 else h
+
+
+def host_allowed(name, extra=()):
+    """Requests must name this Pi: its own name, name.local, localhost, an IP address, or a
+    name in WEB_ALLOWED_HOSTS. Blocks DNS rebinding (a web page that points its own
+    domain at the Pi to reach this page through a visitor's browser)."""
+    if not name:
+        return True  # no Host header: not a browser
+    try:
+        ipaddress.ip_address(name.split("%")[0])
+        return True
+    except ValueError:
+        pass
+    me = os.uname().nodename.lower()
+    return name.rstrip(".") in {"localhost", me, me + ".local", *extra}
 
 
 # --- validation --------------------------------------------------------------
@@ -444,6 +482,8 @@ class WebApp:
         self.updater = updater
         self.search_fn = search  # callable(query) -> list of coins
         self.fails = {}  # ip -> (count, locked_until)
+        self.recent_fails = []  # times of wrong PINs from any device (GLOBAL_WINDOW)
+        self.global_until = 0.0
         os.makedirs(CACHE, exist_ok=True)
         secret_path = os.path.join(CACHE, "web_secret")
         if not os.path.exists(secret_path):
@@ -457,6 +497,10 @@ class WebApp:
     def pin(self):
         return read_settings(self.env_path).get("WEB_PIN", "")
 
+    def allowed_hosts(self):
+        raw = read_settings(self.env_path).get("WEB_ALLOWED_HOSTS", "")
+        return {h.strip().lower().rstrip(".") for h in raw.split(",") if h.strip()}
+
     def token(self):
         return hmac.new(self.secret, self.pin().encode(), hashlib.sha256).hexdigest()
 
@@ -467,17 +511,28 @@ class WebApp:
         return "tk" in c and hmac.compare_digest(c["tk"].value, self.token())
 
     def login(self, ip, pin):
+        now = time.time()
+        if now < self.global_until:
+            return False, f"Too many wrong PINs. Sign-in is paused for {int(self.global_until - now) // 60 + 1} min."
         count, until = self.fails.get(ip, (0, 0))
-        if time.time() < until:
-            return False, f"Too many tries. Wait {int(until - time.time())}s."
+        if now < until:
+            return False, f"Too many tries. Wait {int(until - now)}s."
         if not isinstance(pin, (str, int)) or len(str(pin)) > 64:
             pin = ""
         expected = self.pin()
         if expected and hmac.compare_digest(str(pin).encode(), expected.encode()):
             self.fails.pop(ip, None)
             return True, ""
+        if expected:  # no PIN set: nothing to guess
+            self.recent_fails = [t for t in self.recent_fails if now - t < GLOBAL_WINDOW] + [now]
+            if len(self.recent_fails) >= GLOBAL_MAX_FAILS:
+                self.global_until, self.recent_fails = now + GLOBAL_LOCKOUT, []
+                log.warning("settings page: %d wrong PINs within an hour; sign-in paused for an hour",
+                            GLOBAL_MAX_FAILS)
+        if len(self.fails) > 1000:  # forget old entries so this can't grow without end
+            self.fails = {k: v for k, v in self.fails.items() if v[1] > now}
         count += 1
-        until = time.time() + LOCKOUT_SECONDS if count >= MAX_FAILS else 0
+        until = now + LOCKOUT_SECONDS if count >= MAX_FAILS else 0
         self.fails[ip] = (0 if until else count, until)
         return False, "Wrong PIN." if not until else f"Locked for {LOCKOUT_SECONDS // 60} min."
 
@@ -836,6 +891,8 @@ def make_handler(app):
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.send_header("Cache-Control", "no-store")
+            for k, v in SECURITY_HEADERS.items():
+                self.send_header(k, v)
             for k, v in (headers or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -868,8 +925,22 @@ def make_handler(app):
             """A request from this Pi itself (the TV's kiosk browser)."""
             return self.client_address[0] in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
+        def _host_ok(self):
+            return host_allowed(host_name(self.headers.get("Host")), app.allowed_hosts())
+
+        def _same_origin(self):
+            """A change must come from this page itself, not another website the phone is
+            showing (browsers always say where a POST comes from)."""
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return True  # not sent by a browser (curl, scripts on the Pi)
+            o = urlparse(origin)
+            return o.scheme in ("http", "https") and (o.netloc or "").lower() == (self.headers.get("Host") or "").lower()
+
         def do_GET(self):
             url = urlparse(self.path)
+            if not self._host_ok():
+                return self._send(421, {"error": "unknown host name; add it to WEB_ALLOWED_HOSTS"})
             if url.path == "/":
                 return self._send(200, PAGE.encode(), "text/html; charset=utf-8")
             if url.path in ("/icon.png", "/apple-touch-icon.png"):
@@ -943,6 +1014,13 @@ def make_handler(app):
 
         def do_POST(self):
             url = urlparse(self.path)
+            if not self._host_ok():
+                return self._send(421, {"error": "unknown host name; add it to WEB_ALLOWED_HOSTS"})
+            if not self._same_origin():
+                return self._send(403, {"error": "request from another website refused"})
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback") and ctype != "application/json":
+                return self._send(415, {"error": "send JSON"})
             try:
                 body = self._body() if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback") else None
             except OverflowError as exc:

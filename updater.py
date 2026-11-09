@@ -19,6 +19,7 @@ import logging
 import os
 import re
 import shutil
+import signal
 import threading
 import time
 
@@ -103,10 +104,17 @@ class Updater:
             return None
 
     def _systemd_restart(self):
-        if os.environ.get("INVOCATION_ID") and shutil.which("systemctl"):
+        if not os.environ.get("INVOCATION_ID"):
+            return False  # not running as the service (e.g. the emulator): restart by hand
+        if os.geteuid() != 0:
+            # A service that isn't root (the TV) can't call systemctl. It shuts down cleanly
+            # instead, and systemd (Restart=always) starts the new version a few seconds later.
+            threading.Timer(1.0, os.kill, (os.getpid(), signal.SIGTERM)).start()
+            return True
+        if shutil.which("systemctl"):
             os.spawnlp(os.P_NOWAIT, "systemctl", "systemctl", "--no-block", "restart", f"{SERVICE}.service")
             return True
-        return False  # not running as the service (e.g. the emulator): restart by hand
+        return False
 
     def _set(self, **fields):
         state = lx.load_state(self.repo)
