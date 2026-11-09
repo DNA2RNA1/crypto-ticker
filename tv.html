@@ -27,9 +27,13 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:22px}
 .lbl{font-size:20px;letter-spacing:3px;color:var(--dim)}
 .up{color:var(--up)}.down{color:var(--down)}
-.tick{height:84px;margin:auto -64px 0;display:flex;align-items:center;background:#12161B;border-top:1px solid var(--line);
-  overflow:hidden;white-space:nowrap;font-family:var(--mono);font-size:28px;position:relative}
-.tick .run{display:inline-flex;gap:48px;padding-left:100%;animation:run linear infinite}
+#crawl{position:absolute;left:0;right:0;bottom:0;height:84px;display:flex;align-items:center;background:#12161B;
+  border-top:1px solid var(--line);overflow:hidden;white-space:nowrap;font-family:var(--mono);font-size:28px}
+#crawl[hidden]{display:none}
+#crawl .run{display:inline-flex;gap:48px;padding-left:100%;animation:run linear infinite}
+#stage.crawl #pages .page{bottom:84px}
+#offline{position:absolute;right:24px;top:16px;background:#5A2A2A;color:#FFD6D1;font-size:22px;padding:8px 16px;border-radius:10px;z-index:5}
+#offline[hidden]{display:none}
 @keyframes run{from{transform:translateX(0)}to{transform:translateX(-100%)}}
 .tile{display:flex;align-items:center;justify-content:center;font-weight:700;border-radius:18px;flex:none}
 .bar{height:10px;background:#2A313B;border-radius:5px;overflow:hidden}.bar>div{height:100%;border-radius:5px}
@@ -38,7 +42,7 @@ html,body{margin:0;height:100%;background:#000;overflow:hidden;cursor:none}
 </style>
 </head>
 <body>
-<div id="stage"><div id="shift"><div id="pages"></div></div></div>
+<div id="stage"><div id="shift"><div id="pages"></div><div id="crawl" hidden></div></div><div id="offline" hidden>No connection to the ticker · showing the last data</div></div>
 <script>
 'use strict';
 const $=s=>document.querySelector(s);
@@ -63,9 +67,8 @@ function tfmt(ts,opt){try{return new Intl.DateTimeFormat('en-US',Object.assign({
 const hm=ts=>tfmt(ts,{hour:'numeric',minute:'2-digit'});
 const now=()=>Date.now()/1000;
 function ago(ts){if(!ts)return '';const m=Math.max(0,Math.round((now()-ts)/60));return m<60?m+' min ago':m<1440?Math.round(m/60)+' hr ago':Math.round(m/1440)+' days ago'}
-const deg=()=>D&&D.unit==='C'?'°':'°';
 const temp=v=>v==null?'—':Math.round(v)+'°';
-function clock(){const w=D&&D.weather;return `<div class="clk"><b>${esc(hm(now()))}</b>${w?`<span>${temp(w.temp)}</span>`:''}</div>`}
+function clock(){const w=D&&D.weather;return `<div class="clk"><b class="tnow">${esc(hm(now()))}</b>${w?`<span>${temp(w.temp)}</span>`:''}</div>`}
 function hdr(title,sub,flip){return `<div class="hdr ${flip?'flip':''}"><div class="ttl"><h1>${esc(title)}</h1>${sub?`<div class="sub">${esc(sub)}</div>`:''}</div>${clock()}</div>`}
 
 /* ---------- weather words & icons ---------- */
@@ -88,6 +91,8 @@ const AIR={UAL:['#003CBE','#fff'],DAL:['#BE142D','#fff'],AAL:['#006EC8','#fff'],
   FDX:['#50148C','#FF8C00'],UPS:['#5A3C1E','#FFBE00']};
 function airTile(icao,iata,size){const sz=size||84;if(!icao)return `<div class="tile" style="width:${sz}px;height:${sz}px;background:#16202C">
   <svg width="${sz*.66}" height="${sz*.66}" viewBox="0 0 24 24" fill="none" stroke="#78BEFF" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v20M3 11l9-3 9 3M8 20l4-1.5 4 1.5"/></svg></div>`;
+  const own=D&&D.airline_icons&&D.airline_icons[icao];
+  if(own)return `<img src="${esc(own)}" alt="" width="${sz}" height="${sz}" style="border-radius:18px;flex:none;object-fit:contain;background:#fff">`;
   let [bg,ink]=AIR[icao]||[null,'#fff'];if(!bg){let h=0;for(const c of icao)h=(h*31+c.charCodeAt(0))%360;bg=`hsl(${h},70%,38%)`}
   return `<div class="tile" style="width:${sz}px;height:${sz}px;background:${bg};color:${ink};font-size:${sz*.45}px">${esc(iata||icao)}</div>`}
 function codes(cs,route){route=route||{};const icao=route.airline_icao||(/^[A-Z]{3}\d/.test(cs||'')?cs.slice(0,3):'');
@@ -99,12 +104,18 @@ const mph=kt=>kt==null?'—':Math.round(kt*1.15078)+' mph';
 const arrow=vr=>vr==null||Math.abs(vr)<300?'':vr>0?'<span class="up">▲</span>':'<span class="down">▼</span>';
 const compass=t=>t==null?'':'N NE E SE S SW W NW'.split(' ')[Math.floor(((t%360)+22.5)/45)%8];
 
-/* ---------- bottom ticker ---------- */
-function ticker(){const a=(D.assets||[]).map(x=>`<span><b>${esc(x.symbol)}</b> <span class="${cls(x.change)}">${pct(x.change)}</span></span>`);
+/* ---------- bottom crawl: one strip under every page; new prices and headlines
+   swap in when it finishes a lap, so it never jumps back mid-sentence ---------- */
+let crawlNext=null;
+function crawlHtml(){const a=(D.assets||[]).map(x=>`<span><b>${esc(x.symbol)}</b> <span class="${cls(x.change)}">${pct(x.change)}</span></span>`);
   const n=(D.news||[]).slice(0,6).map(x=>`<span><b style="color:var(--accent)">${esc((x.source||'').toUpperCase())}</b> <span style="font-family:var(--sans)">${esc(x.title)}</span></span>`);
   const items=[];const m=Math.max(a.length,n.length);for(let i=0;i<m;i++){if(a[i])items.push(a[i]);if(n[i])items.push(n[i])}
   if(!items.length)return '';const secs=Math.max(30,items.length*7);
-  return `<div class="tick"><div class="run" style="animation-duration:${secs}s">${items.join('')}</div></div>`}
+  return `<div class="run" style="animation-duration:${secs}s">${items.join('')}</div>`}
+function crawl(){const c=$('#crawl'),html=crawlHtml();$('#stage').classList.toggle('crawl',!!html);
+  if(!html){c.hidden=true;c.innerHTML='';crawlNext=null;return}
+  if(c.hidden||!c.firstElementChild){c.hidden=false;c.innerHTML=html;return}
+  crawlNext=html}
 
 /* ---------- pages ---------- */
 const PAGES={};
@@ -117,7 +128,7 @@ PAGES.flights={has:()=>D.overhead&&D.overhead.length,html(f){
     <div class="mono" style="font-size:36px">${ft(p.alt_ft)} ${arrow(p.vrate_fpm)}</div>
     <div class="mono" style="font-size:36px;color:var(--soft)">${mph(p.speed_kt)}</div>
     <div class="mono" style="font-size:36px;color:var(--muted);text-align:right">${p.dist_mi<10?p.dist_mi.toFixed(1):Math.round(p.dist_mi)} mi</div></div>`}).join('');
-  return hdr('Flights overhead','live · closest first',f)+`<div style="flex:1">${rows}</div>`+ticker()}};
+  return hdr('Flights overhead','live · closest first',f)+`<div style="flex:1">${rows}</div>`}};
 
 function pickTracked(){const t=D.tracked||[];if(popup){const p=t.find(x=>x.flight===popup.flight);if(p)return p}
   return t.find(x=>x.status==='air')||t.find(x=>x.status==='landed')||t[0]}
@@ -157,7 +168,7 @@ PAGES.crypto={has:()=>D.assets&&D.assets.length,html(f){
     <div style="display:flex;align-items:center;gap:18px">${coinBadge(a)}<div><div style="font-size:38px;font-weight:700">${esc(a.symbol)}</div><div style="font-size:22px;color:var(--muted)">${esc(a.name)}</div></div>
     <div class="mono ${cls(a.change)}" style="margin-left:auto;font-size:32px;font-weight:700">${pct(a.change)}</div></div>
     <div class="mono" style="font-size:60px;font-weight:700;line-height:1.1">${money(a.price)}</div>${spark(a.spark,520,100,wk.replace('var(--up)','#2BD37E').replace('var(--down)','#FF6B5E'),4)}</div>`}).join('');
-  return hdr('Crypto','24h change · 7-day trend',f)+`<div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;min-height:0;padding-bottom:4px">${cards}</div>`+ticker()}};
+  return hdr('Crypto','24h change · 7-day trend',f)+`<div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;min-height:0;padding-bottom:4px">${cards}</div>`}};
 
 PAGES.chart={has:()=>D.assets&&D.assets.some(a=>a.candles&&a.candles.length>4),html(f){
   const list=D.assets.filter(a=>a.candles&&a.candles.length>4);const a=list[chartIdx%list.length];
@@ -172,7 +183,7 @@ PAGES.chart={has:()=>D.assets&&D.assets.some(a=>a.candles&&a.candles.length>4),h
     <div style="display:flex;align-items:center;gap:26px"><div class="mono" style="font-size:26px;padding:8px 16px;border-radius:10px;background:#262C35;font-weight:700">4H candles</div>${clock()}</div></div>
   <svg width="1808" height="${H+20}" viewBox="0 0 1808 ${H+20}" role="img" aria-label="${esc(a.symbol)} 7-day candles">${ticks.join('')}${body}
     <line x1="0" x2="${W}" y1="${y(last)}" y2="${y(last)}" stroke="${col}" stroke-width="2" stroke-dasharray="4 8"/>
-    <rect x="${W+4}" y="${y(last)-22}" width="164" height="44" rx="8" fill="${col}"/><text x="${W+86}" y="${y(last)+9}" fill="#fff" font-size="24" font-weight="700" font-family="JetBrains Mono" text-anchor="middle">${esc(money(a.price))}</text></svg>`+ticker()},
+    <rect x="${W+4}" y="${y(last)-22}" width="164" height="44" rx="8" fill="${col}"/><text x="${W+86}" y="${y(last)+9}" fill="#fff" font-size="24" font-weight="700" font-family="JetBrains Mono" text-anchor="middle">${esc(money(a.price))}</text></svg>`},
   next(){chartIdx++}};
 
 PAGES.weather={has:()=>D.weather,html(f){const w=D.weather,[txt,ic]=wx(w.code),hours=(w.hourly||[]).slice(1,9),h0=w.hour??new Date().getHours();
@@ -183,15 +194,15 @@ PAGES.weather={has:()=>D.weather,html(f){const w=D.weather,[txt,ic]=wx(w.code),h
   return hdr('Weather',D.place||'',f)+`<div style="display:flex;align-items:center;gap:56px">${icon(ic,200)}<div style="font-size:230px;font-weight:600;line-height:.9;letter-spacing:-6px">${temp(w.temp)}</div>
     <div style="display:flex;flex-direction:column;gap:14px"><div style="font-size:56px;font-weight:600">${txt}</div><div style="font-size:32px;color:var(--soft)">High ${temp(w.high)} · Low ${temp(w.low)}</div></div></div>
     ${hrs?`<div style="display:grid;grid-template-columns:repeat(8,minmax(0,1fr));gap:16px">${hrs}</div>`:''}
-    <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:20px;flex:1;padding-bottom:6px">${days}</div>`+ticker()}};
+    <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:20px;flex:1;padding-bottom:6px">${days}</div>`}};
 
 PAGES.news={has:()=>D.news&&D.news.length,html(f){const [top,...rest]=D.news;
   return hdr('Headlines','',f)+`<div class="card" style="padding:40px 48px;display:flex;flex-direction:column;gap:18px"><div style="display:flex;gap:18px;align-items:center">
     <div style="background:var(--accent);color:#000;font-weight:700;font-size:24px;letter-spacing:2px;padding:8px 16px;border-radius:10px">${esc((top.source||'').toUpperCase())}</div><div style="font-size:26px;color:var(--muted)">${ago(top.at)}</div></div>
     <div style="font-size:62px;font-weight:600;line-height:1.15">${esc(top.title)}</div></div>
-    <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;padding-bottom:6px">${rest.slice(0,3).map(n=>`<div class="card" style="padding:28px 32px;display:flex;flex-direction:column;gap:14px">
+    <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));grid-auto-rows:minmax(0,1fr);flex:1;min-height:0;padding-bottom:24px">${rest.slice(0,6).map(n=>`<div class="card" style="padding:28px 32px;display:flex;flex-direction:column;gap:14px;overflow:hidden">
     <div style="display:flex;gap:14px"><div style="font-weight:700;font-size:22px;letter-spacing:2px;color:#78BEFF">${esc((n.source||'').toUpperCase())}</div><div style="font-size:22px;color:var(--dim)">${ago(n.at)}</div></div>
-    <div style="font-size:36px;font-weight:500;line-height:1.25">${esc(n.title)}</div></div>`).join('')}</div>`+ticker()}};
+    <div style="font-size:36px;font-weight:500;line-height:1.25">${esc(n.title)}</div></div>`).join('')}</div>`}};
 
 function treemap(items,x,y,w,h,out){if(!items.length)return out;if(items.length===1){out.push([items[0],x,y,w,h]);return out}
   const tot=items.reduce((s,i)=>s+i.v,0);let acc=0,k=0;while(k<items.length-1&&acc+items[k].v<tot/2){acc+=items[k].v;k++}if(k===0){acc=items[0].v;k=1}
@@ -206,7 +217,7 @@ PAGES.heatmap={has:()=>D.assets&&D.assets.length>=3,html(f){
   return hdr('Crypto heatmap','size = market value · color = 24h change',f)+`<div style="position:relative;width:${W}px;height:${H}px">${tiles}</div>`}};
 
 PAGES.feargreed={has:()=>D.fear_greed&&D.fear_greed.value!=null,html(f){const g=D.fear_greed,v=g.value,a=Math.PI*(1-v/100);
-  const lab=v<25?['Extreme fear','#E8726A']:v<45?['Fear','#F0A35E']:v<=55?['Neutral','#C9D1DB']:v<=75?['Greed','#58C27D']:['Extreme greed','#58C27D'];
+  const col=v<25?'#E8726A':v<45?'#F0A35E':v<=55?'#C9D1DB':'#58C27D';const lab=[g.label||(v<25?'Extreme fear':v<45?'Fear':v<=55?'Neutral':v<=75?'Greed':'Extreme greed'),col];
   const hist=g.history||[];const back=n=>hist.length>n?hist[hist.length-1-n]:null;
   const card=(w,val)=>val==null?'':`<div class="card" style="padding:20px 24px"><div style="font-size:22px;color:var(--dim)">${w}</div><div class="mono" style="font-size:52px;font-weight:700">${val}</div></div>`;
   return hdr('Fear & Greed','crypto market mood, 0 to 100',f)+`<div style="flex:1;display:flex;align-items:center;gap:80px"><div style="position:relative;width:1000px;height:600px;flex:none">
@@ -217,15 +228,16 @@ PAGES.feargreed={has:()=>D.fear_greed&&D.fear_greed.value!=null,html(f){const g=
     <line x1="500" y1="520" x2="${(500+330*Math.cos(a)).toFixed(1)}" y2="${(520-330*Math.sin(a)).toFixed(1)}" stroke="#EAEDF1" stroke-width="12" stroke-linecap="round"/><circle cx="500" cy="520" r="28" fill="#EAEDF1"/></svg>
     <div class="mono" style="position:absolute;left:0;right:0;top:330px;text-align:center;font-size:120px;font-weight:700">${v}</div></div>
     <div style="flex:1;display:flex;flex-direction:column;gap:22px"><div style="font-size:88px;font-weight:700;color:${lab[1]};line-height:1">${lab[0]}</div>
-    <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:18px">${card('Yesterday',back(1))}${card('Last week',back(7))}${card('Last month',back(29))}</div></div></div>`}};
+    <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:18px;margin-top:18px">${card('Yesterday',back(1))}${card('Last week',back(7))}${card('Last month',back(30)??back(29))}</div></div></div>`}};
 
 function moon(ts){const syn=29.530588853,ref=Date.UTC(2000,0,6,18,14)/1000;const age=(((ts-ref)/86400)%syn+syn)%syn;const frac=(1-Math.cos(2*Math.PI*age/syn))/2;
   const names=['New moon','Waxing crescent','First quarter','Waxing gibbous','Full moon','Waning gibbous','Last quarter','Waning crescent'];
   return {age,frac,name:names[Math.floor((age/syn)*8+.5)%8],waxing:age<syn/2}}
+function clockText(s){const m=/T(\d\d):(\d\d)/.exec(s||'');if(!m)return '—';const h=+m[1];return (h%12||12)+':'+m[2]+(h<12?' AM':' PM')}
 function localTs(s){if(!s)return null;try{const d=new Date(s+':00');return d.getTime()/1000}catch(e){return null}}
 PAGES.sunmoon={has:()=>D.weather&&D.weather.sunrise,html(f){const w=D.weather,rise=localTs(w.sunrise),set=localTs(w.sunset),m=moon(now());
   const day=set-rise,frac=Math.max(0,Math.min(1,(now()-rise)/day)),up=now()>rise&&now()<set;
-  const bx=t=>80+960*t,by=t=>480-4*540*t*(1-t)*0.98;const sx=bx(frac),sy=by(frac);
+  const bx=t=>80+960*t,by=t=>480-1080*t*(1-t);const sx=bx(frac),sy=by(frac);
   const r=140,k=Math.cos(2*Math.PI*m.age/29.530588853),lit=m.waxing?1:-1;
   const moonPath=`M160 20 A140 140 0 0 ${m.waxing?1:0} 160 300 A${Math.abs(k*r).toFixed(1)} 140 0 0 ${(k>0)===(m.waxing)?0:1} 160 20 Z`;
   const dl=Math.round(day/60);
@@ -235,8 +247,8 @@ PAGES.sunmoon={has:()=>D.weather&&D.weather.sunrise,html(f){const w=D.weather,ri
     ${up?`<circle cx="${sx}" cy="${sy}" r="44" fill="#F5B400"/><circle cx="${sx}" cy="${sy}" r="64" fill="none" stroke="#F5B400" stroke-opacity=".35" stroke-width="8"/>`:''}
     <text x="80" y="536" fill="#9AA3AE" font-size="28" text-anchor="middle">East</text><text x="1040" y="536" fill="#9AA3AE" font-size="28" text-anchor="middle">West</text></svg>
     <div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:18px">
-    <div class="card" style="padding:20px 26px"><div class="lbl">SUNRISE</div><div class="mono" style="font-size:48px;font-weight:700">${hm(rise)}</div></div>
-    <div class="card" style="padding:20px 26px"><div class="lbl">SUNSET</div><div class="mono" style="font-size:48px;font-weight:700">${hm(set)}</div></div>
+    <div class="card" style="padding:20px 26px"><div class="lbl">SUNRISE</div><div class="mono" style="font-size:48px;font-weight:700">${clockText(w.sunrise)}</div></div>
+    <div class="card" style="padding:20px 26px"><div class="lbl">SUNSET</div><div class="mono" style="font-size:48px;font-weight:700">${clockText(w.sunset)}</div></div>
     <div class="card" style="padding:20px 26px"><div class="lbl">DAYLIGHT</div><div class="mono" style="font-size:48px;font-weight:700">${Math.floor(dl/60)}h ${dl%60}m</div></div></div></div>
   <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:22px"><svg width="320" height="320" viewBox="0 0 320 320" role="img" aria-label="${m.name}">
     <circle cx="160" cy="160" r="140" fill="#2A313B"/><path d="${moonPath}" fill="#E6E2D3"/></svg>
@@ -275,10 +287,10 @@ function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
     ${(D.games||[]).slice(0,3).map(g=>`<div style="display:flex;align-items:center;justify-content:space-between;height:64px;border-top:1px solid var(--line)"><div class="mono" style="font-size:21px"><div><b style="display:inline-block;width:80px">${esc(g.away.abbr)}</b>${g.state==='pre'?'':esc(g.away.score??'')}</div><div><b style="display:inline-block;width:80px">${esc(g.home.abbr)}</b>${g.state==='pre'?'':esc(g.home.score??'')}</div></div><div style="font-size:18px;color:${g.state==='in'?'var(--up)':'var(--muted)'}">${esc(g.state==='pre'?tfmt(g.start,{weekday:'short',hour:'numeric'}):g.detail)}</div></div>`).join('')}</section></div>`;
   const cols=[flights,coins,side];if(swapped)cols.reverse();
   return `<div style="position:absolute;inset:0;padding:32px 36px 0;box-sizing:border-box;display:flex;flex-direction:column;gap:22px">
-    <header style="display:flex;justify-content:space-between;align-items:center;height:112px${swapped?';flex-direction:row-reverse':''}"><div style="display:flex;align-items:flex-end;gap:28px"><div style="font-size:104px;font-weight:600;line-height:.9">${esc(hm(now()))}</div>
+    <header style="display:flex;justify-content:space-between;align-items:center;height:112px${swapped?';flex-direction:row-reverse':''}"><div style="display:flex;align-items:flex-end;gap:28px"><div class="tnow" style="font-size:104px;font-weight:600;line-height:.9">${esc(hm(now()))}</div>
     <div style="padding-bottom:6px"><div style="font-size:30px;font-weight:500">${esc(tfmt(now(),{weekday:'long',month:'long',day:'numeric'}))}</div><div style="font-size:22px;color:var(--muted)">${esc(D.place||'')}</div></div></div>
     ${w?`<div style="display:flex;align-items:center;gap:24px">${icon(ic,84)}<div style="font-size:96px;font-weight:600;line-height:1">${temp(w.temp)}</div><div><div style="font-size:30px;font-weight:500">${txt}</div><div style="font-size:22px;color:var(--muted)">High ${temp(w.high)} · Low ${temp(w.low)}</div></div></div>`:''}</header>
-    <main style="display:flex;gap:22px;flex:1;min-height:0">${cols.join('')}</main><div style="margin:0 -36px">${ticker().replace('margin:auto -64px 0','margin:0')}</div></div>`}
+    <main style="display:flex;gap:22px;flex:1;min-height:0;padding-bottom:22px">${cols.join('')}</main></div>`}
 setInterval(()=>{swapped=!swapped},45*60000);  // single dashboard: columns trade places every 45 min
 
 /* ---------- standby (nothing to show yet) ---------- */
@@ -302,10 +314,17 @@ function watchFlights(){if(!D.settings.popup)return;for(const t of D.tracked||[]
   if(was&&was!==t.status&&(t.status==='landed'||(t.status==='air'&&(was==='waiting'||was==='ground')))){popup={flight:t.flight,until:now()+30};step();schedule()}
   lastStatus[t.flight]=t.status}}
 
-async function load(){try{const r=await fetch('/api/tv',{cache:'no-store'});if(!r.ok)throw new Error(r.status);const first=!D;D=await r.json();watchFlights();if(first){step();schedule()}}
-  catch(e){if(!D){show(standby(),'standby')}}}
+let lastOk=Date.now(),build=null;
+async function load(){try{const r=await fetch('/api/tv',{cache:'no-store'});if(!r.ok)throw new Error(r.status);
+    const next=await r.json();lastOk=Date.now();$('#offline').hidden=true;
+    if(build!==null&&next.build&&next.build!==build){location.reload();return}  // new software after an Update
+    build=next.build||build;
+    const was=D&&JSON.stringify(D.settings);D=next;watchFlights();crawl();
+    if(!was||was!==JSON.stringify(D.settings)){idx=-1;step();schedule()}}  // first data, or changed on the phone
+  catch(e){if(!D)show(standby(),'standby');else if(Date.now()-lastOk>120000)$('#offline').hidden=false}}
+$('#crawl').addEventListener('animationiteration',()=>{if(crawlNext){$('#crawl').innerHTML=crawlNext;crawlNext=null}});
 load();setInterval(load,10000);
-setInterval(()=>{const c=document.querySelectorAll('.clk b');c.forEach(x=>x.textContent=hm(now()))},15000);
+setInterval(()=>{if(D)document.querySelectorAll('.tnow').forEach(x=>x.textContent=hm(now()))},15000);
 </script>
 </body>
 </html>

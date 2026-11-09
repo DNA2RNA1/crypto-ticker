@@ -165,3 +165,43 @@ def test_tv_page_needs_login_from_elsewhere(server, monkeypatch):
     assert request(server, "GET", "/api/tv")[0] == 401
     auth = login(server)
     assert request(server, "GET", "/api/tv", headers=auth)[0] == 503
+
+
+def test_payload_extras(tmp_path, monkeypatch):
+    monkeypatch.setattr(tv, "AIRLINE_DIR", str(tmp_path))
+    (tmp_path / "UAL.png").write_bytes(b"png")
+    (tmp_path / "notes.txt").write_text("x")
+    t = _fake_ticker(tv_pages=["flights"])
+    t.tz = None  # no TIMEZONE set: the TV uses the Pi's clock
+    p = tv.payload(t)
+    assert p["tz"] is None and p["build"] > 0
+    assert list(p["airline_icons"]) == ["UAL"] and p["airline_icons"]["UAL"].startswith("/icons/airlines/UAL.png?v=")
+
+
+def test_feed_starts_one_refresh_when_asked_twice(monkeypatch):
+    import threading
+    from feeds import Feed
+    started = []
+    monkeypatch.setattr(threading, "Thread", lambda target, daemon: types.SimpleNamespace(start=lambda: started.append(1)))
+    f = Feed()
+    f.update(now=100)
+    f.update(now=100)
+    assert started == [1]
+
+
+def test_tv_has_no_transitions(monkeypatch):
+    monkeypatch.setenv("DEVICE", "tv")
+    monkeypatch.setenv("TRANSITION", "scroll")
+    from ticker import Config
+    assert Config.from_env().transition == "none"
+
+
+def test_airline_pictures_served_for_the_tv(server, monkeypatch, tmp_path):
+    import webui
+    monkeypatch.setattr(webui, "AIRLINE_DIR", str(tmp_path))
+    from PIL import Image
+    Image.new("RGB", (4, 4)).save(tmp_path / "DAL.png")
+    status, body, _ = _get_html(server, "/icons/airlines/DAL.png")
+    assert status == 200 and body[:4] == b"\x89PNG"
+    assert _get_html(server, "/icons/airlines/dal.png")[0] != 200
+    assert _get_html(server, "/icons/airlines/../settings.env")[0] != 200

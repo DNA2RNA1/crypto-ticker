@@ -21,6 +21,7 @@ BROWSER_UA = ("Mozilla/5.0 (X11; Linux armv7l) AppleWebKit/537.36 (KHTML, like G
 
 class Feed:
     refresh_every = 300
+    _start_lock = threading.Lock()  # the loop and the TV page may both ask at once
 
     def __init__(self):
         self.data = None
@@ -32,10 +33,12 @@ class Feed:
     def update(self, now=None):
         """Return the latest data; start a background refresh if one is due."""
         now = now or time.time()
-        if now >= self.next_fetch and not self._busy:
+        with self._start_lock:
+            if now < self.next_fetch or self._busy:
+                return self.data
             self._busy = True
             self.next_fetch = now + self.refresh_every
-            threading.Thread(target=self._run, daemon=True).start()
+        threading.Thread(target=self._run, daemon=True).start()
         return self.data
 
     def _run(self):

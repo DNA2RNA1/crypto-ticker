@@ -12,7 +12,9 @@ Which screens the hidden loop keeps fresh comes from the TV pages that are switc
 import os
 import time
 
-ICON_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "icons")
+HERE = os.path.dirname(os.path.abspath(__file__))
+ICON_DIR = os.path.join(HERE, "icons")
+AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
 
 TV_PAGES = ("flights", "tracked", "crypto", "chart", "weather", "news", "heatmap",
             "feargreed", "sunmoon", "scores")
@@ -94,6 +96,26 @@ def coin_image(a):
     return a.get("image")
 
 
+def airline_icons():
+    """Airlines you gave your own picture (phone page): {ICAO: url}."""
+    out = {}
+    try:
+        for name in os.listdir(AIRLINE_DIR):
+            if len(name) == 7 and name.endswith(".png") and name[:3].isalpha() and name[:3].isupper():
+                out[name[:3]] = f"/icons/airlines/{name}?v={int(os.path.getmtime(os.path.join(AIRLINE_DIR, name)))}"
+    except OSError:
+        pass
+    return out
+
+
+def build():
+    """Changes when the TV page's code does (after an Update), so the TV reloads itself."""
+    try:
+        return int(max(os.path.getmtime(os.path.join(HERE, f)) for f in ("tv.html", "tv.py")))
+    except OSError:
+        return 0
+
+
 def _asset(a):
     spark = a.get("sparkline") or []
     return {"symbol": a.get("symbol"), "name": a.get("name"), "price": a.get("price"),
@@ -141,7 +163,8 @@ def payload(ticker, now=None):
             for n in (ticker.news.data or [])[:12]] if "news" in need else []
     return {
         "now": now,
-        "tz": getattr(ticker.tz, "key", None) or str(ticker.tz),
+        "build": build(),
+        "tz": getattr(ticker.tz, "key", None),  # None: the Pi's own clock setting
         "place": cfg.weather_place,
         "unit": cfg.temp_unit,
         "currency": cfg.currency,
@@ -156,4 +179,5 @@ def payload(ticker, now=None):
         "overhead": safe(lambda: ticker.flights.overhead(cfg.flights_per_cycle + 2), [])
         if "flights" in need and cfg.flights_overhead else [],
         "tracked": safe(ticker.tracker.rows, []) if "flights" in need and cfg.flights_track else [],
+        "airline_icons": airline_icons() if "flights" in need else {},
     }

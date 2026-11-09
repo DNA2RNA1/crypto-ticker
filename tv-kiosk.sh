@@ -4,7 +4,7 @@
 # It waits for the ticker's web page, then restarts the browser if it ever closes.
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PORT="$(grep -E '^WEB_PORT=[0-9]+$' "$HERE/settings.env" 2>/dev/null | cut -d= -f2)"
-URL="http://localhost:${PORT:-8080}/tv"
+URL="http://127.0.0.1:${PORT:-8080}/tv"
 
 BROWSER="$(command -v chromium || command -v chromium-browser)"
 [ -n "$BROWSER" ] || { echo "Chromium isn't installed (sudo apt install chromium)" >&2; exit 1; }

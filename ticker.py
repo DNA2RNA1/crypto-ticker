@@ -294,6 +294,7 @@ class Config:
         c.no_hardware_pulse = env("LED_NO_HARDWARE_PULSE", False, bool)
         if c.device == "tv":  # no panel: keep fresh whatever the TV pages show
             c.screens = screens_for(c.tv_pages, c.tv_mode)
+            c.transition = "none"  # nothing to animate on a panel that isn't there
         return c
 
 

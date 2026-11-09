@@ -878,6 +878,10 @@ def make_handler(app):
             if m and os.path.exists(os.path.join(ICON_DIR, m[1] + ".png")):
                 with open(os.path.join(ICON_DIR, m[1] + ".png"), "rb") as fh:
                     return self._send(200, fh.read(), "image/png")
+            m = re.fullmatch(r"/icons/airlines/([A-Z]{3})\.png", url.path)
+            if m and os.path.exists(os.path.join(AIRLINE_DIR, m[1] + ".png")):
+                with open(os.path.join(AIRLINE_DIR, m[1] + ".png"), "rb") as fh:
+                    return self._send(200, fh.read(), "image/png")
             if url.path == "/api/state":
                 return self._send(200, {"authed": self._authed(), "pin_set": bool(app.pin())})
             if url.path in ("/tv", "/api/tv"):
@@ -1295,7 +1299,7 @@ function tvRows(){const names=Object.fromEntries(S.tv_page_names||[]);const o=tv
    <div class="row"><div class="grow">Mode<div class="name" style="white-space:normal">${S.tv_mode=='single'?'Everything on one screen. Columns trade places now and then so nothing burns in.':'One full-screen page at a time, with a crawl of prices and headlines along the bottom.'}</div></div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('tv_mode',[['cycle','Cycle pages'],['single','Single dashboard']])}</div>
    ${S.tv_mode!='single'?`<div class="row"><div class="grow">Seconds per page</div>
-    <select id="tvsecs">${[10,15,20,30,45,60].map(n=>`<option ${S.tv_seconds==n?'selected':''}>${n}</option>`).join('')}</select></div>`:''}
+    <select id="tvsecs">${[...new Set([10,15,20,30,45,60,+S.tv_seconds])].sort((a,b)=>a-b).map(n=>`<option ${S.tv_seconds==n?'selected':''}>${n}</option>`).join('')}</select></div>`:''}
    <div class="row"><div class="grow">Flight pop-up<div class="name" style="white-space:normal">A flight you track takes over the screen for 30 seconds when it takes off or lands.</div></div>
     <label class="switch"><input type="checkbox" id="tvpop" ${S.tv_flight_popup!='off'?'checked':''}><span></span></label></div></div>
   ${S.tv_mode!='single'?`<h2>TV pages</h2><div class="card">${o.map((k,i)=>`<div class="row"><div class="grow">${esc(names[k]||k)}</div>

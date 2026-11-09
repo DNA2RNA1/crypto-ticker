@@ -361,6 +361,7 @@ def follow_from_env(env):
 
 class Sports:
     """Background fetcher for every enabled, in-season league."""
+    _start_lock = threading.Lock()  # the loop and the TV page may both ask at once
 
     def __init__(self, follow, timeout=15, clock=time.time):
         self.follow = follow
@@ -386,10 +387,12 @@ class Sports:
     def update(self, now=None):
         """Start a refresh if one is due; return immediately."""
         now = now or self.clock()
-        if now >= self.next_fetch and not self._busy and self.active(now):
+        with self._start_lock:
+            if now < self.next_fetch or self._busy or not self.active(now):
+                return
             self._busy = True
             self.next_fetch = now + IDLE_EVERY
-            threading.Thread(target=self._run, daemon=True, name="sports").start()
+        threading.Thread(target=self._run, daemon=True, name="sports").start()
 
     def _run(self):
         try:
