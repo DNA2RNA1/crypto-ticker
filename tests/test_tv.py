@@ -330,6 +330,7 @@ def test_flight_map_payload():
     assert m["radius"] == 20 and m["pan"] == [1.0, 0.0] and m["style"] == "dark" and m["fetched"] == 990
     assert m["planes"][0]["hex"] == "abc" and m["planes"][0]["route"] == {
         "orig": "DFW", "dest": "MFE", "orig_pos": (32.9, -97.0), "dest_pos": (26.2, -98.2)}
+    assert m["planes"][0]["guess"] is None             # a real route: no guessing
     assert t.flights.calls == 1                        # the map fetches planes even with Flights off
     t.cfg.weather_lat = None
     assert tv.payload(t)["map"] is None                # no location set: no map

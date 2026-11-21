@@ -13,7 +13,7 @@ import math
 import os
 import time
 
-from flights import distance_mi
+from flights import distance_mi, guess_leg
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ICON_DIR = os.path.join(HERE, "icons")
@@ -235,7 +235,8 @@ def flight_map(ticker, now):
         r = p.get("route") or {}
         planes.append({k: p.get(k) for k in ("hex", "callsign", "reg", "type", "lat", "lon", "track",
                                              "alt_ft", "speed_kt", "vrate_fpm", "dist_mi")}
-                      | {"route": {k: r.get(k) for k in ("orig", "dest", "orig_pos", "dest_pos")} if r else None})
+                      | {"route": {k: r.get(k) for k in ("orig", "dest", "orig_pos", "dest_pos")} if r else None,
+                         "guess": None if r else guess_leg(p)})
     return {"lat": home[0], "lon": home[1], "radius": cfg.tv_map_radius,
             "pan": list(cfg.tv_map_pan), "style": cfg.tv_map_style,
             "fetched": f.fetched or None, "planes": planes}

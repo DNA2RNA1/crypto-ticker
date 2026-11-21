@@ -309,7 +309,8 @@ function drawPlanes(el){const m=D.map,box=el.querySelector('.fm');if(!m||!box)re
   const pill=(x,y,t)=>`<g><rect x="${x-34}" y="${y-15}" width="68" height="28" rx="8" fill="${dark?'rgba(11,13,16,.6)':'rgba(255,255,255,.7)'}"/><text x="${x}" y="${y+6}" fill="${dark?'#C9D1DB':'#25303C'}" font-size="18" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" text-anchor="middle">${t}</text></g>`;
   svg+=pill(hx+rr/2+42,hy,(m.radius/2)+' mi')+pill(hx+rr+42,hy,m.radius+' mi');
   // airports the planes on screen are flying from or to
-  const aps=new Map();for(const p of m.planes)for(const [c,pos] of [[p.route&&p.route.orig,p.route&&p.route.orig_pos],[p.route&&p.route.dest,p.route&&p.route.dest_pos]])if(c&&pos)aps.set(c,pos);
+  const aps=new Map();for(const p of m.planes){for(const [c,pos] of [[p.route&&p.route.orig,p.route&&p.route.orig_pos],[p.route&&p.route.dest,p.route&&p.route.dest_pos]])if(c&&pos)aps.set(c,pos);
+    if(p.guess)aps.set(p.guess.to||p.guess.from,p.guess.pos)}
   for(const [c,pos] of aps){const [x,y]=v.at(pos[0],pos[1]);if(x<0||y<0||x>W||y>H)continue;
     svg+=`<rect x="${x-10}" y="${y-10}" width="20" height="20" rx="4" fill="#0B0D10" stroke="#EAEDF1" stroke-width="2" transform="rotate(45 ${x} ${y})"/><text x="${x+18}" y="${y+32}" fill="#EAEDF1" stroke="#0B0D10" stroke-width="5" paint-order="stroke" font-size="22" font-weight="700" font-family="JetBrains Mono, DejaVu Sans Mono, monospace">${esc(c)}</text>`}
   // planes, moved along their heading since the last update so they glide
@@ -324,7 +325,8 @@ function drawPlanes(el){const m=D.map,box=el.querySelector('.fm');if(!m||!box)re
   // labels for the 25 nearest, placed where they don't cover each other or the corner boxes
   const taken=[[30,20,560,150],[W-330,20,W-30,110],[30,H-90,840,H-20],[W-320,H-60,W-20,H-10]],hit=b=>taken.some(o=>!(b[2]<o[0]||b[0]>o[2]||b[3]<o[1]||b[1]>o[3]));
   let labels='';
-  for(const [p,x,y] of shown.slice(0,25)){const r=p.route||{},[col,arrow]=vState(p),id=p.callsign||p.reg||'?',sub=r.orig?`${r.orig}→${r.dest}`:(p.type||'');
+  for(const [p,x,y] of shown.slice(0,25)){const r=p.route||{},g=p.guess,[col,arrow]=vState(p),id=p.callsign||p.reg||'?',
+      sub=r.orig?`${r.orig}→${r.dest}`:g?(g.to?`→${g.to}`:`${g.from}→`):(p.type||'');  // a guess shows only the end it knows
     const w=34+(id.length+sub.length+1)*14.5,h=66;let b=null;
     for(const [dx,dy] of [[24,-20],[-24-w,-20],[-w/2,26],[-w/2,-26-h],[24,8],[-24-w,8]]){const c=[x+dx,y+dy,x+dx+w,y+dy+h];if(!hit(c)){b=c;break}}
     if(!b)continue;taken.push(b);

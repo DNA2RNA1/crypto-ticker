@@ -56,7 +56,7 @@ MAX_TRACKED = 4
 MAX_AGE = 120                            # seconds before positions count as too old to show
 ROUTE_TTL = 12 * 3600
 ROUTE_MISS_TTL = 6 * 3600
-ROUTE_LOOKUPS_PER_FETCH = 4
+ROUTE_LOOKUPS_PER_FETCH = 8
 PLACE_EVERY = 300                        # seconds between "flying over" lookups per flight
 LANDED_SHOW = 6 * 3600                   # LANDED stays up this long, then it waits for the next trip
 LOST_AFTER = 15 * 60                     # gone this long mid-flight: NO SIGNAL
@@ -200,6 +200,68 @@ def route_fits(route, lat, lon):
     total = distance_mi(*route["orig_pos"], *route["dest_pos"])
     via = distance_mi(*route["orig_pos"], lat, lon) + distance_mi(lat, lon, *route["dest_pos"])
     return via <= total * ROUTE_SLACK + ROUTE_SLACK_MI
+
+
+# --- landing / taking off, when the route databases don't know -----------------------------
+AIRPORTS_CSV = os.path.join(os.path.dirname(os.path.abspath(__file__)), "airports.csv")
+_airports = []
+GUESS_MAX_FT = 12000     # only planes this low are near the start or end of a flight
+GUESS_TO_MI = 40         # descending toward an airport ahead within this...
+GUESS_FROM_MI = 30       # ...or climbing away from one behind within this
+GUESS_CONE = 50          # degrees either side of the plane's heading
+
+
+def airports():
+    """[(iata, lat, lon)] with scheduled airline service (airports.csv, from OurAirports)."""
+    if not _airports:
+        try:
+            with open(AIRPORTS_CSV, encoding="utf-8") as fh:
+                for line in fh:
+                    parts = line.strip().split(",")
+                    if len(parts) == 3 and not line.startswith(("#", "iata")):
+                        try:
+                            _airports.append((parts[0], float(parts[1]), float(parts[2])))
+                        except ValueError:
+                            continue
+        except OSError:
+            log.warning("flights: %s missing; no landing/takeoff labels", AIRPORTS_CSV)
+    return _airports
+
+
+def bearing(lat1, lon1, lat2, lon2):
+    """Compass bearing in degrees from point 1 to point 2."""
+    p1, p2, dl = math.radians(lat1), math.radians(lat2), math.radians(lon2 - lon1)
+    y = math.sin(dl) * math.cos(p2)
+    x = math.cos(p1) * math.sin(p2) - math.sin(p1) * math.cos(p2) * math.cos(dl)
+    return math.degrees(math.atan2(y, x)) % 360
+
+
+def guess_leg(p):
+    """For a plane with no usable route: {"to": "MFE", "pos": (lat, lon)} if it's low,
+    descending and pointed at a nearby airport, or {"from": ...} if it's low and climbing
+    away from one. An inference from where it is and which way it's going: a plane passing
+    low without landing can fool it. None when neither."""
+    alt, vr, trk, lat, lon = p.get("alt_ft"), p.get("vrate_fpm"), p.get("track"), p.get("lat"), p.get("lon")
+    if None in (alt, vr, trk, lat, lon) or alt > GUESS_MAX_FT or abs(vr) < 300:
+        return None
+    reach = GUESS_TO_MI if vr < 0 else GUESS_FROM_MI
+    box = reach / 50.0  # degrees: a loose box before measuring properly
+    best = None
+    for code, alat, alon in airports():
+        if abs(alat - lat) > box or abs(alon - lon) > box * 1.3:
+            continue
+        d = distance_mi(lat, lon, alat, alon)
+        if d > reach:
+            continue
+        if vr < 0:   # landing: the airport is ahead of the plane
+            off = abs((bearing(lat, lon, alat, alon) - trk + 180) % 360 - 180)
+        else:        # taking off: the plane is ahead of the airport, along its heading
+            off = abs((bearing(alat, alon, lat, lon) - trk + 180) % 360 - 180) if d > 1 else 0
+        if off <= GUESS_CONE and (best is None or d < best[0]):
+            best = (d, code, alat, alon)
+    if not best:
+        return None
+    return {("to" if vr < 0 else "from"): best[1], "pos": (best[2], best[3])}
 
 
 def parse_route(data):

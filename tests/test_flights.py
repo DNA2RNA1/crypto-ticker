@@ -663,3 +663,22 @@ def test_overhead_drops_a_route_the_plane_cant_be_on():
     f.route = lambda cs, now=None: routes[cs]
     out = f.overhead(2, now=1000)
     assert out[0]["route"] is None and out[1]["route"]["orig"] == "D"
+
+
+# --- landing / takeoff labels -------------------------------------------------------------
+def test_airport_list_loads():
+    from flights import airports
+    codes = {a[0]: a for a in airports()}
+    assert len(codes) > 3000 and abs(codes["MFE"][1] - 26.176) < 0.01 and abs(codes["MFE"][2] + 98.238) < 0.01
+
+
+def test_guess_leg():
+    from flights import guess_leg
+    assert guess_leg(dict(alt_ft=4200, vrate_fpm=-900, track=200, lat=26.35, lon=-98.21))["to"] == "MFE"
+    assert guess_leg(dict(alt_ft=3800, vrate_fpm=1500, track=330, lat=26.245, lon=-98.272))["from"] == "MFE"
+    assert guess_leg(dict(alt_ft=3000, vrate_fpm=-800, track=120, lat=26.30, lon=-97.77))["to"] == "HRL"
+    assert guess_leg(dict(alt_ft=4200, vrate_fpm=-900, track=20, lat=26.35, lon=-98.21)) is None   # MFE behind it
+    assert guess_leg(dict(alt_ft=34000, vrate_fpm=0, track=220, lat=26.46, lon=-97.98)) is None    # cruising
+    assert guess_leg(dict(alt_ft=5000, vrate_fpm=0, track=200, lat=26.35, lon=-98.21)) is None     # level
+    assert guess_leg(dict(alt_ft=5000, vrate_fpm=-900, track=None, lat=26.35, lon=-98.21)) is None
+    assert guess_leg(dict(alt_ft=4000, vrate_fpm=-900, track=90, lat=0.5, lon=-150.0)) is None      # mid-ocean
