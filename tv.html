@@ -292,9 +292,11 @@ function mapView(m,W,H){const rad=Math.PI/180;
   const X=lon=>(lon+180)/360*2**z,Y=lat=>{const r=lat*rad;return(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*2**z};
   const cx=X(lon0),cy=Y(lat0);
   return {z,T,W,H,cx,cy,X,Y,at:(lat,lon)=>[W/2+(X(lon)-cx)*T,H/2+(Y(lat)-cy)*T],mpx:want}}
+// OpenStreetMap's tile servers require a Referer (their usage policy); the rest of the page
+// sends none (security headers), so the tiles ask for the standard one themselves
 function mapTiles(v){const out=[],x0=Math.floor(v.cx-v.W/2/v.T),x1=Math.floor(v.cx+v.W/2/v.T),y0=Math.floor(v.cy-v.H/2/v.T),y1=Math.floor(v.cy+v.H/2/v.T),n=2**v.z;
   for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){if(y<0||y>=n)continue;const tx=((x%n)+n)%n;
-    out.push(`<img src="https://tile.openstreetmap.org/${v.z}/${tx}/${y}.png" alt="" style="position:absolute;left:${(v.W/2+(x-v.cx)*v.T).toFixed(1)}px;top:${(v.H/2+(y-v.cy)*v.T).toFixed(1)}px;width:${(v.T+.5).toFixed(1)}px;height:${(v.T+.5).toFixed(1)}px">`)}
+    out.push(`<img src="https://tile.openstreetmap.org/${v.z}/${tx}/${y}.png" alt="" referrerpolicy="strict-origin-when-cross-origin" style="position:absolute;left:${(v.W/2+(x-v.cx)*v.T).toFixed(1)}px;top:${(v.H/2+(y-v.cy)*v.T).toFixed(1)}px;width:${(v.T+.5).toFixed(1)}px;height:${(v.T+.5).toFixed(1)}px">`)}
   return out.join('')}
 function vState(p){const r=p.vrate_fpm;return r==null||Math.abs(r)<300?['#B8C4D0','']:r>0?['#3BA0FF',' ▲']:['#FF8A5B',' ▼']}
 function drawPlanes(el){const m=D.map,box=el.querySelector('.fm');if(!m||!box)return;const W=box.clientWidth,H=box.clientHeight,v=mapView(m,W,H),dark=m.style!=='light';
