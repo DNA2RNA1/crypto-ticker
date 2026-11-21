@@ -158,7 +158,7 @@ def test_bad_flight_numbers(text):
 def test_parse_tracked_list():
     assert fl.parse_tracked("aa 1234\nUA512, aa1234") == ["AA1234", "UA512"]
     with pytest.raises(ValueError):
-        fl.parse_tracked("AA1,AA2,AA3,AA4,AA5")
+        fl.parse_tracked(",".join(f"AA{i}" for i in range(1, fl.MAX_TRACKED + 2)))
     assert fl.tracked_from_env("AA1,bad!,UA2") == ["AA1", "UA2"]
 
 
@@ -267,6 +267,14 @@ class Sky:
 
     def __call__(self, url):
         return FakeResponse(200, {"ac": [self.plane] if self.plane else []})
+
+
+@pytest.fixture(autouse=True)
+def _check_every_refresh(monkeypatch, request):
+    """These tests move time by editing timestamps, so every fetch must check every flight
+    (the spacing-out by status has its own test)."""
+    if "spacing" not in request.node.name:
+        monkeypatch.setattr(fl, "CHECK_EVERY", {})
 
 
 def tracker(tmp_path, flights=("DL1189",), **net_kw):
@@ -587,7 +595,7 @@ def test_settings_page_saves_flight_options(app):
 @pytest.mark.parametrize("field,value", [
     ("flights_radius", "7"), ("flights_radius", "10\nWEB_PIN="), ("flights_per_cycle", 0),
     ("flights_per_cycle", 6), ("flights_overhead", "maybe"), ("flights_track", "AA1\nWEB_PIN=1"),
-    ("flights_track", "AA1,AA2,AA3,AA4,AA5"), ("flights_track", "N123AB"),
+    ("flights_track", ",".join(f"AA{i}" for i in range(1, 42))), ("flights_track", "N123AB"),
 ])
 def test_settings_page_rejects_bad_flight_options(app, field, value):
     before = open(app.env_path).read()
@@ -682,3 +690,23 @@ def test_guess_leg():
     assert guess_leg(dict(alt_ft=5000, vrate_fpm=0, track=200, lat=26.35, lon=-98.21)) is None     # level
     assert guess_leg(dict(alt_ft=5000, vrate_fpm=-900, track=None, lat=26.35, lon=-98.21)) is None
     assert guess_leg(dict(alt_ft=4000, vrate_fpm=-900, track=90, lat=0.5, lon=-150.0)) is None      # mid-ocean
+
+
+def test_spacing_checks_by_status(tmp_path, monkeypatch):
+    t, sky, net = tracker(tmp_path, flights=("DL1189",))
+    clock = [1000.0]
+    monkeypatch.setattr(fl.time, "time", lambda: clock[0])
+    t.data = t.fetch()                          # not flying yet: waiting
+    calls = len(net.calls)
+    clock[0] += 60
+    t.data = t.fetch()
+    assert len(net.calls) == calls              # waiting: not checked again for 5 minutes
+    clock[0] += fl.CHECK_EVERY["waiting"]
+    sky.plane = plane(41.0, -80.0)
+    t.data = t.fetch()
+    assert t.state["DL1189"]["status"] == "air"
+    calls = len(net.calls)
+    clock[0] += 60
+    t.data = t.fetch()
+    assert len(net.calls) > calls               # flying: every refresh
+    assert fl.MAX_TRACKED >= 40

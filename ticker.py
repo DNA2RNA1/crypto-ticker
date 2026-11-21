@@ -870,7 +870,11 @@ class Ticker:
             elif name == "flights":
                 if self.cfg.flights_track:   # flights you're following come first
                     self.tracker.update()    # background refresh every 60 s
-                    for r in self.tracker.rows():
+                    rows = self.tracker.rows()
+                    if len(rows) > 4:  # following many: only the ones flying, just landed or lost
+                        rows = [r for r in rows if r["status"] in ("air", "lost", "checking") or
+                                (r["status"] == "landed" and time.time() - (r.get("landed_at") or 0) < 1800)]
+                    for r in rows:
                         out.append(lambda r=r: self.renderer.tracked_flight(r, self.tz, hold=sleep))
                 if self.cfg.flights_overhead:
                     self.flights.update()    # background refresh every 30 s, only while this is on

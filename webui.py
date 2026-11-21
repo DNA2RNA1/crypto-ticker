@@ -1323,7 +1323,7 @@ function flightRows(){
     <div class="grow" style="min-width:0">${esc(a.name||a.icao)}<div class="name">${a.custom?'Your picture':'Code tile'} · tap to ${a.custom?'change':'use your own'}</div></div>
     ${a.custom?`<button class="btn del" data-airreset="${a.icao}" aria-label="Back to the code tile">↺</button>`:''}</div>`;
   return `<h2>Flights</h2><div class="card">
-   <div class="row" style="display:block"><div>Track flights<div class="name" style="white-space:normal">Flight numbers to follow, one per line, up to 4 (e.g. AA1234 or UA 512). The panel shows the route, where the plane is, an estimated arrival time, and LANDED once it's down. A regional flight that never shows up may fly under its own callsign: enter that instead (FlightAware shows it, e.g. ENY3456).</div></div>
+   <div class="row" style="display:block"><div>Track flights<div class="name" style="white-space:normal">Flight numbers to follow, one per line, up to 40 (e.g. AA1234 or UA 512). With more than 4, the panel shows only the ones flying or just landed. The panel shows the route, where the plane is, an estimated arrival time, and LANDED once it's down. A regional flight that never shows up may fly under its own callsign: enter that instead (FlightAware shows it, e.g. ENY3456).</div></div>
     ${feedBox('ftrack',S.flights_track)}</div>
    ${(S.flights_track||[]).map(line).join('')}
    <div class="row"><div class="grow">Planes overhead<div class="name" style="white-space:normal">The closest planes in the air near the weather location below.</div></div>

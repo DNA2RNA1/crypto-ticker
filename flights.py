@@ -52,7 +52,7 @@ REVERSE_URL = "https://nominatim.openstreetmap.org/reverse"
 GEOCODE_UA = "crypto-ticker-led-display/1.0 (personal LED panel; few requests)"
 
 RADIUS_CHOICES = (3, 5, 10, 15, 25, 35, 50, 100)  # miles
-MAX_TRACKED = 4
+MAX_TRACKED = 40
 MAX_AGE = 120                            # seconds before positions count as too old to show
 ROUTE_TTL = 12 * 3600
 ROUTE_MISS_TTL = 6 * 3600
@@ -60,6 +60,9 @@ ROUTE_LOOKUPS_PER_FETCH = 8
 PLACE_EVERY = 300                        # seconds between "flying over" lookups per flight
 LANDED_SHOW = 6 * 3600                   # LANDED stays up this long, then it waits for the next trip
 LOST_AFTER = 15 * 60                     # gone this long mid-flight: NO SIGNAL
+# how often each tracked flight is checked, by its status: flying ones every refresh (60 s),
+# the rest less often, so dozens of flights stay within the sources' one-request-a-second
+CHECK_EVERY = {"air": 0, "lost": 120, "ground": 120, "waiting": 300, "landed": 900}
 LOST_FORGET = 24 * 3600
 LANDING_ALT_FT = 5000                    # last seen this low near the destination, then gone: landed
 LANDING_DIST_MI = 30
@@ -622,8 +625,16 @@ class Tracker(Feed):
         now = time.time()
         ok = 0
         for f in self.flights:
+            with self.lock:
+                due = (self.state.get(f) or {}).get("next_at", 0)
+            if now < due:  # checked recently enough for its status
+                ok += 1
+                continue
             try:
                 self.update_one(f, now)
+                with self.lock:
+                    st = self.state[f]
+                    st["next_at"] = now + CHECK_EVERY.get(st.get("status"), 0)
                 ok += 1
             except Exception as exc:  # one flight failing never blanks the others
                 log.info("flights: tracking %s failed (%s)", f, str(exc)[:160])
