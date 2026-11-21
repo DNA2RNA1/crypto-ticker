@@ -293,7 +293,8 @@ def payload(ticker, now=None):
         if odds and "sports" in need else [],
         "overhead": safe(lambda: ticker.flights.overhead(cfg.flights_per_cycle + 2, max_mi=cfg.flights_radius), [])
         if "flights" in need and cfg.flights_overhead else [],
-        "tracked": safe(ticker.tracker.rows, []) if "flights" in need and cfg.flights_track else [],
+        "tracked": safe(lambda: [dict(r, star=r["flight"] in (getattr(cfg, "flights_star", None) or [])) for r in ticker.tracker.rows()], [])
+        if "flights" in need and cfg.flights_track else [],
         "airline_icons": airline_icons() if "flights" in need else {},
         "map": safe(lambda: flight_map(ticker, now), None) if "flightmap" in pages else None,
     }

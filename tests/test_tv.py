@@ -119,7 +119,7 @@ def test_payload_only_feeds_what_the_pages_need():
 def test_payload_survives_a_broken_feed():
     t = _fake_ticker(tv_pages=["flights", "tracked", "news"])
     p = tv.payload(t)
-    assert p["overhead"] == [] and p["tracked"] == [{"flight": "AA1", "status": "air"}]
+    assert p["overhead"] == [] and p["tracked"] == [{"flight": "AA1", "status": "air", "star": False}]
     assert p["news"] == [{"title": "Hi", "source": "AP", "at": 1}]  # only what the page shows
 
 
@@ -379,3 +379,15 @@ def test_geocode_address_parses_nominatim():
                 {"display_name": "broken"}]})()
     assert geocode_address(" 1201 W University Dr Edinburg ", S()) == [
         {"label": "1201, West University Drive, Edinburg, Texas", "lat": 26.30581, "lon": -98.17299}]
+
+
+def test_highlighted_flights_are_marked():
+    t = _fake_ticker(tv_pages=["tracked"])
+    t.cfg.flights_star = ["AA1"]
+    assert tv.payload(t)["tracked"][0]["star"] is True
+
+
+def test_highlighted_must_be_tracked(monkeypatch):
+    monkeypatch.setenv("FLIGHTS_TRACK", "AA1,UA2")
+    monkeypatch.setenv("FLIGHTS_STAR", "UA2,DL3")
+    assert Config.from_env().flights_star == ["UA2"]

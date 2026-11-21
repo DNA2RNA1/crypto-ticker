@@ -134,14 +134,32 @@ PAGES.flights={has:()=>D.overhead&&D.overhead.length,html(f){
   return hdr('Flights overhead','live · closest first',f)+`<div style="flex:1">${rows}</div>`}};
 
 function pickTracked(){const t=D.tracked||[];if(popup){const p=t.find(x=>x.flight===popup.flight);if(p)return p}
-  return t.find(x=>x.status==='air')||t.find(x=>x.status==='landed')||t[0]}
-PAGES.tracked={has:()=>D.tracked&&D.tracked.length,html(f){const t=pickTracked();if(!t)return '';
+  return t.find(x=>x.star&&x.status==='air')||t.find(x=>x.star)||t.find(x=>x.status==='air')||t.find(x=>x.status==='landed')||t[0]}
+// following several: one board of all of them, flying first (soonest arrival), then just landed
+const TRACK_ORDER={air:0,lost:1,ground:2,landed:3,checking:4,waiting:5};
+function trackedSorted(){return (D.tracked||[]).slice().sort((a,b)=>(!!b.star-!!a.star)||(TRACK_ORDER[a.status]??9)-(TRACK_ORDER[b.status]??9)||
+  (a.status==='air'?(a.eta||9e12)-(b.eta||9e12):a.status==='landed'?(b.landed_at||0)-(a.landed_at||0):0))}
+function trackedStatus(t){return {air:['In flight','var(--blue)'],landed:['Landed'+(t.landed_at?' '+hm(t.landed_at):''),'var(--up)'],
+  ground:['On the ground','var(--accent)'],lost:['No signal'+(t.seen_at?' since '+hm(t.seen_at):''),'var(--accent)'],
+  waiting:['Not departed yet','var(--muted)'],checking:['Checking…','var(--muted)']}[t.status]||['','var(--muted)']}
+function trackedBoard(f){const list=trackedSorted(),air=list.filter(t=>t.status==='air').length;
+  const rows=list.map(t=>{const r=t.route||{},[icao,iata]=codes(t.callsign,r),[st,col]=trackedStatus(t),prog=t.progress==null?null:Math.round(t.progress*100);
+    const right=t.status==='air'&&t.eta?['ARRIVES',hm(t.eta)]:t.status==='landed'?['LANDED',t.landed_at?hm(t.landed_at):'']:['',''];
+    return `<div data-row style="display:grid;grid-template-columns:84px 1.25fr 1.25fr 1.35fr 1.7fr 1fr;gap:0 24px;align-items:center;min-height:112px;border-top:1px solid var(--line);padding:0 8px">
+      ${airTile(icao,iata,72)}<div><div class="mono" style="font-size:38px;font-weight:700">${t.star?'<span style="color:#F5B400">★</span> ':''}${esc(t.flight)}</div><div style="font-size:21px;color:var(--muted)">${esc([shortAir(r.airline),t.type].filter(Boolean).join(' · '))}</div></div>
+      <div><div class="mono" style="font-size:36px;font-weight:600">${r.orig?esc(r.orig+' → '+r.dest):'—'}</div><div style="font-size:21px;color:var(--muted)">${esc(t.status==='air'&&t.place?t.place:(r.orig_city&&r.dest_city?r.orig_city+' to '+r.dest_city:''))}</div></div>
+      <div style="font-size:30px;font-weight:600;color:${col}">${esc(st)}<div class="mono" style="font-size:21px;color:var(--muted);font-weight:400">${t.status==='air'&&t.alt_ft!=null?esc(ft(t.alt_ft)+' · '+mph(t.speed_kt)):''}</div></div>
+      <div>${prog!=null?`<div class="bar" style="height:12px"><div style="width:${prog}%;background:${t.status==='landed'?'var(--up)':'var(--blue)'}"></div></div><div style="font-size:20px;color:var(--muted);margin-top:8px">${prog}%${t.remaining_mi!=null&&t.status==='air'?' · '+Math.round(t.remaining_mi).toLocaleString()+' mi to go':''}</div>`:''}</div>
+      <div style="text-align:right"><div class="lbl">${right[0]}</div><div style="font-size:40px;font-weight:600;color:${t.status==='landed'?'var(--up)':'var(--text)'}">${esc(right[1])}</div></div></div>`}).join('');
+  return hdr('Tracked flights',`${list.length} followed · ${air} in the air`,f)+
+    `<section data-fit="tracked" data-every="10000" style="flex:1;min-height:0;overflow:hidden;padding-bottom:12px;margin-top:-18px"><div data-count class="lbl" style="text-align:right;height:26px"></div>${rows}</section>`}
+function trackedBig(t,f){if(!t)return '';
   const r=t.route||{};const [icao,iata]=codes(t.callsign,r);const prog=t.progress==null?null:Math.round(t.progress*100);
   const st={air:['In flight','var(--up)'],landed:['Landed'+(t.landed_at?' '+hm(t.landed_at):''),'var(--up)'],ground:['On the ground','var(--accent)'],
     lost:['No signal'+(t.seen_at?' since '+hm(t.seen_at):''),'var(--accent)'],waiting:['Not departed yet','var(--accent)'],checking:['Checking…','var(--muted)']}[t.status]||['','var(--muted)'];
   const bigRight=t.status==='air'&&t.eta?['ESTIMATED ARRIVAL',hm(t.eta)]:t.status==='landed'?['LANDED',t.landed_at?hm(t.landed_at):'']:['STATUS',st[0]];
   const stat=(l,v,n,c)=>`<div class="card" style="padding:26px 30px;display:flex;flex-direction:column;gap:8px"><div class="lbl">${l}</div><div class="mono" style="font-size:52px;font-weight:700">${v}</div><div style="font-size:22px;color:${c||'var(--muted)'}">${n}</div></div>`;
-  return `<div class="hdr ${f?'flip':''}"><div style="display:flex;align-items:center;gap:16px"><div style="background:var(--accent);color:#000;font-weight:700;font-size:22px;letter-spacing:3px;padding:10px 18px;border-radius:10px">TRACKING</div>
+  return `<div class="hdr ${f?'flip':''}"><div style="display:flex;align-items:center;gap:16px"><div style="background:var(--accent);color:#000;font-weight:700;font-size:22px;letter-spacing:3px;padding:10px 18px;border-radius:10px">${t.star?'★ HIGHLIGHTED':'TRACKING'}</div>
     <div style="font-size:24px;color:var(--muted)">${D.tracked.length>1?D.tracked.length+' flights followed':'Flight you’re following'}</div></div>${clock()}</div>
   <div style="display:flex;align-items:center;gap:44px">${airTile(icao,iata,190)}
     <div style="display:flex;flex-direction:column;gap:10px"><div style="font-size:34px;color:var(--soft)">${esc([shortAir(r.airline),t.type].filter(Boolean).join(' · '))}</div>
@@ -158,7 +176,17 @@ PAGES.tracked={has:()=>D.tracked&&D.tracked.length,html(f){const t=pickTracked()
     <div style="display:flex;justify-content:space-between;font-size:26px;color:var(--muted)"><div>${prog!=null?prog+'% of the way'+(t.remaining_mi!=null&&t.status!=='landed'?' · '+Math.round(t.remaining_mi).toLocaleString()+' mi to go':''):''}</div><div>Arrival time is an estimate</div></div></div>
   <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px">
     ${stat('ALTITUDE',t.alt_ft!=null&&t.status!=='landed'?ft(t.alt_ft):'—','')}${stat('SPEED',t.status==='landed'?'—':mph(t.speed_kt),'ground speed')}
-    ${stat('HEADING',t.track!=null&&t.status==='air'?compass(t.track)+' '+Math.round(t.track)+'°':'—','')}${stat('STATUS',esc(st[0]),t.seen_at?'updated '+ago(t.seen_at):'',st[1])}</div>`}};
+    ${stat('HEADING',t.track!=null&&t.status==='air'?compass(t.track)+' '+Math.round(t.track)+'°':'—','')}${stat('STATUS',esc(st[0]),t.seen_at?'updated '+ago(t.seen_at):'',st[1])}</div>`}
+/* the Tracked page: the board of everything followed, then each highlighted (★) flight on its own
+   full screen, one per turn, before the rotation moves on. A takeoff/landing pop-up shows that flight big. */
+const TRK={sub:0};
+function trackedViews(){const list=trackedSorted();if(!list.length)return [];
+  const stars=list.filter(t=>t.star);if(list.length===1)return [list[0]];
+  return [null,...stars]}  // null = the board
+PAGES.tracked={has:()=>D.tracked&&D.tracked.length,
+  html(f){if(popup)return trackedBig(pickTracked(),f);
+    const v=trackedViews();if(!v.length)return '';const t=v[TRK.sub%v.length];return t?trackedBig(t,f):trackedBoard(f)},
+  more(){const n=trackedViews().length;TRK.sub++;if(TRK.sub<n)return true;TRK.sub=0;return false}};
 
 function spark(pts,w,h,color,stroke){if(!pts||pts.length<2)return '';const lo=Math.min(...pts),hi=Math.max(...pts),sp=(hi-lo)||1;
   const d=pts.map((v,i)=>(i*(w-4)/(pts.length-1)+2).toFixed(1)+','+(h-2-(v-lo)/sp*(h-4)).toFixed(1)).join(' ');
@@ -440,7 +468,7 @@ function single(){const w=D.weather;const [txt,ic]=w?wx(w.code):['',''];
     ${D.news.map(n=>`<div data-row style="padding:12px 0;border-top:1px solid var(--line)"><div style="font-size:16px;font-weight:700;letter-spacing:1.5px;color:#78BEFF">${esc((n.source||'').toUpperCase())} <span style="color:var(--dim);font-weight:400;letter-spacing:0">${ago(n.at)}</span></div>
       <div style="font-size:25px;line-height:1.3">${esc(n.title)}</div></div>`).join('')}</section>`:'';
   const flights=`<div style="flex:1.55;display:flex;flex-direction:column;gap:22px;min-width:0;min-height:0"><section class="card" style="flex:none;padding:24px 26px;display:flex;flex-direction:column;gap:14px;min-width:0"><div style="display:flex;justify-content:space-between"><div class="lbl" style="color:var(--accent);font-size:22px">FLIGHTS</div></div>
-    ${(D.tracked||[]).slice(0,2).map(t=>{const r=t.route||{};const [i,a]=codes(t.callsign,r);const col=t.status==='landed'?'var(--up)':'var(--blue)';
+    ${trackedSorted().slice(0,2).map(t=>{const r=t.route||{};const [i,a]=codes(t.callsign,r);const col=t.status==='landed'?'var(--up)':'var(--blue)';
       return `<div style="display:flex;gap:18px;align-items:center;background:#1A1F27;border-radius:14px;padding:16px 18px">${airTile(i,a,64)}<div style="flex:1;display:flex;flex-direction:column;gap:8px;min-width:0">
       <div style="display:flex;justify-content:space-between"><div class="mono" style="font-size:30px;font-weight:700">${esc(t.flight)} <span style="color:var(--soft);font-weight:500">${r.orig?esc(r.orig+' → '+r.dest):''}</span></div>
       <div style="font-size:26px;font-weight:600;color:${t.status==='landed'?'var(--up)':'var(--text)'}">${t.status==='air'&&t.eta?'ETA '+hm(t.eta):t.status==='landed'?'Landed':esc(t.status)}</div></div>
@@ -500,7 +528,9 @@ function step(){if(!D){show(standby(),'standby');pageHold=2000;return}
   if(popup&&now()<popup.until){show(PAGES.tracked.html(false),'tracked');return}popup=null;
   if(D.settings.mode==='single'){let h;try{h=single()}catch(e){console.error(e);h=`<div class="empty">Couldn't draw the dashboard: ${esc(e.message)}</div>`}show(h,'single');return}
   const list=available();if(!list.length){show(standby(),'standby');pageHold=2000;return}  // look again soon
-  idx=(idx+1)%list.length;const key=list[idx];let html;
+  const cur=list[idx%list.length];  // a page with more to show (highlighted flights) stays for another turn
+  if(!(current===cur&&PAGES[cur].more&&PAGES[cur].more()))idx=(idx+1)%list.length;
+  const key=list[idx];if(key!==cur&&PAGES[key].more)TRK.sub=0;let html;
   try{html=PAGES[key].html(idx%2===1);if(PAGES[key].next)PAGES[key].next()}
   catch(e){console.error(key,e);html=hdr(key,'')+`<div class="empty">Couldn't draw this page: ${esc(e.message)}</div>`}
   show(html,key)}
@@ -508,8 +538,9 @@ let timer=null;function schedule(){clearTimeout(timer);  // step() can't throw, 
 const s=(D&&D.settings.seconds)||15;timer=setTimeout(()=>{step();schedule()},pageHold||(D&&D.settings.mode==='single'?30:s)*1000)}
 
 /* flight pop-up: a tracked flight that just took off or landed takes over for 30 s */
-function watchFlights(){if(!D.settings.popup)return;for(const t of D.tracked||[]){const was=lastStatus[t.flight];
-  if(was&&was!==t.status&&(t.status==='landed'||(t.status==='air'&&(was==='waiting'||was==='ground')))){popup={flight:t.flight,until:now()+30};step();schedule()}
+function watchFlights(){if(!D.settings.popup)return;const anyStar=(D.tracked||[]).some(t=>t.star);
+  for(const t of D.tracked||[]){const was=lastStatus[t.flight];
+  if(was&&(t.star||!anyStar)&&was!==t.status&&(t.status==='landed'||(t.status==='air'&&(was==='waiting'||was==='ground')))){popup={flight:t.flight,until:now()+30};step();schedule()}
   lastStatus[t.flight]=t.status}}
 
 let lastOk=Date.now(),build=null;

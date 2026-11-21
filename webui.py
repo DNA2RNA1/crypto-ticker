@@ -99,6 +99,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "FLIGHTS_PER_CYCLE": lambda v: _int(v, 1, 5),
     "FLIGHTS_OVERHEAD": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "FLIGHTS_TRACK": lambda v: _tracked(v),
+    "FLIGHTS_STAR": lambda v: _tracked(v),
     "TV_MODE": lambda v: _choice(v.strip().lower(), ("cycle", "single")),
     "TV_PAGES": lambda v: _tv_pages(v),
     "TV_SECONDS": lambda v: _int(v, 5, 120),
@@ -182,7 +183,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "ODDS_PER_CYCLE": "Markets per cycle",
           "VIDEOS_MAX_AGE_DAYS": "Videos from the last", "VIDEOS_SKIP_SHORTS": "Skip Shorts",
           "FLIGHTS_RADIUS": "Flight radius", "FLIGHTS_PER_CYCLE": "Planes per cycle",
-          "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track",
+          "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track", "FLIGHTS_STAR": "Highlighted flights",
           "TV_MODE": "TV display mode", "TV_PAGES": "TV pages", "TV_SECONDS": "Seconds per TV page",
           "TV_FLIGHT_POPUP": "Flight pop-up", "TV_ARCADE_STYLE": "Arcade look",
           "TV_MAP_RADIUS": "Flight map zoom", "TV_MAP_HOME": "Flight map home", "TV_MAP_STYLE": "Flight map look", "TV_MAP_PAN": "Flight map position"}
@@ -691,6 +692,7 @@ class WebApp:
             "flights_per_cycle": int(clean("FLIGHTS_PER_CYCLE", "3")),
             "flights_overhead": clean("FLIGHTS_OVERHEAD", "on"),
             "flights_track": [f for f in clean("FLIGHTS_TRACK", "").split(",") if f],
+            "flights_star": [f for f in clean("FLIGHTS_STAR", "").split(",") if f],
             "flights_status": self._flights_status(),
             "device": "tv" if s.get("DEVICE", "").strip().lower() == "tv" else "led",
             "tv_mode": clean("TV_MODE", "cycle"),
@@ -1318,12 +1320,14 @@ function flightRows(){
     const msg=!x?'<span class="name">Checked when you save</span>'
       :x.error?`<span style="color:#ff6b5e">⚠ ${esc(x.error)}</span>`
       :`<span style="color:${x.status=='landed'?'#3ad07a':x.status=='air'?'var(--text)':'#f5b400'}">${label[x.status]||esc(x.status)}${x.route?' · '+esc(x.route):''}${x.place&&x.status=='air'?' · over '+esc(x.place):''}</span>`;
-    return `<div class="row"><div class="grow" style="min-width:0"><div style="font:13px ui-monospace,monospace">${esc(f)}${x&&x.callsign&&x.callsign!=f?` <span class="name">(${esc(x.callsign)})</span>`:''}</div><div style="font-size:13px">${msg}</div></div></div>`};
+    const on=(S.flights_star||[]).includes(f);
+    return `<div class="row"><div class="grow" style="min-width:0"><div style="font:13px ui-monospace,monospace">${esc(f)}${x&&x.callsign&&x.callsign!=f?` <span class="name">(${esc(x.callsign)})</span>`:''}</div><div style="font-size:13px">${msg}</div></div>
+     <button class="btn" data-fstar="${esc(f)}" aria-pressed="${on}" aria-label="${on?'Stop highlighting':'Highlight'} ${esc(f)}" style="width:44px;font-size:22px;color:${on?'#f5b400':'var(--muted)'}">${on?'★':'☆'}</button></div>`};
   const air=a=>`<div class="row" data-air="${a.icao}" style="cursor:pointer"><img src="/api/airline-badge?code=${a.icao}&iata=${a.iata||''}&v=${a.custom?Date.now():0}" alt="" style="width:32px;height:32px;border-radius:6px;image-rendering:pixelated">
     <div class="grow" style="min-width:0">${esc(a.name||a.icao)}<div class="name">${a.custom?'Your picture':'Code tile'} · tap to ${a.custom?'change':'use your own'}</div></div>
     ${a.custom?`<button class="btn del" data-airreset="${a.icao}" aria-label="Back to the code tile">↺</button>`:''}</div>`;
   return `<h2>Flights</h2><div class="card">
-   <div class="row" style="display:block"><div>Track flights<div class="name" style="white-space:normal">Flight numbers to follow, one per line, up to 40 (e.g. AA1234 or UA 512). With more than 4, the panel shows only the ones flying or just landed. The panel shows the route, where the plane is, an estimated arrival time, and LANDED once it's down. A regional flight that never shows up may fly under its own callsign: enter that instead (FlightAware shows it, e.g. ENY3456).</div></div>
+   <div class="row" style="display:block"><div>Track flights<div class="name" style="white-space:normal">Flight numbers to follow, one per line, up to 40 (e.g. AA1234 or UA 512). With more than 4, the panel shows only the ones flying or just landed. With 2 or more, the TV shows them all on one board. Tap ☆ to highlight a flight you're waiting on: it gets its own full screen on the TV, stays on the panel, and only highlighted flights pop up when they take off or land. The panel shows the route, where the plane is, an estimated arrival time, and LANDED once it's down. A regional flight that never shows up may fly under its own callsign: enter that instead (FlightAware shows it, e.g. ENY3456).</div></div>
     ${feedBox('ftrack',S.flights_track)}</div>
    ${(S.flights_track||[]).map(line).join('')}
    <div class="row"><div class="grow">Planes overhead<div class="name" style="white-space:normal">The closest planes in the air near the weather location below.</div></div>
@@ -1656,7 +1660,7 @@ function save(extra){
       sleep:S.sleep,focus:S.focus,news_feeds:(S.news_feeds||[]).join('\n'),news_general_feeds:(S.news_general_feeds||[]).join('\n'),news_crypto:S.news_crypto,news_general:S.news_general,news_politics:S.news_politics,news_politics_feeds:(S.news_politics_feeds||[]).join('\n'),news_per_cycle:S.news_per_cycle,news_speed:S.news_speed,
       videos_channels:(S.videos_channels||[]).join('\n'),videos_per_cycle:S.videos_per_cycle,arcade_per_cycle:S.arcade_per_cycle,
       watchlist:(S.watchlist||[]).join('\n'),watchlist_refresh:S.watchlist_refresh,watchlist_per_cycle:S.watchlist_per_cycle,
-      flights_radius:S.flights_radius,flights_per_cycle:S.flights_per_cycle,flights_overhead:S.flights_overhead,flights_track:(S.flights_track||[]).join('\n'),
+      flights_radius:S.flights_radius,flights_per_cycle:S.flights_per_cycle,flights_overhead:S.flights_overhead,flights_track:(S.flights_track||[]).join('\n'),flights_star:(S.flights_star||[]).filter(f=>(S.flights_track||[]).includes(f)).join(','),
       sports_odds:S.sports_odds,odds_markets:(S.odds_markets||[]).join('\n'),odds_per_cycle:S.odds_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta,
@@ -1748,6 +1752,8 @@ function bind(){
   if($('#arcn'))$('#arcn').onchange=e=>{S.arcade_per_cycle=+e.target.value;save()};
   if($('#fradius'))$('#fradius').onchange=e=>{S.flights_radius=+e.target.value;save()};
   if($('#fover'))$('#fover').onchange=e=>{S.flights_overhead=e.target.checked?'on':'off';save();render()};
+  document.querySelectorAll('[data-fstar]').forEach(b=>b.onclick=()=>{const f=b.dataset.fstar,s=new Set(S.flights_star||[]);
+    s.has(f)?s.delete(f):s.add(f);S.flights_star=[...s];save();render()});
   if($('#ftrack'))$('#ftrack').onchange=e=>{S.flights_track=e.target.value.split(/[\n,;]+/).map(x=>x.trim()).filter(Boolean);save(0);setTimeout(load,2500);setTimeout(load,10000)};
   document.querySelectorAll('[data-air]').forEach(el=>el.onclick=()=>pickAirline(el.dataset.air));
   if($('#airadd'))$('#airadd').onclick=()=>{const c=$('#aircode').value.trim().toUpperCase();

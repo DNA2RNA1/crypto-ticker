@@ -186,6 +186,7 @@ class Config:
     flights_per_cycle: int = 3     # closest planes shown each cycle
     flights_overhead: bool = True  # planes near you (off = only the tracked flights)
     flights_track: list = field(default_factory=list)  # flight numbers to follow, e.g. AA1234
+    flights_star: list = field(default_factory=list)   # the ones you're waiting on: their own screen
     videos_max_age_days: int = 3
     videos_skip_shorts: bool = True
     sports: dict = field(default_factory=lambda: follow_from_env({}))  # league key -> Follow
@@ -281,6 +282,7 @@ class Config:
         c.flights_per_cycle = env("FLIGHTS_PER_CYCLE", c.flights_per_cycle, int, lo=1, hi=5)
         c.flights_overhead = env("FLIGHTS_OVERHEAD", True, bool)
         c.flights_track = tracked_from_env(env("FLIGHTS_TRACK", ""))
+        c.flights_star = [f for f in tracked_from_env(env("FLIGHTS_STAR", "")) if f in c.flights_track]
         c.videos_max_age_days = env("VIDEOS_MAX_AGE_DAYS", c.videos_max_age_days, int, lo=1, hi=30)
         c.videos_skip_shorts = env("VIDEOS_SKIP_SHORTS", c.videos_skip_shorts, bool)
         c.sports = follow_from_env(os.environ)
@@ -871,9 +873,11 @@ class Ticker:
                 if self.cfg.flights_track:   # flights you're following come first
                     self.tracker.update()    # background refresh every 60 s
                     rows = self.tracker.rows()
-                    if len(rows) > 4:  # following many: only the ones flying, just landed or lost
-                        rows = [r for r in rows if r["status"] in ("air", "lost", "checking") or
+                    stars = self.cfg.flights_star
+                    if len(rows) > 4:  # following many: starred ones, and the rest only when flying, just landed or lost
+                        rows = [r for r in rows if r["flight"] in stars or r["status"] in ("air", "lost", "checking") or
                                 (r["status"] == "landed" and time.time() - (r.get("landed_at") or 0) < 1800)]
+                    rows.sort(key=lambda r: r["flight"] not in stars)  # starred first
                     for r in rows:
                         out.append(lambda r=r: self.renderer.tracked_flight(r, self.tz, hold=sleep))
                 if self.cfg.flights_overhead:
