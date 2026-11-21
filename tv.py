@@ -9,6 +9,7 @@ Which screens the hidden loop keeps fresh comes from the TV pages that are switc
 (TV_PAGES), not from SCREENS, which only means something on an LED panel.
 """
 
+import math
 import os
 import time
 
@@ -16,20 +17,51 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ICON_DIR = os.path.join(HERE, "icons")
 AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
 
-TV_PAGES = ("flights", "tracked", "spotlight", "crypto", "chart", "weather", "news", "heatmap",
+TV_PAGES = ("flights", "flightmap", "tracked", "spotlight", "crypto", "chart", "weather", "news", "heatmap",
             "feargreed", "sunmoon", "scores", "lines", "arcade")
-TV_PAGE_NAMES = {"flights": "Flights overhead", "tracked": "Tracked flights", "crypto": "Crypto overview",
+TV_PAGE_NAMES = {"flights": "Flights overhead", "flightmap": "Flight map", "tracked": "Tracked flights", "crypto": "Crypto overview",
                  "spotlight": "Coins one at a time", "chart": "Price charts", "weather": "Weather", "news": "Headlines",
                  "heatmap": "Crypto heatmap", "feargreed": "Fear & Greed", "sunmoon": "Sun & moon",
                  "scores": "Scores", "lines": "Betting lines", "arcade": "Arcade (chomper & ghosts)"}
-DEFAULT_TV_PAGES = ("flights", "tracked", "spotlight", "crypto", "chart", "weather", "news", "heatmap",
+DEFAULT_TV_PAGES = ("flights", "flightmap", "tracked", "spotlight", "crypto", "chart", "weather", "news", "heatmap",
                     "sunmoon", "scores", "arcade")
 TV_MODES = ("cycle", "single")
 
 # TV page -> the LED screen whose feed it needs (the hidden loop refreshes those)
-_FEEDS = {"flights": "flights", "tracked": "flights", "spotlight": "coins", "crypto": "coins", "chart": "coins",
+_FEEDS = {"flights": "flights", "flightmap": "flights", "tracked": "flights", "spotlight": "coins", "crypto": "coins", "chart": "coins",
           "heatmap": "coins", "weather": "weather", "sunmoon": "weather", "news": "news",
           "feargreed": "feargreed", "scores": "sports", "lines": "sports"}
+
+
+MAP_RADII = (5, 10, 15, 20, 25, 50, 75, 100)  # flight map: miles from the center to the outer ring
+MAP_VIEW = 2.3                         # the TV is this many radii wide on each side of the center
+MAP_MAX_PAN = 100                      # miles the map can be moved from home
+MAP_MAX_PLANES = 150
+
+
+def parse_pan(raw):
+    """'3.5,-2' -> (3.5, -2.0): the map's center moved east and north of home, in miles."""
+    try:
+        e, n = (float(v) for v in str(raw or "").split(","))
+    except ValueError:
+        return (0.0, 0.0)
+    if e != e or n != n:
+        return (0.0, 0.0)
+    return (max(-MAP_MAX_PAN, min(MAP_MAX_PAN, round(e, 1))), max(-MAP_MAX_PAN, min(MAP_MAX_PAN, round(n, 1))))
+
+
+def map_on(cfg):
+    return getattr(cfg, "device", "led") == "tv" and "flightmap" in (getattr(cfg, "tv_pages", None) or [])
+
+
+def flights_fetch_radius(cfg):
+    """How far around home to ask for planes: the Flights setting, or, with the TV's flight
+    map on, enough to fill the screen wherever the map is moved (the sources allow 250 nm)."""
+    r = cfg.flights_radius
+    if map_on(cfg):
+        e, n = cfg.tv_map_pan
+        r = max(r, math.ceil(cfg.tv_map_radius * MAP_VIEW + math.hypot(e, n)))
+    return min(r, 280)
 
 
 def screens_for(pages, mode="cycle"):
@@ -168,6 +200,24 @@ def _game(g, odds=False):
             "odds": g.get("odds") if odds else None}  # pre-game line (ESPN), display only
 
 
+def flight_map(ticker, now):
+    """The flight map page: where it's centered, how far it reaches, and every plane the
+    feed has (the page draws the ones on screen), with routes already looked up."""
+    cfg = ticker.cfg
+    if cfg.weather_lat is None or cfg.weather_lon is None:
+        return None
+    f = ticker.flights
+    planes = []
+    for p in f.overhead(MAP_MAX_PLANES, now):
+        r = p.get("route") or {}
+        planes.append({k: p.get(k) for k in ("hex", "callsign", "reg", "type", "lat", "lon", "track",
+                                             "alt_ft", "speed_kt", "vrate_fpm", "dist_mi")}
+                      | {"route": {k: r.get(k) for k in ("orig", "dest", "orig_pos", "dest_pos")} if r else None})
+    return {"lat": cfg.weather_lat, "lon": cfg.weather_lon, "radius": cfg.tv_map_radius,
+            "pan": list(cfg.tv_map_pan), "style": cfg.tv_map_style,
+            "fetched": f.fetched or None, "planes": planes}
+
+
 def payload(ticker, now=None):
     """Everything the TV page draws, as JSON-ready data. Asking for it also nudges the
     feeds the switched-on pages use (each refreshes on its own schedule; nothing waits)."""
@@ -186,7 +236,7 @@ def payload(ticker, now=None):
     if "flights" in need:
         if cfg.flights_track:
             ticker.tracker.update()
-        if cfg.flights_overhead:
+        if cfg.flights_overhead or "flightmap" in pages:
             ticker.flights.update()
 
     def safe(fn, default):
@@ -217,8 +267,9 @@ def payload(ticker, now=None):
         "games": safe(lambda: [_game(g, odds) for g in ticker.sports.games()][:16], []) if "sports" in need else [],
         "lines": safe(lambda: [dict(_game(g, True), fav=g.get("fav")) for g in ticker.sports.lines()], [])
         if odds and "sports" in need else [],
-        "overhead": safe(lambda: ticker.flights.overhead(cfg.flights_per_cycle + 2), [])
+        "overhead": safe(lambda: ticker.flights.overhead(cfg.flights_per_cycle + 2, max_mi=cfg.flights_radius), [])
         if "flights" in need and cfg.flights_overhead else [],
         "tracked": safe(ticker.tracker.rows, []) if "flights" in need and cfg.flights_track else [],
         "airline_icons": airline_icons() if "flights" in need else {},
+        "map": safe(lambda: flight_map(ticker, now), None) if "flightmap" in pages else None,
     }

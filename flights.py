@@ -166,6 +166,7 @@ def parse_one(a):
         "vrate_fpm": _num(a.get("baro_rate") if a.get("baro_rate") is not None else a.get("geom_rate")),
         "track": _num(a.get("track")),
         "lat": plat, "lon": plon,
+        "hex": str(a.get("hex") or "").strip().lower()[:8],  # the plane's own id (map trails)
     }
 
 
@@ -424,13 +425,14 @@ class Flights(Feed):
         self.fetched = now
         return planes
 
-    def overhead(self, n, now=None):
-        """The n closest planes with their routes, or [] if the data is too old to show."""
+    def overhead(self, n, now=None, max_mi=None):
+        """The n closest planes with their routes, or [] if the data is too old to show.
+        max_mi: only planes this close (the feed may cover more, for the TV's flight map)."""
         now = now or time.time()
         if not self.data or now - self.fetched > MAX_AGE:
             return []
         out = []
-        for p in self.data[:n]:
+        for p in [p for p in self.data if max_mi is None or p["dist_mi"] <= max_mi][:n]:
             route = self.route(p["callsign"], now)
             out.append({**p, "route": route if route_fits(route, p.get("lat"), p.get("lon")) else None})
         return out

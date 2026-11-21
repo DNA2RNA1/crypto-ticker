@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from PIL import Image
 
 from flights import RADIUS_CHOICES
-from tv import DEFAULT_TV_PAGES, TV_PAGE_NAMES, TV_PAGES, parse_pages
+from tv import DEFAULT_TV_PAGES, MAP_RADII, TV_PAGE_NAMES, TV_PAGES, parse_pages, parse_pan
 
 log = logging.getLogger("ticker.web")
 
@@ -103,6 +103,9 @@ EDITABLE = {  # key -> validator returning the string to store
     "TV_SECONDS": lambda v: _int(v, 5, 120),
     "TV_FLIGHT_POPUP": lambda v: _choice(v.strip().lower(), ("on", "off")),
     "TV_ARCADE_STYLE": lambda v: _choice(v.strip().lower(), ("led", "pixels")),
+    "TV_MAP_RADIUS": lambda v: _choice(v.strip(), tuple(str(r) for r in MAP_RADII)),
+    "TV_MAP_STYLE": lambda v: _choice(v.strip().lower(), ("dark", "light")),
+    "TV_MAP_PAN": lambda v: _map_pan(v),
 }
 
 MAX_FAILS = 5
@@ -179,7 +182,8 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "FLIGHTS_RADIUS": "Flight radius", "FLIGHTS_PER_CYCLE": "Planes per cycle",
           "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track",
           "TV_MODE": "TV display mode", "TV_PAGES": "TV pages", "TV_SECONDS": "Seconds per TV page",
-          "TV_FLIGHT_POPUP": "Flight pop-up", "TV_ARCADE_STYLE": "Arcade look"}
+          "TV_FLIGHT_POPUP": "Flight pop-up", "TV_ARCADE_STYLE": "Arcade look",
+          "TV_MAP_RADIUS": "Flight map zoom", "TV_MAP_STYLE": "Flight map look", "TV_MAP_PAN": "Flight map position"}
 
 
 def _int(v, lo, hi):
@@ -190,6 +194,18 @@ def _int(v, lo, hi):
     if not lo <= n <= hi:
         raise ValueError(f"must be {lo}-{hi}")
     return str(n)
+
+
+def _map_pan(v):
+    """'east,north' in miles, each within the map's reach."""
+    parts = str(v).split(",")
+    try:
+        e, n = (float(x) for x in parts)
+    except ValueError:
+        raise ValueError("map position should be two numbers: miles east, miles north")
+    if not (abs(e) <= 100 and abs(n) <= 100):
+        raise ValueError("the map can move at most 100 miles from home")
+    return "%g,%g" % (round(e, 1), round(n, 1))
 
 
 def _choice(v, options):
@@ -670,6 +686,10 @@ class WebApp:
             "tv_seconds": int(clean("TV_SECONDS", "15")),
             "tv_flight_popup": clean("TV_FLIGHT_POPUP", "on"),
             "tv_arcade_style": clean("TV_ARCADE_STYLE", "led"),
+            "tv_map_radius": int(clean("TV_MAP_RADIUS", "20")),
+            "tv_map_style": clean("TV_MAP_STYLE", "dark"),
+            "tv_map_pan": list(parse_pan(s.get("TV_MAP_PAN", ""))),
+            "tv_map_radii": list(MAP_RADII),
             "tv_page_names": [[p, TV_PAGE_NAMES[p]] for p in TV_PAGES],
             "airlines": self._airlines(clean),
             "sports": self._sports(clean),
@@ -1414,11 +1434,23 @@ function tvRows(){const names=Object.fromEntries(S.tv_page_names||[]);const o=tv
     <label class="switch"><input type="checkbox" id="tvpop" ${S.tv_flight_popup!='off'?'checked':''}><span></span></label></div>
    <div class="row"><div class="grow">Arcade look</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('tv_arcade_style',[['led','LED dots'],['pixels','Crisp pixels']])}</div></div>
+  ${(S.tv_pages||[]).includes('flightmap')?mapRows():''}
   ${S.tv_mode!='single'?`<h2>TV pages</h2><div class="card">${o.map((k,i)=>`<div class="row"><div class="grow">${esc(names[k]||k)}</div>
      <button class="btn" data-tup="${k}" ${i==0?'disabled':''} aria-label="Move up">↑</button>
      <button class="btn" data-tdown="${k}" ${i==o.length-1?'disabled':''} aria-label="Move down">↓</button>
      <label class="switch"><input type="checkbox" data-tvpage="${k}" ${(S.tv_pages||[]).includes(k)?'checked':''}><span></span></label></div>`).join('')}</div>
   <p class="hint">Shown in this order. A page with nothing to show right now (no planes nearby, no games today) is skipped. Your coins, flights, news, sports and weather settings below feed the pages.</p>`:''}`}
+function mapRows(){const [e,n]=S.tv_map_pan||[0,0],moved=e||n;
+  const btn=(d,label,txt)=>`<button class="btn" data-pan="${d}" aria-label="${label}" style="width:56px;height:48px;font-size:22px">${txt}</button>`;
+  return `<h2>Flight map</h2><div class="card">
+   <div class="row"><div class="grow">Zoom<div class="name" style="white-space:normal">Miles from the center to the outer ring.</div></div>
+    <select id="mapr">${(S.tv_map_radii||[5,10,15,20,25,50]).map(r=>`<option value="${r}" ${S.tv_map_radius==r?'selected':''}>${r} mi</option>`).join('')}</select></div>
+   <div class="row"><div class="grow">Look</div></div>
+   <div class="row" style="border-top:0;padding-top:0">${seg('tv_map_style',[['dark','Dark'],['light','Light']])}</div>
+   <div class="row"><div class="grow">Move the map<div class="name" style="white-space:normal">${moved?`Centered ${Math.abs(n)} mi ${n>=0?'north':'south'}, ${Math.abs(e)} mi ${e>=0?'east':'west'} of home.`:'Centered on home.'}</div></div></div>
+   <div class="row" style="border-top:0;padding-top:0;justify-content:center;gap:10px">${btn('w','Move west','◀')}${btn('n','Move north','▲')}${btn('s','Move south','▼')}${btn('e','Move east','▶')}
+    <button class="btn" id="mapc" style="width:auto;padding:0 14px" ${moved?'':'disabled'}>Home</button></div></div>
+  <p class="hint">Each arrow moves the map a quarter of the zoom distance. Map © OpenStreetMap contributors.</p>`}
 function saveTvPages(order,on){S.tv_pages=order.filter(k=>on.has(k));save();render()}
 function render(){
   const dim=S.dim_hours?S.dim_hours.split('-').map(Number):null;
@@ -1572,7 +1604,8 @@ function save(extra){
       sports_odds:S.sports_odds,odds_markets:(S.odds_markets||[]).join('\n'),odds_per_cycle:S.odds_per_cycle,videos_max_age_days:S.videos_max_age_days,videos_skip_shorts:S.videos_skip_shorts,
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta,
-      ...(isTV()?{tv_mode:S.tv_mode,tv_pages:(S.tv_pages||[]).join(','),tv_seconds:S.tv_seconds,tv_flight_popup:S.tv_flight_popup,tv_arcade_style:S.tv_arcade_style}:{})};
+      ...(isTV()?{tv_mode:S.tv_mode,tv_pages:(S.tv_pages||[]).join(','),tv_seconds:S.tv_seconds,tv_flight_popup:S.tv_flight_popup,tv_arcade_style:S.tv_arcade_style,
+        tv_map_radius:S.tv_map_radius,tv_map_style:S.tv_map_style,tv_map_pan:(S.tv_map_pan||[0,0]).join(',')}:{})};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
     catch(e){if(e.message!='login'){toast('Not saved: '+e.message,true);setTimeout(load,1800)}}
   },extra===0?0:450);
@@ -1610,6 +1643,11 @@ function bind(){
     const o=tvOrder(),k=b.dataset.tup||b.dataset.tdown,i=o.indexOf(k),j=b.dataset.tup?i-1:i+1;
     [o[i],o[j]]=[o[j],o[i]];S.tv_order=o;saveTvPages(o,new Set(S.tv_pages||[]))});
   if($('#tvsecs'))$('#tvsecs').onchange=e=>{S.tv_seconds=+e.target.value;save()};
+  if($('#mapr'))$('#mapr').onchange=e=>{S.tv_map_radius=+e.target.value;save();render()};
+  document.querySelectorAll('[data-pan]').forEach(b=>b.onclick=()=>{const st=(S.tv_map_radius||20)/4,[e,n]=S.tv_map_pan||[0,0];
+    const d={n:[0,st],s:[0,-st],e:[st,0],w:[-st,0]}[b.dataset.pan],cl=v=>Math.max(-100,Math.min(100,Math.round(v*10)/10));
+    S.tv_map_pan=[cl(e+d[0]),cl(n+d[1])];save();render()});
+  if($('#mapc'))$('#mapc').onclick=()=>{S.tv_map_pan=[0,0];save();render()};
   if($('#tvpop'))$('#tvpop').onchange=e=>{S.tv_flight_popup=e.target.checked?'on':'off';save()};
   if($('#feeds'))$('#feeds').onchange=e=>{S.news_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};
   if($('#gfeeds'))$('#gfeeds').onchange=e=>{S.news_general_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};

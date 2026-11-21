@@ -472,6 +472,13 @@ Re-running `./install.sh` later keeps it a TV.
   A page with nothing to show (no planes nearby, no games) is skipped.
 - **Single dashboard**: clock, weather, flights, crypto, forecast and scores on one screen.
 
+**Flight map:** planes on a street map around home (OpenStreetMap), with flight ID, route
+and altitude, a dotted trail of where each has been, and the airports they're flying to or from.
+Planes glide between updates. On the phone (TV dashboard → Flight map): zoom from 5 to 100 miles
+(20 by default), dark or light, and arrows to move the map (Home re-centers it). With the map on,
+the Pi asks for planes over the whole screen, not just your Flights radius; the Flights page still
+uses that radius.
+
 **Flight pop-up:** when a flight you track takes off or lands, it takes over the screen for
 30 seconds.
 

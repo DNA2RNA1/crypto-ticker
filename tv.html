@@ -179,14 +179,14 @@ PAGES.chart={has:()=>D.assets&&D.assets.some(a=>a.candles&&a.candles.length>4),h
   const y=v=>H-(v-lo)/(hi-lo)*H,step=W/cs.length,bw=step*.62;
   const body=cs.map((c,i)=>{const [o,h,l,cl]=c,up=cl>=o,col=up?'#4CD68A':'#E5485F',cx=i*step+step/2;
     return `<line x1="${cx}" x2="${cx}" y1="${y(h)}" y2="${y(l)}" stroke="${col}" stroke-width="3"/><rect x="${cx-bw/2}" y="${y(Math.max(o,cl))}" width="${bw}" height="${Math.max(3,Math.abs(y(o)-y(cl)))}" fill="${up?'#0B0D10':col}" stroke="${col}" stroke-width="3"/>`}).join('');
-  const ticks=[];for(let k=0;k<5;k++){const v=lo+(hi-lo)*(k+.5)/5;ticks.push(`<line x1="0" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="#1E242C" stroke-width="2"/><text x="${W+18}" y="${y(v)+8}" fill="#7D8794" font-size="24" font-family="JetBrains Mono">${esc(money(v))}</text>`)}
+  const ticks=[];for(let k=0;k<5;k++){const v=lo+(hi-lo)*(k+.5)/5;ticks.push(`<line x1="0" x2="${W}" y1="${y(v)}" y2="${y(v)}" stroke="#1E242C" stroke-width="2"/><text x="${W+18}" y="${y(v)+8}" fill="#7D8794" font-size="24" font-family="JetBrains Mono, DejaVu Sans Mono, monospace">${esc(money(v))}</text>`)}
   const last=cs[cs.length-1][3],first=cs[0][0],dv=last-first,col=dv>=0?'#4CD68A':'#E5485F';
   return `<div class="hdr ${f?'flip':''}"><div style="display:flex;align-items:center;gap:22px">${coinBadge(a,76)}<div><div style="font-size:48px;font-weight:700;line-height:1">${esc(a.symbol)} <span style="font-size:30px;color:var(--muted);font-weight:500">${esc(a.name)}</span></div>
     <div class="mono" style="font-size:30px;color:${col}">${esc(money(a.price))}  ${dv>=0?'+':'−'}${esc(money(Math.abs(dv)))} (${dv>=0?'+':'−'}${Math.abs(dv/first*100).toFixed(2)}%) · 7 days</div></div></div>
     <div style="display:flex;align-items:center;gap:26px"><div class="mono" style="font-size:26px;padding:8px 16px;border-radius:10px;background:#262C35;font-weight:700">4H candles</div>${clock()}</div></div>
   <svg width="1808" height="${H+20}" viewBox="0 0 1808 ${H+20}" role="img" aria-label="${esc(a.symbol)} 7-day candles">${ticks.join('')}${body}
     <line x1="0" x2="${W}" y1="${y(last)}" y2="${y(last)}" stroke="${col}" stroke-width="2" stroke-dasharray="4 8"/>
-    <rect x="${W+4}" y="${y(last)-22}" width="164" height="44" rx="8" fill="${col}"/><text x="${W+86}" y="${y(last)+9}" fill="#fff" font-size="24" font-weight="700" font-family="JetBrains Mono" text-anchor="middle">${esc(money(a.price))}</text></svg>`},
+    <rect x="${W+4}" y="${y(last)-22}" width="164" height="44" rx="8" fill="${col}"/><text x="${W+86}" y="${y(last)+9}" fill="#fff" font-size="24" font-weight="700" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" text-anchor="middle">${esc(money(a.price))}</text></svg>`},
   next(){chartIdx++}};
 
 PAGES.weather={has:()=>D.weather,html(f){const w=D.weather,[txt,ic]=wx(w.code),hours=(w.hourly||[]).slice(1,9),h0=w.hour??new Date().getHours();
@@ -275,6 +275,76 @@ PAGES.scores={has:()=>D.games&&D.games.length,html(f){const gs=D.games;const g=g
   return hdr('Scores','',f)+`<div class="card" style="overflow:hidden;display:grid;grid-template-columns:1fr 280px 1fr;height:260px">${side(g.away)}
     <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:#0F1318">${lgTag(g,24)}<div style="font-size:28px;color:${c0};font-weight:600;letter-spacing:2px">${esc(s0)}</div><div class="mono" style="font-size:34px;text-align:center;padding:0 10px">${esc(g.state==='pre'?lineShort(g):g.detail||'')}</div></div>
     ${side(g.home,true)}</div><div class="grid2" style="grid-template-columns:repeat(3,minmax(0,1fr));flex:1;padding-bottom:30px">${others}</div>`}};
+
+/* ---------- flight map: planes on an OpenStreetMap street map around home ---------- */
+const MAP_R_PX=430;  // outer ring radius on screen; the zoom setting is the miles it stands for
+const TRAILS={};     // plane id -> recent [lat, lon] points, for the dotted trail
+const PLANE='M12 2c.8 0 1.3.8 1.3 1.8v5.4l8.2 4.4v2l-8.2-2.5v5.5l2.3 1.7v1.5L12 20.8l-3.6 1v-1.5l2.3-1.7v-5.5l-8.2 2.5v-2l8.2-4.4V3.8C10.7 2.8 11.2 2 12 2z';
+function planeKey(p){return p.hex||p.callsign||p.reg||(p.lat+','+p.lon)}
+function trackTrails(){if(!D.map)return;const now=Date.now(),seen=new Set();
+  for(const p of D.map.planes||[]){const k=planeKey(p);seen.add(k);const a=TRAILS[k]||(TRAILS[k]={pts:[],at:0});a.at=now;
+    const l=a.pts[a.pts.length-1];if(!l||l[0]!==p.lat||l[1]!==p.lon)a.pts.push([p.lat,p.lon]);if(a.pts.length>12)a.pts.shift()}
+  for(const k in TRAILS)if(!seen.has(k)&&now-TRAILS[k].at>600000)delete TRAILS[k]}
+function mapView(m,W,H){const rad=Math.PI/180;
+  const lat0=m.lat+(m.pan[1]*1.609)/111.32,lon0=m.lon+(m.pan[0]*1.609)/(111.32*Math.cos(m.lat*rad));
+  const mpp0=156543.03392*Math.cos(lat0*rad),want=m.radius*1609.34/MAP_R_PX;
+  const z=Math.max(3,Math.min(17,Math.ceil(Math.log2(mpp0/want)))),T=256*(mpp0/2**z)/want;  // the sharper zoom level, drawn a little smaller
+  const X=lon=>(lon+180)/360*2**z,Y=lat=>{const r=lat*rad;return(1-Math.log(Math.tan(r)+1/Math.cos(r))/Math.PI)/2*2**z};
+  const cx=X(lon0),cy=Y(lat0);
+  return {z,T,W,H,cx,cy,X,Y,at:(lat,lon)=>[W/2+(X(lon)-cx)*T,H/2+(Y(lat)-cy)*T],mpx:want}}
+function mapTiles(v){const out=[],x0=Math.floor(v.cx-v.W/2/v.T),x1=Math.floor(v.cx+v.W/2/v.T),y0=Math.floor(v.cy-v.H/2/v.T),y1=Math.floor(v.cy+v.H/2/v.T),n=2**v.z;
+  for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++){if(y<0||y>=n)continue;const tx=((x%n)+n)%n;
+    out.push(`<img src="https://tile.openstreetmap.org/${v.z}/${tx}/${y}.png" alt="" style="position:absolute;left:${(v.W/2+(x-v.cx)*v.T).toFixed(1)}px;top:${(v.H/2+(y-v.cy)*v.T).toFixed(1)}px;width:${(v.T+.5).toFixed(1)}px;height:${(v.T+.5).toFixed(1)}px">`)}
+  return out.join('')}
+function vState(p){const r=p.vrate_fpm;return r==null||Math.abs(r)<300?['#B8C4D0','']:r>0?['#3BA0FF',' ▲']:['#FF8A5B',' ▼']}
+function drawPlanes(el){const m=D.map,box=el.querySelector('.fm');if(!m||!box)return;const W=box.clientWidth,H=box.clientHeight,v=mapView(m,W,H),dark=m.style!=='light';
+  const age=m.fetched?Math.min(45,Math.max(0,now()-m.fetched)):0,rad=Math.PI/180;
+  const ring=dark?'rgba(255,255,255,.38)':'rgba(25,35,45,.38)',[hx,hy]=v.at(m.lat,m.lon),rr=m.radius*1609.34/v.mpx;
+  let svg=`<circle cx="${hx}" cy="${hy}" r="${rr/2}" fill="none" stroke="${ring}" stroke-width="1.5" stroke-dasharray="6 9"/>
+    <circle cx="${hx}" cy="${hy}" r="${rr}" fill="none" stroke="${ring}" stroke-width="1.5" stroke-dasharray="6 9"/>
+    <circle cx="${hx}" cy="${hy}" r="9" fill="#F5B400" stroke="#0B0D10" stroke-width="3"/><circle cx="${hx}" cy="${hy}" r="22" fill="none" stroke="#F5B400" stroke-opacity=".7" stroke-width="2"/>`;
+  const pill=(x,y,t)=>`<g><rect x="${x-34}" y="${y-15}" width="68" height="28" rx="8" fill="${dark?'rgba(11,13,16,.6)':'rgba(255,255,255,.7)'}"/><text x="${x}" y="${y+6}" fill="${dark?'#C9D1DB':'#25303C'}" font-size="18" font-family="JetBrains Mono, DejaVu Sans Mono, monospace" text-anchor="middle">${t}</text></g>`;
+  svg+=pill(hx+rr/2+42,hy,(m.radius/2)+' mi')+pill(hx+rr+42,hy,m.radius+' mi');
+  // airports the planes on screen are flying from or to
+  const aps=new Map();for(const p of m.planes)for(const [c,pos] of [[p.route&&p.route.orig,p.route&&p.route.orig_pos],[p.route&&p.route.dest,p.route&&p.route.dest_pos]])if(c&&pos)aps.set(c,pos);
+  for(const [c,pos] of aps){const [x,y]=v.at(pos[0],pos[1]);if(x<0||y<0||x>W||y>H)continue;
+    svg+=`<rect x="${x-10}" y="${y-10}" width="20" height="20" rx="4" fill="#0B0D10" stroke="#EAEDF1" stroke-width="2" transform="rotate(45 ${x} ${y})"/><text x="${x+18}" y="${y+32}" fill="#EAEDF1" stroke="#0B0D10" stroke-width="5" paint-order="stroke" font-size="22" font-weight="700" font-family="JetBrains Mono, DejaVu Sans Mono, monospace">${esc(c)}</text>`}
+  // planes, moved along their heading since the last update so they glide
+  const shown=[];
+  for(const p of m.planes){let la=p.lat,lo=p.lon;
+    if(p.speed_kt&&p.track!=null){const d=p.speed_kt*1.852/3600*age;la+=d*Math.cos(p.track*rad)/111.32;lo+=d*Math.sin(p.track*rad)/(111.32*Math.cos(la*rad))}
+    const [x,y]=v.at(la,lo);if(x<-40||y<-40||x>W+40||y>H+40)continue;shown.push([p,x,y])}
+  shown.sort((a,b)=>(a[0].dist_mi||0)-(b[0].dist_mi||0));
+  for(const [p,x,y] of shown){const [col]=vState(p),tr=(TRAILS[planeKey(p)]||{pts:[]}).pts;
+    if(tr.length>1)svg+=`<polyline points="${tr.map(q=>v.at(q[0],q[1]).join(',')).join(' ')} ${x},${y}" fill="none" stroke="${col}" stroke-opacity=".85" stroke-width="3.5" stroke-dasharray="1 8" stroke-linecap="round"/>`;
+    svg+=`<path d="${PLANE}" fill="${col}" stroke="#0B0D10" stroke-width="1.2" stroke-linejoin="round" transform="translate(${x.toFixed(1)} ${y.toFixed(1)}) rotate(${p.track||0}) scale(1.6) translate(-12 -12)"/>`}
+  // labels for the 25 nearest, placed where they don't cover each other or the corner boxes
+  const taken=[[30,20,560,150],[W-330,20,W-30,110],[30,H-90,840,H-20],[W-320,H-60,W-20,H-10]],hit=b=>taken.some(o=>!(b[2]<o[0]||b[0]>o[2]||b[3]<o[1]||b[1]>o[3]));
+  let labels='';
+  for(const [p,x,y] of shown.slice(0,25)){const r=p.route||{},[col,arrow]=vState(p),id=p.callsign||p.reg||'?',sub=r.orig?`${r.orig}→${r.dest}`:(p.type||'');
+    const w=34+(id.length+sub.length+1)*14.5,h=66;let b=null;
+    for(const [dx,dy] of [[24,-20],[-24-w,-20],[-w/2,26],[-w/2,-26-h],[24,8],[-24-w,8]]){const c=[x+dx,y+dy,x+dx+w,y+dy+h];if(!hit(c)){b=c;break}}
+    if(!b)continue;taken.push(b);
+    labels+=`<div style="position:absolute;left:${b[0].toFixed(0)}px;top:${b[1].toFixed(0)}px;background:rgba(11,13,16,.88);border:1px solid #2A313B;border-radius:10px;padding:6px 12px;color:#EAEDF1;white-space:nowrap">
+      <div class="mono" style="font-size:24px;font-weight:700">${esc(id)} <span style="color:#9AA3AE;font-weight:500;font-size:20px">${esc(sub)}</span></div>
+      <div class="mono" style="font-size:19px;color:${col}">${p.alt_ft!=null?Math.round(p.alt_ft).toLocaleString('en-US')+' ft':''}${arrow}</div></div>`}
+  box.querySelector('.fm-svg').innerHTML=svg;box.querySelector('.fm-labels').innerHTML=labels;
+  const ago=m.fetched?Math.max(0,Math.round(now()-m.fetched)):null;
+  box.querySelector('.fm-sub').textContent=(shown.length?`${shown.length} plane${shown.length>1?'s':''} in view`:'No planes in view right now')+` · ${m.radius} mi zoom`+(ago!=null?` · updated ${ago<90?ago+' s':Math.round(ago/60)+' min'} ago`:'')}
+PAGES.flightmap={has:()=>!!D.map,
+  html(){const m=D.map,dark=m.style!=='light';
+    return `<div class="fm" style="position:absolute;inset:0;overflow:hidden;background:${dark?'#101418':'#F2EFE9'}">
+      <div class="fm-tiles" style="position:absolute;inset:0;${dark?'filter:invert(1) hue-rotate(180deg) brightness(.85) contrast(.9) saturate(.6)':''}"></div>
+      <svg class="fm-svg" width="100%" height="100%" style="position:absolute;inset:0" role="img" aria-label="Planes near home on a street map"></svg>
+      <div class="fm-labels" style="position:absolute;inset:0"></div>
+      <div style="position:absolute;left:40px;top:28px;background:rgba(11,13,16,.88);border:1px solid #252B33;border-radius:16px;padding:16px 24px;color:#EAEDF1">
+        <div style="font-size:46px;font-weight:700;line-height:1.1">Flights near home</div><div class="fm-sub" style="font-size:22px;color:#9AA3AE;margin-top:4px"></div></div>
+      <div style="position:absolute;right:40px;top:28px;background:rgba(11,13,16,.88);border:1px solid #252B33;border-radius:16px;padding:14px 22px;color:#EAEDF1">${clock()}</div>
+      <div style="position:absolute;left:40px;bottom:24px;display:flex;gap:24px;font-size:21px;color:#C9D1DB;background:rgba(11,13,16,.9);border:1px solid #252B33;border-radius:12px;padding:10px 16px">
+        <div><span style="color:#FF8A5B">■</span> Descending</div><div><span style="color:#3BA0FF">■</span> Climbing</div><div><span style="color:#B8C4D0">■</span> Level</div><div style="color:#9AA3AE">Dotted = where it's been</div></div>
+      <div style="position:absolute;right:24px;bottom:20px;font-size:15px;color:#C9D1DB;background:rgba(11,13,16,.8);border-radius:8px;padding:5px 10px">Map © OpenStreetMap contributors</div></div>`},
+  start(el){const box=el.querySelector('.fm');const v=mapView(D.map,box.clientWidth,box.clientHeight);el.querySelector('.fm-tiles').innerHTML=mapTiles(v);
+    drawPlanes(el);const t=setInterval(()=>{if(!el.isConnected){clearInterval(t);return}drawPlanes(el)},1000);return null}};
 
 /* ---------- coins one at a time: each coin big, like the LED ticker ---------- */
 const PER_COIN=7000;
@@ -407,7 +477,7 @@ function pageRows(sec){const P=PAGER[sec.dataset.fit]||(PAGER[sec.dataset.fit]={
   if(count)count.textContent=shown<n?`${shown>1?P.at+1+'–':''}${P.at+shown} of ${n}`:'';P.shown=shown;P.since=Date.now();return shown}
 let pageHold=null;  // ms the current page asked for (the arcade plays whole scenes)
 function show(html,key){const box=$('#pages');const old=[...box.children];const el=document.createElement('div');el.className='page';el.innerHTML=html;
-  if(key==='single'||key==='arcade')el.style.padding='0';box.appendChild(el);
+  if(key==='single'||key==='arcade'||key==='flightmap')el.style.padding='0';box.appendChild(el);
   // the dashboard's Scores box shows as many games as fit and pages through the rest
   el.querySelectorAll('[data-fit]').forEach(sec=>{
     const P=PAGER[sec.dataset.fit]||(PAGER[sec.dataset.fit]={at:0,shown:0,since:0}),every=+(sec.dataset.every||8000);
@@ -442,7 +512,7 @@ async function load(){try{const r=await fetch('/api/tv',{cache:'no-store'});if(!
     const next=await r.json();lastOk=Date.now();$('#offline').hidden=true;
     if(build!==null&&next.build&&next.build!==build){location.reload();return}  // new software after an Update
     build=next.build||build;
-    const was=D&&JSON.stringify(D.settings);D=next;watchFlights();crawl();
+    const was=D&&JSON.stringify(D.settings);D=next;watchFlights();trackTrails();crawl();
     if(!was||was!==JSON.stringify(D.settings)){idx=-1;step();schedule()}}  // first data, or changed on the phone
   catch(e){if(!D)show(standby(),'standby');else if(Date.now()-lastOk>120000)$('#offline').hidden=false}}
 $('#crawl').addEventListener('animationiteration',()=>{if(crawlNext){$('#crawl').innerHTML=crawlNext;crawlNext=null}});

@@ -42,7 +42,8 @@ from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
 from flights import RADIUS_CHOICES as FLIGHT_RADII, Flights, Tracker, tracked_from_env
-from tv import DEFAULT_TV_PAGES, TV_MODES, NullDisplay, parse_pages, screens_for
+from tv import (DEFAULT_TV_PAGES, MAP_RADII, TV_MODES, NullDisplay, flights_fetch_radius, parse_pages,
+                parse_pan, screens_for)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
@@ -147,6 +148,9 @@ class Config:
     tv_seconds: int = 15           # TV: seconds per page
     tv_flight_popup: bool = True   # TV: a tracked flight takes over on takeoff and landing
     tv_arcade_style: str = "led"   # TV arcade: "led" (round-ish dots, like the panel) or "pixels" (crisp, no gaps)
+    tv_map_radius: int = 20        # TV flight map: miles from the center to the ring
+    tv_map_style: str = "dark"     # TV flight map: "dark" or "light"
+    tv_map_pan: tuple = (0.0, 0.0)  # TV flight map: center moved (miles east, miles north) from home
     featured: list = field(default_factory=list)
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
     portfolio: bool = False        # portfolio screen (reset to off at every start)
@@ -229,6 +233,9 @@ class Config:
         c.tv_seconds = env("TV_SECONDS", c.tv_seconds, int, lo=5, hi=120)
         c.tv_flight_popup = env("TV_FLIGHT_POPUP", True, bool)
         c.tv_arcade_style = "pixels" if env("TV_ARCADE_STYLE", "led").strip().lower() == "pixels" else "led"
+        c.tv_map_radius = int(env("TV_MAP_RADIUS", "20", choices=tuple(str(r) for r in MAP_RADII)))
+        c.tv_map_style = "light" if env("TV_MAP_STYLE", "dark").strip().lower() == "light" else "dark"
+        c.tv_map_pan = parse_pan(env("TV_MAP_PAN", ""))
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.focus = env("FOCUS", False, bool)
         c.portfolio = env("PORTFOLIO", False, bool)
@@ -392,7 +399,7 @@ class Ticker:
         self.markets = Markets(cfg.odds_markets)
         self.sports = Sports(cfg.sports)
         self._lines_at = 0  # which upcoming lines the next sports cycle starts from
-        self.flights = Flights(cfg.weather_lat, cfg.weather_lon, cfg.flights_radius)
+        self.flights = Flights(cfg.weather_lat, cfg.weather_lon, flights_fetch_radius(cfg))
         self.tracker = Tracker(cfg.flights_track, lookups=self.flights.lookups)
         self.tz = get_tz(cfg.timezone)
         self.stale = False          # True while showing the last good prices, not fresh ones
@@ -580,9 +587,9 @@ class Ticker:
                                    "celsius" if new.temp_unit == "C" else "fahrenheit")
         if (new.weather_extra, new.temp_unit) != (old.weather_extra, old.temp_unit):
             self.extra_weather = self._make_extra_weather(new)
-        if (new.weather_lat, new.weather_lon, new.flights_radius) != \
-                (old.weather_lat, old.weather_lon, old.flights_radius):
-            self.flights = Flights(new.weather_lat, new.weather_lon, new.flights_radius,
+        if (new.weather_lat, new.weather_lon, flights_fetch_radius(new)) != \
+                (old.weather_lat, old.weather_lon, flights_fetch_radius(old)):
+            self.flights = Flights(new.weather_lat, new.weather_lon, flights_fetch_radius(new),
                                    lookups=self.flights.lookups)
             self.tracker.lookups = self.flights.lookups
         if new.flights_track != old.flights_track:

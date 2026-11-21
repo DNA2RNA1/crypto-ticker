@@ -278,3 +278,67 @@ def test_arcade_look_setting(app, monkeypatch):
     assert Config.from_env().tv_arcade_style == "pixels"
     monkeypatch.setenv("TV_ARCADE_STYLE", "nonsense")
     assert Config.from_env().tv_arcade_style == "led"
+
+
+# --- flight map --------------------------------------------------------------------------
+def test_map_pan_and_reach():
+    import types as t
+    assert tv.parse_pan("3.5,-2") == (3.5, -2.0) and tv.parse_pan("") == (0.0, 0.0)
+    assert tv.parse_pan("nan,1") == (0.0, 0.0) and tv.parse_pan("500,-500") == (100, -100)
+    c = t.SimpleNamespace(device="tv", tv_pages=["flightmap"], flights_radius=10, tv_map_radius=20, tv_map_pan=(0, 0))
+    assert tv.flights_fetch_radius(c) == 46            # fills the screen at 20 mi
+    c.tv_map_radius = 100
+    assert tv.flights_fetch_radius(c) == 230
+    c.tv_pages = ["flights"]
+    assert tv.flights_fetch_radius(c) == 10            # map off: just the Flights setting
+    c.device, c.tv_pages = "led", ["flightmap"]
+    assert tv.flights_fetch_radius(c) == 10            # never on an LED panel
+
+
+def test_map_settings_from_env(monkeypatch):
+    monkeypatch.setenv("DEVICE", "tv")
+    monkeypatch.setenv("TV_PAGES", "flightmap")
+    monkeypatch.setenv("TV_MAP_RADIUS", "50")
+    monkeypatch.setenv("TV_MAP_STYLE", "Light")
+    monkeypatch.setenv("TV_MAP_PAN", "5,-2.5")
+    c = Config.from_env()
+    assert (c.tv_map_radius, c.tv_map_style, c.tv_map_pan) == (50, "light", (5.0, -2.5))
+    assert "flights" in c.screens
+    monkeypatch.setenv("TV_MAP_RADIUS", "33")
+    assert Config.from_env().tv_map_radius == 20       # not a choice: the default
+
+
+def test_overhead_can_stay_within_the_flights_radius():
+    import flights as fl
+    f = fl.Flights.__new__(fl.Flights)
+    f.data = [{"callsign": "A", "dist_mi": 3.0}, {"callsign": "B", "dist_mi": 30.0}]
+    f.fetched = 1000
+    f.route = lambda cs, now=None: None
+    assert [p["callsign"] for p in f.overhead(5, now=1000)] == ["A", "B"]
+    assert [p["callsign"] for p in f.overhead(5, now=1000, max_mi=10)] == ["A"]
+
+
+def test_flight_map_payload():
+    t = _fake_ticker(tv_pages=["flightmap"], weather_lat=26.3, weather_lon=-98.16, tv_map_radius=20,
+                     tv_map_style="dark", tv_map_pan=(1.0, 0.0), flights_radius=10, flights_overhead=False)
+    t.flights.fetched = 990
+    t.flights.overhead = lambda n, now=None, max_mi=None: [
+        {"hex": "abc", "callsign": "AAL1", "lat": 26.4, "lon": -98.1, "track": 90, "alt_ft": 5000,
+         "speed_kt": 200, "vrate_fpm": -800, "dist_mi": 7.0, "reg": "", "type": "A321",
+         "route": {"orig": "DFW", "dest": "MFE", "orig_pos": (32.9, -97.0), "dest_pos": (26.2, -98.2), "x": 1}}]
+    m = tv.payload(t, now=1000)["map"]
+    assert m["radius"] == 20 and m["pan"] == [1.0, 0.0] and m["style"] == "dark" and m["fetched"] == 990
+    assert m["planes"][0]["hex"] == "abc" and m["planes"][0]["route"] == {
+        "orig": "DFW", "dest": "MFE", "orig_pos": (32.9, -97.0), "dest_pos": (26.2, -98.2)}
+    assert t.flights.calls == 1                        # the map fetches planes even with Flights off
+    t.cfg.weather_lat = None
+    assert tv.payload(t)["map"] is None                # no location set: no map
+
+
+def test_map_settings_save(app):
+    app.save({"tv_map_radius": "50", "tv_map_style": "light", "tv_map_pan": "5,-2.5"})
+    s = app.settings()
+    assert (s["tv_map_radius"], s["tv_map_style"], s["tv_map_pan"]) == (50, "light", [5.0, -2.5])
+    for bad in ({"tv_map_radius": "33"}, {"tv_map_style": "neon"}, {"tv_map_pan": "500,0"}, {"tv_map_pan": "x"}):
+        with pytest.raises(ValueError):
+            app.save(bad)
