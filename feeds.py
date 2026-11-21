@@ -255,6 +255,25 @@ def parse_indices(spec):
     return items or DEFAULT_INDICES
 
 
+def geocode_address(query, session=None):
+    """Street addresses (OpenStreetMap Nominatim, free, no key; their policy asks for a
+    real User-Agent and at most one request a second, which a person typing never hits)."""
+    s = session or requests.Session()
+    r = s.get("https://nominatim.openstreetmap.org/search",
+              params={"q": query.strip(), "format": "jsonv2", "limit": 5, "addressdetails": 0},
+              headers={"User-Agent": "crypto-ticker-tv-dashboard/1.0 (personal display; rare lookups)",
+                       "Accept-Language": "en"}, timeout=15)
+    r.raise_for_status()
+    out = []
+    for p in r.json() or []:
+        try:
+            out.append({"label": str(p.get("display_name") or "")[:140],
+                        "lat": round(float(p["lat"]), 5), "lon": round(float(p["lon"]), 5)})
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
+
+
 def geocode(query, session=None):
     """Places matching a ZIP code or city name (Open-Meteo geocoding, free, no key)."""
     query = query.strip()

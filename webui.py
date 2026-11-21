@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlparse
 from PIL import Image
 
 from flights import RADIUS_CHOICES
-from tv import DEFAULT_TV_PAGES, MAP_RADII, TV_PAGE_NAMES, TV_PAGES, parse_pages, parse_pan
+from tv import DEFAULT_TV_PAGES, MAP_RADII, TV_PAGE_NAMES, TV_PAGES, parse_home, parse_pages, parse_pan
 
 log = logging.getLogger("ticker.web")
 
@@ -106,6 +106,7 @@ EDITABLE = {  # key -> validator returning the string to store
     "TV_MAP_RADIUS": lambda v: _choice(v.strip(), tuple(str(r) for r in MAP_RADII)),
     "TV_MAP_STYLE": lambda v: _choice(v.strip().lower(), ("dark", "light")),
     "TV_MAP_PAN": lambda v: _map_pan(v),
+    "TV_MAP_HOME": lambda v: _map_home(v),
 }
 
 MAX_FAILS = 5
@@ -183,7 +184,7 @@ LABELS = {"SYMBOLS": "Coins", "LAYOUT": "Layout", "TRANSITION": "Transition", "B
           "FLIGHTS_OVERHEAD": "Planes overhead", "FLIGHTS_TRACK": "Flights to track",
           "TV_MODE": "TV display mode", "TV_PAGES": "TV pages", "TV_SECONDS": "Seconds per TV page",
           "TV_FLIGHT_POPUP": "Flight pop-up", "TV_ARCADE_STYLE": "Arcade look",
-          "TV_MAP_RADIUS": "Flight map zoom", "TV_MAP_STYLE": "Flight map look", "TV_MAP_PAN": "Flight map position"}
+          "TV_MAP_RADIUS": "Flight map zoom", "TV_MAP_HOME": "Flight map home", "TV_MAP_STYLE": "Flight map look", "TV_MAP_PAN": "Flight map position"}
 
 
 def _int(v, lo, hi):
@@ -194,6 +195,16 @@ def _int(v, lo, hi):
     if not lo <= n <= hi:
         raise ValueError(f"must be {lo}-{hi}")
     return str(n)
+
+
+def _map_home(v):
+    """'lat,lon' of the map's home; empty = use the weather location."""
+    if not str(v).strip():
+        return ""
+    home = parse_home(v)
+    if not home:
+        raise ValueError("map home should be latitude, longitude (e.g. 26.30123, -98.16012)")
+    return "%.5f,%.5f" % home
 
 
 def _map_pan(v):
@@ -689,6 +700,7 @@ class WebApp:
             "tv_map_radius": int(clean("TV_MAP_RADIUS", "20")),
             "tv_map_style": clean("TV_MAP_STYLE", "dark"),
             "tv_map_pan": list(parse_pan(s.get("TV_MAP_PAN", ""))),
+            "tv_map_home": s.get("TV_MAP_HOME", "").strip(),
             "tv_map_radii": list(MAP_RADII),
             "tv_page_names": [[p, TV_PAGE_NAMES[p]] for p in TV_PAGES],
             "airlines": self._airlines(clean),
@@ -1028,11 +1040,13 @@ def make_handler(app):
                     return self._send(400, {"error": str(exc)})
                 return self._send(200, png, "image/png")
             if url.path == "/api/geocode":
-                q = parse_qs(url.query).get("q", [""])[0].strip()[:64]
+                q = parse_qs(url.query).get("q", [""])[0].strip()[:120]
                 if len(q) < 3:
                     return self._send(200, {"places": []})
                 try:
-                    from feeds import geocode
+                    from feeds import geocode, geocode_address
+                    if parse_qs(url.query).get("kind", [""])[0] == "address":
+                        return self._send(200, {"places": geocode_address(q)})
                     return self._send(200, {"places": geocode(q)})
                 except Exception as exc:
                     log.warning("geocode failed: %s", exc)
@@ -1447,6 +1461,10 @@ function mapRows(){const [e,n]=S.tv_map_pan||[0,0],moved=e||n;
     <select id="mapr">${(S.tv_map_radii||[5,10,15,20,25,50]).map(r=>`<option value="${r}" ${S.tv_map_radius==r?'selected':''}>${r} mi</option>`).join('')}</select></div>
    <div class="row"><div class="grow">Look</div></div>
    <div class="row" style="border-top:0;padding-top:0">${seg('tv_map_style',[['dark','Dark'],['light','Light']])}</div>
+   <div class="row"><div class="grow">Home<div class="name" style="white-space:normal">${S.tv_map_home?`Your address (${esc(S.tv_map_home)}) · <a href="#" class="link" id="maphr">Use the weather location</a>`:'The weather location. Enter your address so the map centers on your house.'}</div></div></div>
+   <div class="row" style="border-top:0;padding-top:0;gap:8px"><label for="maph" style="position:absolute;left:-9999px">Home address</label>
+    <input id="maph" placeholder="Street address, or lat, lon" style="flex:1;min-width:0"><button class="btn" id="maphf" style="width:auto;padding:0 14px">Find</button></div>
+   <div id="maphres"></div>
    <div class="row"><div class="grow">Move the map<div class="name" style="white-space:normal">${moved?`Centered ${Math.abs(n)} mi ${n>=0?'north':'south'}, ${Math.abs(e)} mi ${e>=0?'east':'west'} of home.`:'Centered on home.'}</div></div></div>
    <div class="row" style="border-top:0;padding-top:0;justify-content:center;gap:10px">${btn('w','Move west','◀')}${btn('n','Move north','▲')}${btn('s','Move south','▼')}${btn('e','Move east','▶')}
     <button class="btn" id="mapc" style="width:auto;padding:0 14px" ${moved?'':'disabled'}>Home</button></div></div>
@@ -1605,7 +1623,7 @@ function save(extra){
       ...Object.fromEntries((S.sports||[]).flatMap(l=>[['sports_'+l.key,l.on?'on':'off'],['sports_'+l.key+'_top',String(l.top)],
         ['sports_'+l.key+'_favorites',l.favorites.map(f=>f.id+':'+f.abbr).join(',')]])),list_view:S.list_view,list_page_seconds:S.list_page_seconds,dim_hours:S.dim_hours,dim_brightness:S.dim_brightness,currency:S.currency,refresh_rate:S.refresh_rate,coins_meta:pendingMeta,
       ...(isTV()?{tv_mode:S.tv_mode,tv_pages:(S.tv_pages||[]).join(','),tv_seconds:S.tv_seconds,tv_flight_popup:S.tv_flight_popup,tv_arcade_style:S.tv_arcade_style,
-        tv_map_radius:S.tv_map_radius,tv_map_style:S.tv_map_style,tv_map_pan:(S.tv_map_pan||[0,0]).join(',')}:{})};
+        tv_map_radius:S.tv_map_radius,tv_map_style:S.tv_map_style,tv_map_pan:(S.tv_map_pan||[0,0]).join(','),tv_map_home:S.tv_map_home||''}:{})};
     try{await api('/api/settings',body);pendingMeta=[];toast('Saved ✓')}
     catch(e){if(e.message!='login'){toast('Not saved: '+e.message,true);setTimeout(load,1800)}}
   },extra===0?0:450);
@@ -1647,6 +1665,15 @@ function bind(){
   document.querySelectorAll('[data-pan]').forEach(b=>b.onclick=()=>{const st=(S.tv_map_radius||20)/4,[e,n]=S.tv_map_pan||[0,0];
     const d={n:[0,st],s:[0,-st],e:[st,0],w:[-st,0]}[b.dataset.pan],cl=v=>Math.max(-100,Math.min(100,Math.round(v*10)/10));
     S.tv_map_pan=[cl(e+d[0]),cl(n+d[1])];save();render()});
+  if($('#maphf'))$('#maphf').onclick=async()=>{const q=$('#maph').value.trim();if(q.length<3)return;
+    const m=q.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+    if(m){S.tv_map_home=`${(+m[1]).toFixed(5)},${(+m[2]).toFixed(5)}`;S.tv_map_pan=[0,0];save();render();return}
+    $('#maphres').innerHTML='<div class="row"><div class="grow name">Looking up…</div></div>';
+    try{const {places}=await api('/api/geocode?kind=address&q='+encodeURIComponent(q));
+      $('#maphres').innerHTML=places.length?places.map((p,i)=>`<div class="row"><button class="btn" data-home="${i}" style="width:100%;text-align:left;height:auto;padding:10px 12px;white-space:normal">${esc(p.label)}</button></div>`).join(''):'<div class="row"><div class="grow name">No match. Try adding the city, or paste lat, lon from Google Maps.</div></div>';
+      document.querySelectorAll('[data-home]').forEach(b=>b.onclick=()=>{const p=places[+b.dataset.home];S.tv_map_home=`${p.lat.toFixed(5)},${p.lon.toFixed(5)}`;S.tv_map_pan=[0,0];save();render()})}
+    catch(e){$('#maphres').innerHTML='<div class="row"><div class="grow name">Lookup failed. Check the Pi\'s internet, or paste lat, lon.</div></div>'}};
+  if($('#maphr'))$('#maphr').onclick=e=>{e.preventDefault();S.tv_map_home='';save();render()};
   if($('#mapc'))$('#mapc').onclick=()=>{S.tv_map_pan=[0,0];save();render()};
   if($('#tvpop'))$('#tvpop').onchange=e=>{S.tv_flight_popup=e.target.checked?'on':'off';save()};
   if($('#feeds'))$('#feeds').onchange=e=>{S.news_feeds=e.target.value.split(/\s+/).filter(Boolean);save()};

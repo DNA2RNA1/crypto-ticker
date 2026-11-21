@@ -13,6 +13,8 @@ import math
 import os
 import time
 
+from flights import distance_mi
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ICON_DIR = os.path.join(HERE, "icons")
 AIRLINE_DIR = os.path.join(ICON_DIR, "airlines")
@@ -33,7 +35,7 @@ _FEEDS = {"flights": "flights", "flightmap": "flights", "tracked": "flights", "s
           "feargreed": "feargreed", "scores": "sports", "lines": "sports"}
 
 
-MAP_RADII = (5, 10, 15, 20, 25, 50, 75, 100)  # flight map: miles from the center to the outer ring
+MAP_RADII = (1, 2, 5, 10, 15, 20, 25, 50, 75, 100)  # flight map: miles from the center to the outer ring
 MAP_VIEW = 2.3                         # the TV is this many radii wide on each side of the center
 MAP_MAX_PAN = 100                      # miles the map can be moved from home
 MAP_MAX_PLANES = 150
@@ -50,6 +52,24 @@ def parse_pan(raw):
     return (max(-MAP_MAX_PAN, min(MAP_MAX_PAN, round(e, 1))), max(-MAP_MAX_PAN, min(MAP_MAX_PAN, round(n, 1))))
 
 
+def parse_home(raw):
+    """'26.30123,-98.16012' -> (26.30123, -98.16012); None when unset or not a place."""
+    try:
+        lat, lon = (float(v) for v in str(raw or "").split(","))
+    except ValueError:
+        return None
+    return (round(lat, 5), round(lon, 5)) if -90 <= lat <= 90 and -180 <= lon <= 180 else None
+
+
+def map_home(cfg):
+    """Where the flight map is centered: its own home setting, else the weather location."""
+    home = getattr(cfg, "tv_map_home", None)
+    if home:
+        return home
+    lat, lon = getattr(cfg, "weather_lat", None), getattr(cfg, "weather_lon", None)
+    return None if lat is None or lon is None else (lat, lon)
+
+
 def map_on(cfg):
     return getattr(cfg, "device", "led") == "tv" and "flightmap" in (getattr(cfg, "tv_pages", None) or [])
 
@@ -60,7 +80,9 @@ def flights_fetch_radius(cfg):
     r = cfg.flights_radius
     if map_on(cfg):
         e, n = cfg.tv_map_pan
-        r = max(r, math.ceil(cfg.tv_map_radius * MAP_VIEW + math.hypot(e, n)))
+        home, wx = map_home(cfg), (getattr(cfg, "weather_lat", None), getattr(cfg, "weather_lon", None))
+        off = distance_mi(*home, *wx) if home and None not in wx else 0  # planes are asked for around the weather location
+        r = max(r, math.ceil(cfg.tv_map_radius * MAP_VIEW + math.hypot(e, n) + off))
     return min(r, 280)
 
 
@@ -204,7 +226,8 @@ def flight_map(ticker, now):
     """The flight map page: where it's centered, how far it reaches, and every plane the
     feed has (the page draws the ones on screen), with routes already looked up."""
     cfg = ticker.cfg
-    if cfg.weather_lat is None or cfg.weather_lon is None:
+    home = map_home(cfg)
+    if home is None:
         return None
     f = ticker.flights
     planes = []
@@ -213,7 +236,7 @@ def flight_map(ticker, now):
         planes.append({k: p.get(k) for k in ("hex", "callsign", "reg", "type", "lat", "lon", "track",
                                              "alt_ft", "speed_kt", "vrate_fpm", "dist_mi")}
                       | {"route": {k: r.get(k) for k in ("orig", "dest", "orig_pos", "dest_pos")} if r else None})
-    return {"lat": cfg.weather_lat, "lon": cfg.weather_lon, "radius": cfg.tv_map_radius,
+    return {"lat": home[0], "lon": home[1], "radius": cfg.tv_map_radius,
             "pan": list(cfg.tv_map_pan), "style": cfg.tv_map_style,
             "fetched": f.fetched or None, "planes": planes}
 

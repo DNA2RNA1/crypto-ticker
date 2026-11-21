@@ -42,8 +42,8 @@ from scroller import SPEEDS, Scroller
 from sports import BY_KEY as LEAGUE_BY_KEY, LIVE_EVERY, IDLE_EVERY, Sports, follow_from_env
 from usage import Usage
 from flights import RADIUS_CHOICES as FLIGHT_RADII, Flights, Tracker, tracked_from_env
-from tv import (DEFAULT_TV_PAGES, MAP_RADII, TV_MODES, NullDisplay, flights_fetch_radius, parse_pages,
-                parse_pan, screens_for)
+from tv import (DEFAULT_TV_PAGES, MAP_RADII, TV_MODES, NullDisplay, flights_fetch_radius, parse_home,
+                parse_pages, parse_pan, screens_for)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUEST_CACHE = os.path.join(HERE, "cache", "requests.json")
@@ -151,6 +151,7 @@ class Config:
     tv_map_radius: int = 20        # TV flight map: miles from the center to the ring
     tv_map_style: str = "dark"     # TV flight map: "dark" or "light"
     tv_map_pan: tuple = (0.0, 0.0)  # TV flight map: center moved (miles east, miles north) from home
+    tv_map_home: tuple = None       # TV flight map: (lat, lon) of home; None = the weather location
     featured: list = field(default_factory=list)
     focus: bool = False            # only starred (FEATURED) coins in the coin rotation
     portfolio: bool = False        # portfolio screen (reset to off at every start)
@@ -236,6 +237,7 @@ class Config:
         c.tv_map_radius = int(env("TV_MAP_RADIUS", "20", choices=tuple(str(r) for r in MAP_RADII)))
         c.tv_map_style = "light" if env("TV_MAP_STYLE", "dark").strip().lower() == "light" else "dark"
         c.tv_map_pan = parse_pan(env("TV_MAP_PAN", ""))
+        c.tv_map_home = parse_home(env("TV_MAP_HOME", ""))
         c.featured = [s.strip().lower() for s in env("FEATURED", "").split(",") if s.strip()]
         c.focus = env("FOCUS", False, bool)
         c.portfolio = env("PORTFOLIO", False, bool)

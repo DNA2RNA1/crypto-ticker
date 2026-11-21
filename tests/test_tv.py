@@ -342,3 +342,39 @@ def test_map_settings_save(app):
     for bad in ({"tv_map_radius": "33"}, {"tv_map_style": "neon"}, {"tv_map_pan": "500,0"}, {"tv_map_pan": "x"}):
         with pytest.raises(ValueError):
             app.save(bad)
+
+
+def test_map_home():
+    import types as t
+    assert tv.parse_home("26.301234567,-98.16") == (26.30123, -98.16) and tv.parse_home("") is None
+    assert tv.parse_home("95,0") is None and tv.parse_home("main st") is None
+    c = t.SimpleNamespace(device="tv", tv_pages=["flightmap"], flights_radius=10, tv_map_radius=1,
+                          tv_map_pan=(0, 0), tv_map_home=None, weather_lat=26.3017, weather_lon=-98.1633)
+    assert tv.map_home(c) == (26.3017, -98.1633)            # the weather location by default
+    assert tv.flights_fetch_radius(c) == 10                  # 1-mile zoom: the Flights radius is plenty
+    c.tv_map_home = (26.3017, -98.0633)                      # about 6 mi east of the weather location
+    assert tv.map_home(c) == (26.3017, -98.0633)
+    assert tv.flights_fetch_radius(c) == 10 and tv.flights_fetch_radius(
+        t.SimpleNamespace(**{**vars(c), "tv_map_radius": 20})) == 53   # 46 + the 6+ mi between them
+
+
+def test_map_home_setting(app):
+    app.save({"tv_map_home": "26.30123,-98.16012"})
+    assert app.settings()["tv_map_home"] == "26.30123,-98.16012"
+    app.save({"tv_map_home": ""})                            # back to the weather location
+    assert app.settings()["tv_map_home"] == ""
+    with pytest.raises(ValueError):
+        app.save({"tv_map_home": "123 Main St"})             # addresses are looked up first, on the phone
+
+
+def test_geocode_address_parses_nominatim():
+    from feeds import geocode_address
+
+    class S:
+        def get(self, url, params=None, headers=None, timeout=None):
+            assert "nominatim" in url and "User-Agent" in headers and params["q"] == "1201 W University Dr Edinburg"
+            return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: [
+                {"display_name": "1201, West University Drive, Edinburg, Texas", "lat": "26.3058123", "lon": "-98.1729876"},
+                {"display_name": "broken"}]})()
+    assert geocode_address(" 1201 W University Dr Edinburg ", S()) == [
+        {"label": "1201, West University Drive, Edinburg, Texas", "lat": 26.30581, "lon": -98.17299}]
