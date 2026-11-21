@@ -13,6 +13,7 @@ import logging
 import os
 import re
 import secrets
+import subprocess
 import threading
 import time
 from http.cookies import SimpleCookie
@@ -1080,10 +1081,10 @@ def make_handler(app):
             if not self._same_origin():
                 return self._send(403, {"error": "request from another website refused"})
             ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback") and ctype != "application/json":
+            if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback", "/api/power") and ctype != "application/json":
                 return self._send(415, {"error": "send JSON"})
             try:
-                body = self._body() if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback") else None
+                body = self._body() if url.path in ("/api/login", "/api/settings", "/api/update", "/api/rollback", "/api/power") else None
             except OverflowError as exc:
                 return self._send(413, {"error": str(exc)})
             except ValueError as exc:
@@ -1136,6 +1137,12 @@ def make_handler(app):
                 except UpdateError as exc:
                     return self._send(409, {"error": str(exc)})
                 return self._send(202, {"ok": True})
+            if url.path == "/api/power":
+                action = (body or {}).get("action") if isinstance(body, dict) else None
+                if action not in ("shutdown", "restart"):
+                    return self._send(400, {"error": "action must be shutdown or restart"})
+                ok, msg = power(action)
+                return self._send(202 if ok else 503, {"ok": ok} if ok else {"error": msg})
             if url.path == "/api/settings":
                 try:
                     saved = app.save(body)
@@ -1145,6 +1152,29 @@ def make_handler(app):
             self._send(404, {"error": "not found"})
 
     return Handler
+
+
+POWER_HELP = ("This Pi isn't allowed to shut itself down yet. Over SSH run once: "
+              "cd ~/crypto-ticker && ./install.sh --power")
+
+
+def power(action, run=subprocess.run):
+    """Shut the Pi down or restart it, the clean way (the SD card is safe to unplug once the
+    green light stops). Only when running as the service; a non-root service (the TV) needs
+    the permission install.sh --tv / --power gives it. Returns (ok, error message)."""
+    if not os.environ.get("INVOCATION_ID"):
+        return False, "Shut down and restart only work when the ticker runs as its service."
+    cmd = ["systemctl", "poweroff" if action == "shutdown" else "reboot", "--no-ask-password"]
+    try:
+        r = run(cmd, capture_output=True, text=True, timeout=15)
+    except Exception as exc:
+        log.warning("power %s failed: %s", action, exc)
+        return False, f"Couldn't {action}: {exc}"
+    if r.returncode != 0:
+        log.warning("power %s refused: %s", action, (r.stderr or "").strip()[:200])
+        return False, POWER_HELP if os.geteuid() != 0 else f"Couldn't {action}: {(r.stderr or '').strip()[:120]}"
+    log.info("power: %s requested from the phone page", action)
+    return True, ""
 
 
 def start(app, port=8080):
@@ -1582,7 +1612,9 @@ function softwareRows(u){
   const msgCls=['failed','rollback_failed'].includes(u.state)||u.needs_key?'err':'';
   return `<div class="row"><div class="grow">Version<div class="name">${esc(v.commit)} · ${esc(v.date)} · ${esc(v.subject)}</div></div></div>
    <div class="row" style="gap:8px"><div class="grow name ${msgCls}" style="white-space:normal">${esc(busy&&!u.message?'Working…':u.message||'')}</div>
-   ${u.can_rollback?btn('rollback','Roll back','del'):''}${btn('update',busy?'Updating…':'Update')}</div>`;
+   ${u.can_rollback?btn('rollback','Roll back','del'):''}${btn('update',busy?'Updating…':'Update')}</div>
+   <div class="row" style="gap:8px"><div class="grow">Power<div class="name" style="white-space:normal">Shut down before switching the power off, so the SD card stays safe.</div></div>
+    <button class="btn" id="pwrr" style="width:auto;padding:0 14px">Restart</button><button class="btn del" id="pwrs" style="width:auto;padding:0 14px">Shut down</button></div>`;
 }
 function swHint(u){
   if(!u||!u.needs_key)return '';
@@ -1602,6 +1634,12 @@ async function loadStatus(){
     if(!confirm('Update the ticker from GitHub? It restarts, and goes back to this version by itself if the update fails to start.'))return;
     try{await api('/api/update',{});toast('Updating…')}catch(e){if(e.message!='login')toast(e.message,true)}
     loadStatus()};
+  const power=async(action,ask,done)=>{if(!confirm(ask))return;
+    try{await api('/api/power',{action});toast(done)}catch(e){if(e.message=='login')return;
+      if(/fetch|network|load failed/i.test(e.message))toast(done);else toast(e.message,true)}};  // no reply: it's already going down
+  if($('#pwrs'))$('#pwrs').onclick=()=>power('shutdown','Shut down the Pi? To start it again, switch the power off and on.',
+    'Shutting down. Switch the power off once the green light stops blinking (about 20 seconds).');
+  if($('#pwrr'))$('#pwrr').onclick=()=>power('restart','Restart the Pi? It\'s back in about a minute.','Restarting… back in about a minute.');
   if($('#rollback'))$('#rollback').onclick=async()=>{
     if(!confirm('Go back to the previous version ('+st.update.previous+')? The ticker restarts.'))return;
     try{await api('/api/rollback',{});toast('Rolling back…')}catch(e){if(e.message!='login')toast(e.message,true)}

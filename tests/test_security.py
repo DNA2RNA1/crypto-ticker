@@ -115,3 +115,41 @@ def test_non_root_service_restarts_by_exiting(monkeypatch):
                         lambda delay, fn, args: type("T", (), {"start": lambda self: killed.append(args)})())
     u = updater.Updater.__new__(updater.Updater)
     assert u._systemd_restart() is True and killed and killed[0][0] == os.getpid()
+
+
+# --- shut down / restart from the phone ---------------------------------------------------
+def test_power_needs_the_service(monkeypatch):
+    monkeypatch.delenv("INVOCATION_ID", raising=False)
+    ok, msg = webui.power("shutdown", run=lambda *a, **k: pytest.fail("must not run"))
+    assert not ok and "service" in msg
+
+
+def test_power_runs_systemctl(monkeypatch):
+    monkeypatch.setenv("INVOCATION_ID", "x")
+    calls = []
+    ok = lambda cmd, **k: calls.append(cmd) or type("R", (), {"returncode": 0, "stderr": ""})()
+    assert webui.power("shutdown", run=ok) == (True, "")
+    assert webui.power("restart", run=ok) == (True, "")
+    assert calls == [["systemctl", "poweroff", "--no-ask-password"], ["systemctl", "reboot", "--no-ask-password"]]
+
+
+def test_power_refused_explains_the_fix(monkeypatch):
+    monkeypatch.setenv("INVOCATION_ID", "x")
+    monkeypatch.setattr(webui.os, "geteuid", lambda: 1000)
+    no = lambda cmd, **k: type("R", (), {"returncode": 1, "stderr": "Access denied"})()
+    ok, msg = webui.power("shutdown", run=no)
+    assert not ok and "install.sh --power" in msg
+
+
+def test_power_endpoint(server, monkeypatch):
+    calls = []
+    monkeypatch.setattr(webui, "power", lambda action: calls.append(action) or (True, ""))
+    assert request(server, "POST", "/api/power", b'{"action":"shutdown"}')[0] == 401   # PIN first
+    auth = login(server)
+    assert request(server, "POST", "/api/power", b'{"action":"format"}', auth)[0] == 400
+    assert request(server, "POST", "/api/power", b'{"action":"shutdown"}',
+                   dict(auth, **{"Content-Type": "text/plain"}))[0] == 415                 # not from a plain form
+    assert request(server, "POST", "/api/power", b'{"action":"shutdown"}',
+                   dict(auth, Origin="http://evil.example"))[0] == 403                    # not from another site
+    assert request(server, "POST", "/api/power", b'{"action":"restart"}', auth)[0] == 202
+    assert calls == ["restart"]

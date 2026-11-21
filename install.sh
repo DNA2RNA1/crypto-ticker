@@ -12,6 +12,7 @@
 #   ./install.sh --remove-enterprise-wifi  only remove that work Wi-Fi profile
 #   ./install.sh --add-wifi      only save another ordinary Wi-Fi network (e.g. a phone hotspot)
 #   ./install.sh --list-wifi     only list saved Wi-Fi networks and the ones in range
+#   ./install.sh --power         let a TV (whose service isn't root) shut down/restart from the phone
 #   ./install.sh --tv            set up a Pi 4/5 with Raspberry Pi OS *with desktop* as the TV
 #                                dashboard: no LED library, browser opens full-screen at boot
 # A normal run never changes Wi-Fi settings; only the Wi-Fi options above do.
@@ -21,10 +22,10 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 LIB_DIR="$(dirname "$HERE")/rpi-rgb-led-matrix"
 VENV="$HERE/venv"
 SERVICE=crypto-ticker
-PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0 WIFI="" TV=0
+PIN="" ASK_PIN=1 BUILD=1 ENABLE_SERVICE=1 KEY_ONLY=0 WIFI="" TV=0 POWER_ONLY=0
 DEPLOY_KEY="$HOME/.ssh/crypto-ticker-deploy"
 
-usage() { sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit "${1:-0}"; }
 while [ $# -gt 0 ]; do
     case "$1" in
         --pin) PIN="${2:-}"; ASK_PIN=0; shift ;;
@@ -37,6 +38,7 @@ while [ $# -gt 0 ]; do
         --add-wifi) WIFI=add-psk ;;
         --list-wifi) WIFI=list ;;
         --tv) TV=1; BUILD=0 ;;
+        --power) POWER_ONLY=1 ;;
         -h|--help) usage 0 ;;
         *) echo "Unknown option: $1" >&2; usage 1 ;;
     esac
@@ -69,6 +71,34 @@ deploy_key() {  # SSH key the Update button uses to pull from GitHub (needed onc
 
 if [ "$KEY_ONLY" -eq 1 ]; then
     deploy_key
+    exit 0
+fi
+
+# --- shut down / restart from the phone (a service that isn't root: the TV) ----------
+# A polkit rule letting just the user who owns this folder power the Pi off or restart it.
+# The LED tickers' service is root and needs nothing.
+power_rule() {
+    local who rules=/etc/polkit-1/rules.d/50-crypto-ticker-power.rules
+    who="$(stat -c %U "$HERE")"
+    [ -d /etc/polkit-1/rules.d ] || { warn "polkit isn't installed; the phone's Shut down button won't work on this Pi"; return 0; }
+    sudo tee "$rules" >/dev/null <<RULE
+// crypto-ticker: the phone page's Shut down / Restart buttons (install.sh --power)
+polkit.addRule(function(action, subject) {
+    if (subject.user == "$who" && [
+            "org.freedesktop.login1.power-off", "org.freedesktop.login1.power-off-multiple-sessions",
+            "org.freedesktop.login1.power-off-ignore-inhibit", "org.freedesktop.login1.reboot",
+            "org.freedesktop.login1.reboot-multiple-sessions", "org.freedesktop.login1.reboot-ignore-inhibit"
+        ].indexOf(action.id) >= 0) {
+        return polkit.Result.YES;
+    }
+});
+RULE
+    sudo chmod 644 "$rules"
+    say "The phone page can now shut down and restart this Pi (as $who)."
+}
+
+if [ "$POWER_ONLY" -eq 1 ]; then
+    power_rule
     exit 0
 fi
 
@@ -278,6 +308,7 @@ else
         echo "@$HERE/tv-kiosk.sh" >> "$LXDE"
     fi
     chmod +x "$HERE/tv-kiosk.sh"
+    power_rule
 fi
 
 say "Capping the system journal at 16 MB (small SD card)"
