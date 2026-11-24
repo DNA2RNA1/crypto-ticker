@@ -146,6 +146,62 @@ def _rows(data):
     return [a for a in rows if isinstance(a, dict)]
 
 
+# Common ICAO type codes -> names, for when the feed doesn't send one (its 'desc').
+TYPE_NAMES = {
+    "A19N": "Airbus A319neo", "A20N": "Airbus A320neo", "A21N": "Airbus A321neo", "A318": "Airbus A318",
+    "A319": "Airbus A319", "A320": "Airbus A320", "A321": "Airbus A321", "A332": "Airbus A330-200",
+    "A333": "Airbus A330-300", "A339": "Airbus A330-900", "A359": "Airbus A350-900", "A35K": "Airbus A350-1000",
+    "A388": "Airbus A380", "BCS1": "Airbus A220-100", "BCS3": "Airbus A220-300",
+    "B712": "Boeing 717", "B733": "Boeing 737-300", "B734": "Boeing 737-400", "B735": "Boeing 737-500",
+    "B736": "Boeing 737-600", "B737": "Boeing 737-700", "B738": "Boeing 737-800", "B739": "Boeing 737-900",
+    "B37M": "Boeing 737 MAX 7", "B38M": "Boeing 737 MAX 8", "B39M": "Boeing 737 MAX 9", "B3XM": "Boeing 737 MAX 10",
+    "B744": "Boeing 747-400", "B748": "Boeing 747-8", "B752": "Boeing 757-200", "B753": "Boeing 757-300",
+    "B762": "Boeing 767-200", "B763": "Boeing 767-300", "B764": "Boeing 767-400", "B772": "Boeing 777-200",
+    "B77L": "Boeing 777-200LR", "B77W": "Boeing 777-300ER", "B778": "Boeing 777-8", "B779": "Boeing 777-9",
+    "B788": "Boeing 787-8", "B789": "Boeing 787-9", "B78X": "Boeing 787-10", "MD11": "McDonnell Douglas MD-11",
+    "MD88": "McDonnell Douglas MD-88", "MD90": "McDonnell Douglas MD-90",
+    "E135": "Embraer ERJ-135", "E145": "Embraer ERJ-145", "E170": "Embraer E170", "E75L": "Embraer E175",
+    "E75S": "Embraer E175", "E190": "Embraer E190", "E195": "Embraer E195", "E290": "Embraer E190-E2",
+    "E295": "Embraer E195-E2", "CRJ2": "Bombardier CRJ200", "CRJ7": "Bombardier CRJ700",
+    "CRJ9": "Bombardier CRJ900", "CRJX": "Bombardier CRJ1000", "DH8D": "De Havilland Dash 8-400",
+    "AT72": "ATR 72", "AT76": "ATR 72-600", "AT45": "ATR 42-500",
+    "C172": "Cessna 172 Skyhawk", "C182": "Cessna 182 Skylane", "C152": "Cessna 152", "C150": "Cessna 150",
+    "C206": "Cessna 206", "C208": "Cessna 208 Caravan", "C210": "Cessna 210", "C25A": "Cessna Citation CJ2",
+    "C25B": "Cessna Citation CJ3", "C25C": "Cessna Citation CJ4", "C510": "Cessna Citation Mustang",
+    "C525": "Cessna CitationJet", "C560": "Cessna Citation V", "C56X": "Cessna Citation Excel",
+    "C680": "Cessna Citation Sovereign", "C68A": "Cessna Citation Latitude", "C700": "Cessna Citation Longitude",
+    "C750": "Cessna Citation X", "PA28": "Piper Cherokee", "PA32": "Piper Saratoga", "PA34": "Piper Seneca",
+    "PA44": "Piper Seminole", "PA46": "Piper Malibu", "P28A": "Piper Cherokee", "SR20": "Cirrus SR20",
+    "SR22": "Cirrus SR22", "SF50": "Cirrus Vision Jet", "BE20": "Beechcraft King Air 200",
+    "BE35": "Beechcraft Bonanza", "BE36": "Beechcraft Bonanza", "BE58": "Beechcraft Baron",
+    "BE9L": "Beechcraft King Air 90", "B350": "Beechcraft King Air 350", "PC12": "Pilatus PC-12",
+    "PC24": "Pilatus PC-24", "TBM7": "Daher TBM 700", "TBM9": "Daher TBM 900", "LJ45": "Learjet 45",
+    "LJ60": "Learjet 60", "CL30": "Bombardier Challenger 300", "CL35": "Bombardier Challenger 350",
+    "CL60": "Bombardier Challenger 600", "GLEX": "Bombardier Global Express", "GL5T": "Bombardier Global 5000",
+    "GL7T": "Bombardier Global 7500", "GLF4": "Gulfstream IV", "GLF5": "Gulfstream V", "GLF6": "Gulfstream G650",
+    "G280": "Gulfstream G280", "E55P": "Embraer Phenom 300", "E50P": "Embraer Phenom 100",
+    "FA50": "Dassault Falcon 50", "FA7X": "Dassault Falcon 7X", "F900": "Dassault Falcon 900",
+    "F2TH": "Dassault Falcon 2000", "HDJT": "Honda HondaJet",
+    "B06": "Bell 206", "B407": "Bell 407", "B429": "Bell 429", "B412": "Bell 412", "EC35": "Airbus H135",
+    "EC45": "Airbus H145", "EC30": "Airbus H130", "AS50": "Airbus AS350", "A109": "Leonardo AW109",
+    "A139": "Leonardo AW139", "R44": "Robinson R44", "R22": "Robinson R22", "R66": "Robinson R66",
+    "S76": "Sikorsky S-76", "H60": "Sikorsky Black Hawk", "UH60": "Sikorsky Black Hawk",
+    "C130": "Lockheed C-130 Hercules", "C30J": "Lockheed C-130J", "C17": "Boeing C-17", "C5M": "Lockheed C-5",
+    "T38": "Northrop T-38", "TEX2": "Beechcraft T-6 Texan II", "K35R": "Boeing KC-135", "P8": "Boeing P-8",
+    "B350": "Beechcraft King Air 350", "DHC6": "De Havilland Twin Otter",
+}
+
+
+def type_name(code, desc=""):
+    """'B38M' -> 'Boeing 737 MAX 8': the feed's own name, tidied, else our table, else ''."""
+    desc = re.sub(r"\s+", " ", str(desc or "")).strip()
+    if desc:
+        words = [w if re.search(r"\d", w) or len(w) <= 3 and w.isupper() and w not in ("THE",) else w.capitalize()
+                 for w in desc.split(" ")]
+        return " ".join(words)[:32]
+    return TYPE_NAMES.get(str(code or "").upper(), "")
+
+
 def parse_one(a):
     """One readsb aircraft -> our dict, or None without a usable position.
     'ground' is True for aircraft on the ground (alt_ft is then 0)."""
@@ -163,6 +219,7 @@ def parse_one(a):
         "callsign": callsign if CALLSIGN_OK.fullmatch(callsign) else "",
         "reg": reg[:10] if re.fullmatch(r"[A-Z0-9\-]{2,10}", reg) else "",
         "type": str(a.get("t") or "").strip().upper()[:6],
+        "type_name": type_name(a.get("t"), a.get("desc")),
         "ground": ground,
         "alt_ft": int(round(alt)),
         "speed_kt": _num(a.get("gs")),
@@ -669,7 +726,8 @@ class Tracker(Feed):
             row = {"flight": flight, "callsign": cs, "status": status, "route": route,
                    "place": st.get("place", ""), "seen_at": st.get("seen_at"),
                    "landed_at": st.get("landed_at"), "error": st.get("error", ""),
-                   "type": last.get("type", ""), "alt_ft": last.get("alt_ft"),
+                   "type": last.get("type", ""), "type_name": last.get("type_name", ""),
+                   "alt_ft": last.get("alt_ft"),
                    "speed_kt": last.get("speed_kt"), "vrate_fpm": last.get("vrate_fpm"),
                    "track": last.get("track"), "progress": None, "eta": None, "remaining_mi": None}
             if route and route.get("orig_pos") and route.get("dest_pos") and last.get("lat") is not None:
